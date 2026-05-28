@@ -30,7 +30,8 @@ impl Orchestrator {
     /// buggy tool outputs or model misbehaviour).
     pub async fn execute(&mut self, prompt: &str) -> Result<String, AgentError> {
         self.agent.push_message_back(ChatMessage::system(
-            self.tool_registry.get_tools_system_prompt(),
+            self.agent
+                .get_system_prompt(&self.tool_registry.get_tools_system_prompt()),
         ));
         self.agent.push_message_back(ChatMessage::user(prompt));
 

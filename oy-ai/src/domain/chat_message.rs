@@ -22,6 +22,7 @@ pub struct ToolCall {
 pub struct ChatMessage {
     pub role: Role,
     pub content: Option<String>,
+    pub reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -33,6 +34,7 @@ impl ChatMessage {
         Self {
             role: Role::System,
             content: Some(content.into()),
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         }
@@ -42,15 +44,21 @@ impl ChatMessage {
         Self {
             role: Role::User,
             content: Some(content.into()),
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         }
     }
 
-    pub fn assistant(content: Option<String>, tool_calls: Option<Vec<ToolCall>>) -> Self {
+    pub fn assistant(
+        content: Option<String>,
+        reasoning_content: Option<String>,
+        tool_calls: Option<Vec<ToolCall>>,
+    ) -> Self {
         Self {
             role: Role::Assistant,
             content,
+            reasoning_content,
             tool_calls,
             tool_call_id: None,
         }
@@ -60,6 +68,7 @@ impl ChatMessage {
         Self {
             role: Role::Tool,
             content: Some(content.into()),
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: Some(tool_call_id),
         }
@@ -77,6 +86,10 @@ impl ChatMessage {
 
         if let Some(ref content) = self.content {
             msg["content"] = json!(content);
+        }
+
+        if let Some(ref reasoning_content) = self.reasoning_content {
+            msg["reasoning_content"] = json!(reasoning_content);
         }
 
         if let Some(ref tool_calls) = self.tool_calls {
@@ -108,6 +121,7 @@ impl ChatMessage {
         Self {
             role: Role::Assistant,
             content: None,
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         }
@@ -142,7 +156,7 @@ mod tests {
             function_name: "Read".into(),
             arguments: json!({"file_path": "/tmp/test.txt"}),
         };
-        let msg = ChatMessage::assistant(None, Some(vec![tool_call]));
+        let msg = ChatMessage::assistant(None, None, Some(vec![tool_call]));
         let json = msg.to_json_value();
         assert_eq!(json["role"], "assistant");
         let calls = json["tool_calls"].as_array().unwrap();

@@ -41,6 +41,7 @@ async fn test_orchestrator_direct_response() {
     let provider = MockProvider::new(vec![ChatMessage::assistant(
         Some("Hello, world!".into()),
         None,
+        None,
     )]);
     let registry = ToolRegistry::new();
     let main_agent = MainAgent::new_with_max_iterations(Some(100));
@@ -55,13 +56,14 @@ async fn test_orchestrator_single_tool_call() {
     let provider = MockProvider::new(vec![
         ChatMessage::assistant(
             None,
+            None,
             Some(vec![ToolCall {
                 id: "call_1".into(),
                 function_name: "Read".into(),
                 arguments: serde_json::json!({"file_path": "/nonexistent/file.txt"}),
             }]),
         ),
-        ChatMessage::assistant(Some("File content retrieved".into()), None),
+        ChatMessage::assistant(Some("File content retrieved".into()), None, None),
     ]);
     let mut registry = ToolRegistry::new();
     registry.register(ReadTool);
@@ -77,6 +79,7 @@ async fn test_orchestrator_max_iterations() {
     let provider = MockProvider::new(vec![
         ChatMessage::assistant(
             None,
+            None,
             Some(vec![ToolCall {
                 id: "call_1".into(),
                 function_name: "Read".into(),
@@ -84,6 +87,7 @@ async fn test_orchestrator_max_iterations() {
             }]),
         ),
         ChatMessage::assistant(
+            None,
             None,
             Some(vec![ToolCall {
                 id: "call_2".into(),

@@ -59,6 +59,7 @@ impl AiProvider for OpenCodeGoProvider {
         };
 
         let content = message["content"].as_str().map(|s| s.to_string());
+        let reasoning_content = message["reasoning_content"].as_str().map(|s| s.to_string());
 
         let tool_calls = message["tool_calls"].as_array().map(|calls| {
             calls
@@ -81,6 +82,7 @@ impl AiProvider for OpenCodeGoProvider {
         Ok(ChatMessage {
             role,
             content,
+            reasoning_content,
             tool_calls,
             tool_call_id: None,
         })
