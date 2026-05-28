@@ -82,7 +82,7 @@ impl Agent for MainAgent {
         }
 
         let now = Utc::now();
-        let formatted = now.format("%Y-%m-%d").to_string();
+        let formatted = now.format("%Y-%m-%d %H:%M").to_string();
         system_prompt = system_prompt.replace(
             "{{SYSTEM_TIME_PLACEHOLDER}}",
             &format!("- current-Utc-time: {}", formatted),
