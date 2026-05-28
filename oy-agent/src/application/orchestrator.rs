@@ -1,4 +1,5 @@
 use oy_ai::{AiProvider, ChatMessage};
+use uuid::Uuid;
 
 use crate::Agent;
 use crate::domain::errors::AgentError;
@@ -8,6 +9,7 @@ pub struct Orchestrator {
     agent: Box<dyn Agent>,
     provider: Box<dyn AiProvider + Send + Sync>,
     tool_registry: ToolRegistry,
+    uuid: Uuid,
 }
 
 impl Orchestrator {
@@ -20,6 +22,7 @@ impl Orchestrator {
             agent: Box::new(agent),
             provider: Box::new(provider),
             tool_registry,
+            uuid: Uuid::now_v7(),
         }
     }
 
@@ -29,11 +32,16 @@ impl Orchestrator {
     /// max_iterations is reached (safety guard against infinite loops from
     /// buggy tool outputs or model misbehaviour).
     pub async fn execute(&mut self, prompt: &str) -> Result<String, AgentError> {
-        self.agent.push_message_back(ChatMessage::system(
-            self.agent
-                .get_system_prompt(&self.tool_registry.get_tools_system_prompt()),
-        ));
-        self.agent.push_message_back(ChatMessage::user(prompt));
+        let _ = self.agent.push_message_back(
+            self.uuid,
+            ChatMessage::system(
+                self.agent
+                    .get_system_prompt(&self.tool_registry.get_tools_system_prompt()),
+            ),
+        );
+        let _ = self
+            .agent
+            .push_message_back(self.uuid, ChatMessage::user(prompt));
 
         for _ in 0..self.agent.max_iterations() {
             let response = self
@@ -42,7 +50,7 @@ impl Orchestrator {
                 .await?;
 
             let has_tool_calls = response.tool_calls.as_ref().is_some_and(|c| !c.is_empty());
-            self.agent.push_message_back(response.clone());
+            let _ = self.agent.push_message_back(self.uuid, response.clone());
 
             if !has_tool_calls {
                 return Ok(response.content.unwrap_or_default());
@@ -59,8 +67,9 @@ impl Orchestrator {
                         ))
                     })?;
                 let result = tool.execute(tool_call.arguments.clone())?;
-                self.agent
-                    .push_message_back(ChatMessage::tool(result, tool_call.id));
+                let _ = self
+                    .agent
+                    .push_message_back(self.uuid, ChatMessage::tool(result, tool_call.id));
             }
         }
 

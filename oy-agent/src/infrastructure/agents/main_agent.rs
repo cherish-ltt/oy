@@ -1,8 +1,9 @@
 use chrono::Utc;
 use oy_ai::ChatMessage;
 use std::{collections::VecDeque, env};
+use uuid::Uuid;
 
-use crate::Agent;
+use crate::{Agent, AgentError, infrastructure::persistence::save_session};
 
 /// 系统提示词模板，使用 `{{TOOLS_NAME_PLACEHOLDER}}` 作为工具列表的占位符
 const SYSTEM_PROMPT_TEMPLATE: &str = r#"
@@ -50,8 +51,12 @@ impl MainAgent {
 }
 
 impl Agent for MainAgent {
-    fn push_message_back(&mut self, msg: ChatMessage) {
+    fn push_message_back(&mut self, uuid: Uuid, msg: ChatMessage) -> Result<(), AgentError> {
         self.messages.push_back(msg);
+        match self.save_session(uuid) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
     fn messages(&mut self) -> &[ChatMessage] {
@@ -84,5 +89,16 @@ impl Agent for MainAgent {
         );
 
         system_prompt
+    }
+
+    fn save_session(&mut self, uuid: Uuid) -> Result<String, AgentError> {
+        match env::current_dir() {
+            Ok(path) => {
+                let mut path = path.to_string_lossy().to_string().replace("/", "-");
+                path = format!("--{}--", path);
+                save_session(uuid, self.messages().iter().collect(), &path)
+            }
+            Err(e) => Err(AgentError::ToolExecutionError(e.to_string())),
+        }
     }
 }

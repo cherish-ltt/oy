@@ -16,4 +16,10 @@ pub enum AgentError {
 
     #[error("Session persistence error: {0}")]
     SessionPersistenceError(String),
+
+    #[error("File Err - PathIsNotFile: {0}")]
+    PathIsNotFile(String),
+
+    #[error("Uuid error: {0}")]
+    UuidError(#[from] uuid::Error),
 }
