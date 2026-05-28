@@ -1,0 +1,160 @@
+use serde_json::Value;
+use std::fs;
+use std::path::Path;
+
+use crate::domain::errors::AgentError;
+use crate::domain::tool::Tool;
+
+pub struct EditTool;
+
+impl EditTool {
+    /// 检查文件路径是否在允许范围内（这里仅做简单安全检查，避免明显的系统文件）
+    fn is_safe_path(path: &str) -> bool {
+        // 拒绝空路径或明显指向系统关键目录的路径（可根据需要扩展）
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        // 简单黑名单：禁止直接编辑 /etc、/dev、/sys 等关键系统目录
+        let dangerous_prefixes = &["/etc/", "/dev/", "/sys/", "/proc/"];
+        for prefix in dangerous_prefixes {
+            if trimmed.starts_with(prefix) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// 执行文本替换：只替换第一次出现（与 `sed` 的默认行为一致）
+    fn replace_first(content: &str, old: &str, new: &str) -> String {
+        if let Some(pos) = content.find(old) {
+            let mut result =
+                String::with_capacity(content.len() + new.len().saturating_sub(old.len()));
+            result.push_str(&content[..pos]);
+            result.push_str(new);
+            result.push_str(&content[pos + old.len()..]);
+            result
+        } else {
+            content.to_string()
+        }
+    }
+}
+
+impl Tool for EditTool {
+    fn name(&self) -> &'static str {
+        "Edit"
+    }
+
+    fn description(&self) -> &'static str {
+        "Edit a file by replacing exact text (first occurrence only)."
+    }
+
+    fn schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to the file to edit"
+                },
+                "old_text": {
+                    "type": "string",
+                    "description": "The exact text to be replaced"
+                },
+                "new_text": {
+                    "type": "string",
+                    "description": "The new text to insert"
+                }
+            },
+            "required": ["file_path", "old_text", "new_text"]
+        })
+    }
+
+    fn execute(&self, args: Value) -> Result<String, AgentError> {
+        // 1. 提取参数
+        let file_path = args["file_path"]
+            .as_str()
+            .ok_or_else(|| AgentError::ToolExecutionError("Missing file_path".into()))?;
+        let old_text = args["old_text"]
+            .as_str()
+            .ok_or_else(|| AgentError::ToolExecutionError("Missing old_text".into()))?;
+        let new_text = args["new_text"]
+            .as_str()
+            .ok_or_else(|| AgentError::ToolExecutionError("Missing new_text".into()))?;
+
+        // 2. 安全检查
+        if !Self::is_safe_path(file_path) {
+            return Ok("Edit rejected: file path is not allowed for security reasons".into());
+        }
+
+        let path = Path::new(file_path);
+        if !path.exists() {
+            return Ok(format!("File not found: {}", file_path));
+        }
+
+        // 3. 读取文件内容
+        let content = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => return Ok(format!("Failed to read file: {}", e)),
+        };
+
+        // 4. 检查 old_text 是否存在
+        if !content.contains(old_text) {
+            return Ok(
+                "No changes made: the specified text was not found in the file.".to_string(),
+            );
+        }
+
+        // 5. 执行替换（只替换第一次出现）
+        let new_content = Self::replace_first(&content, old_text, new_text);
+
+        // 6. 写回文件
+        match fs::write(path, new_content) {
+            Ok(_) => Ok(format!(
+                "Successfully replaced '{}' with '{}' in {}",
+                old_text, new_text, file_path
+            )),
+            Err(e) => Ok(format!("Failed to write file: {}", e)),
+        }
+    }
+
+    fn get_system_prompt(&self) -> &str {
+        r#"
+        - `edit`: Precise file editing through precise text replacement; Keep the old text block small and unique; Combine multiple edits in the same file into one edit call
+        "#
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_edit_tool_safe_path_rejection() {
+        let tool = EditTool;
+        let result = tool
+            .execute(json!({
+                "file_path": "/etc/passwd",
+                "old_text": "root",
+                "new_text": "admin"
+            }))
+            .unwrap();
+
+        assert!(result.contains("not allowed for security reasons"));
+    }
+
+    #[test]
+    fn test_edit_tool_file_not_found() {
+        let tool = EditTool;
+        let result = tool
+            .execute(json!({
+                "file_path": "/nonexistent/path/file.txt",
+                "old_text": "foo",
+                "new_text": "bar"
+            }))
+            .unwrap();
+
+        assert!(result.contains("File not found"));
+    }
+}

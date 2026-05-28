@@ -1,0 +1,14 @@
+[package]
+name = "oy-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+oy-agent = { path = "../oy-agent" }
+oy-ai = { path = "../oy-ai" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+dirs = "6"
+anyhow = "1"
