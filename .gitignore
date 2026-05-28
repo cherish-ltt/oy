@@ -1,2 +1,3 @@
 target/
 .pi-dev-output/
+.DS_Store

@@ -94,8 +94,7 @@ impl Agent for MainAgent {
     fn save_session(&mut self, uuid: Uuid) -> Result<String, AgentError> {
         match env::current_dir() {
             Ok(path) => {
-                let mut path = path.to_string_lossy().to_string().replace("/", "-");
-                path = format!("--{}--", path);
+                let path = path.to_string_lossy().to_string().replace("/", "-");
                 save_session(uuid, self.messages().iter().collect(), &path)
             }
             Err(e) => Err(AgentError::ToolExecutionError(e.to_string())),
