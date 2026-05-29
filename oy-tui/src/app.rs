@@ -7,17 +7,15 @@ use crate::{
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use oy_agent::{
+    agent::InputAgentSignal,
     application::orchestrator::start_agent_background,
-    infrastructure::{
-        agents::main_agent::MainAgent,
-        tools::ToolRegistry ,
-    },
+    infrastructure::{agents::main_agent::MainAgent, tools::ToolRegistry},
     oy_ai::OpenCodeGoProvider,
 };
 use ratatui::DefaultTerminal;
 use std::{
     cell::Cell,
-    collections::{HashMap, VecDeque}
+    collections::{HashMap, VecDeque},
 };
 
 /// Application state
@@ -130,7 +128,7 @@ impl App {
                     crossterm::event::Event::Key(key_event)
                         if key_event.kind == crossterm::event::KeyEventKind::Press =>
                     {
-                        self.handle_key_events(key_event)?
+                        self.handle_key_events(key_event).await?
                     }
                     crossterm::event::Event::Paste(text) => {
                         self.handle_paste(&text);
@@ -147,7 +145,7 @@ impl App {
         Ok(())
     }
 
-    pub fn handle_key_events(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
+    pub async fn handle_key_events(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
         match key_event.code {
             KeyCode::Esc | KeyCode::Char('q') => self.events.send(AppEvent::Quit),
             KeyCode::Char('c' | 'C') if key_event.modifiers == KeyModifiers::CONTROL => {
@@ -155,6 +153,12 @@ impl App {
             }
             KeyCode::Enter if !self.input.is_empty() => {
                 self.expand_paste_snippets();
+                if let Some(main_agent) = &self.main_agent {
+                    let _ = main_agent
+                        .request_sender
+                        .send(InputAgentSignal::UserPrompt(self.input.clone()))
+                        .await;
+                }
                 self.input.clear();
                 self.cursor_pos = 0;
                 self.paste_counter = 0;

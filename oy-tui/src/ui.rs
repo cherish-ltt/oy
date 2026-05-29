@@ -106,7 +106,8 @@ impl Widget for &App {
         );
 
         if let Some(main_agent) = &self.main_agent {
-            status_text = status_text.replace("<Current Agent>", &format!("<🖥 {}>",&main_agent.name));
+            status_text =
+                status_text.replace("<Current Agent>", &format!("<🖥 {}>", &main_agent.name));
         }
         let status_paragraph = Paragraph::new(status_text)
             .alignment(Alignment::Left)
