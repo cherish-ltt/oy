@@ -11,11 +11,16 @@ use crate::app::{App, visual_cursor_pos};
 
 impl Widget for &App {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // 创建布局：消息区域占80%，输入区域占15%，状态区域占5%（或固定高度）
+        // 根据输入内容行数动态调整 input 区域高度（2～6 行文本，加边框）
+        let input_text_width = area.width.saturating_sub(4) as usize;
+        let visual_lines = self.total_visual_lines(input_text_width.max(1));
+        let input_text_height = visual_lines.clamp(2, 7);
+        let input_height = input_text_height + 2; // +2 for borders
+
         let chunks = Layout::vertical([
-            Constraint::Min(5),    // Message area - flexible
-            Constraint::Length(5), // Input line
-            Constraint::Length(3), // Status line
+            Constraint::Min(5),        // Message area - flexible
+            Constraint::Length(input_height), // Input area (dynamic)
+            Constraint::Length(3),     // Status line
         ])
         .split(area);
 

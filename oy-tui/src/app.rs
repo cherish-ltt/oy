@@ -263,7 +263,7 @@ impl App {
         }
     }
 
-    fn total_visual_lines(&self, width: usize) -> u16 {
+    pub(crate) fn total_visual_lines(&self, width: usize) -> u16 {
         if self.input.is_empty() || width == 0 {
             return 1;
         }
