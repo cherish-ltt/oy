@@ -4,10 +4,10 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Style},
     text::{Line, Text},
-    widgets::{Block, BorderType, Paragraph, Widget},
+    widgets::{Block, BorderType, Paragraph, Widget, Wrap},
 };
 
-use crate::app::App;
+use crate::app::{App, visual_cursor_pos};
 
 impl Widget for &App {
     fn render(self, area: Rect, buf: &mut Buffer) {
@@ -58,8 +58,26 @@ impl Widget for &App {
         }
 
         // --- Input Area ---
-        // Show "> " prompt and the current input
         let input_display = format!("{}", self.input);
+        let input_text_width = chunks[1].width.saturating_sub(2) as usize;
+
+        // Calculate cursor visual position for input
+        let (cursor_visual_row, cursor_visual_col) =
+            visual_cursor_pos(&self.input, self.cursor_pos, input_text_width);
+
+        // Calculate scroll to keep cursor in view
+        let input_visible_height = chunks[1].height.saturating_sub(2);
+        let input_scroll = if cursor_visual_row >= input_visible_height {
+            cursor_visual_row - input_visible_height + 1
+        } else {
+            0
+        };
+
+        // Store cursor screen position and input width for key handling
+        self.cursor_x.set(chunks[1].x + 1 + cursor_visual_col);
+        self.cursor_y.set(chunks[1].y + 1 + cursor_visual_row - input_scroll);
+        self.input_width.set(chunks[1].width.saturating_sub(2));
+
         let input_paragraph = Paragraph::new(input_display)
             .block(
                 Block::bordered()
@@ -67,13 +85,15 @@ impl Widget for &App {
                     .title_alignment(Alignment::Left)
                     .border_type(BorderType::Double),
             )
+            .wrap(Wrap { trim: false })
+            .scroll((input_scroll, 0))
             .style(Style::default().fg(Color::Cyan).bg(Color::Black));
 
         input_paragraph.render(chunks[1], buf);
 
         // --- Status Area (information) ---
         let status_text = format!(
-            " Messages: {} | ↑/↓ scroll | Enter send | Ctrl+C/Esc/q quit",
+            " Messages: {} | ↑/↓/←/→ move cursor | Enter send | Ctrl+C/Esc/q quit",
             self.messages.len()
         );
         let status_paragraph = Paragraph::new(status_text)
