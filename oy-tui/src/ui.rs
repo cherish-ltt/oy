@@ -1,9 +1,11 @@
+use std::env;
+
 // ui.rs
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Style},
-    text::{Line, Text},
+    text::Text,
     widgets::{Block, BorderType, Paragraph, Widget, Wrap},
 };
 
@@ -18,9 +20,9 @@ impl Widget for &App {
         let input_height = input_text_height + 2; // +2 for borders
 
         let chunks = Layout::vertical([
-            Constraint::Min(5),        // Message area - flexible
+            Constraint::Min(5),               // Message area - flexible
             Constraint::Length(input_height), // Input area (dynamic)
-            Constraint::Length(3),     // Status line
+            Constraint::Length(3),            // Status line
         ])
         .split(area);
 
@@ -41,7 +43,7 @@ impl Widget for &App {
                     .border_type(BorderType::Rounded),
             )
             .scroll((self.scroll_offset.get(), 0))
-            .style(Style::default().fg(Color::White).bg(Color::Black));
+            .style(Style::default().fg(Color::Black).bg(Color::White));
 
         // Render message area
         message_paragraph.render(chunks[0], buf);
@@ -63,7 +65,7 @@ impl Widget for &App {
         }
 
         // --- Input Area ---
-        let input_display = format!("{}", self.input);
+        let input_display = self.input.to_string();
         let input_text_width = chunks[1].width.saturating_sub(2) as usize;
 
         // Calculate cursor visual position for input
@@ -80,7 +82,8 @@ impl Widget for &App {
 
         // Store cursor screen position and input width for key handling
         self.cursor_x.set(chunks[1].x + 1 + cursor_visual_col);
-        self.cursor_y.set(chunks[1].y + 1 + cursor_visual_row - input_scroll);
+        self.cursor_y
+            .set(chunks[1].y + 1 + cursor_visual_row - input_scroll);
         self.input_width.set(chunks[1].width.saturating_sub(2));
 
         let input_paragraph = Paragraph::new(input_display)
@@ -92,7 +95,7 @@ impl Widget for &App {
             )
             .wrap(Wrap { trim: false })
             .scroll((input_scroll, 0))
-            .style(Style::default().fg(Color::Cyan).bg(Color::Black));
+            .style(Style::default().fg(Color::Cyan).bg(Color::White));
 
         input_paragraph.render(chunks[1], buf);
 
@@ -103,18 +106,30 @@ impl Widget for &App {
         );
         let status_paragraph = Paragraph::new(status_text)
             .alignment(Alignment::Left)
-            .style(Style::default().fg(Color::Gray).bg(Color::Black));
+            .style(Style::default().fg(Color::Black).bg(Color::White));
 
         status_paragraph.render(chunks[2], buf);
 
-        let status_text = format!(
-            "opencode-go/deepseek-v4-flash · (xhigh) 
-            0.0%/1.0M (auto) 
-            github/project (mian) "
-        );
+        let mut status_text = "Use the /model command to set up one model 
+            Unknown directory "
+            .to_string();
+        if let Some(config) = &self.global_toml_config {
+            if let Some(model_name) = &config.model {
+                status_text = status_text.replace(
+                    "Use the /model command to set up one model ",
+                    &format!("{} ", model_name),
+                );
+            }
+            if let Ok(path) = env::current_dir() {
+                status_text = status_text.replace(
+                    "Unknown directory ",
+                    &format!("{} ", &path.to_string_lossy()),
+                );
+            }
+        }
         let status_paragraph = Paragraph::new(status_text)
             .alignment(Alignment::Right)
-            .style(Style::default().fg(Color::Gray).bg(Color::Black));
+            .style(Style::default().fg(Color::Black).bg(Color::White));
 
         status_paragraph.render(chunks[2], buf);
     }

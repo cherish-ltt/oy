@@ -1,5 +1,3 @@
-use std::fmt::Display;
-
 use oy_agent::oy_ai::{ChatMessage, Role};
 use ratatui::{
     style::{Color, Modifier, Style},
@@ -13,18 +11,18 @@ pub enum Message {
 }
 
 impl Message {
-    pub fn to_lines(&self) -> Vec<Line> {
+    pub fn to_lines(&self) -> Vec<Line<'_>> {
         match self {
             Message::UiMessages(text) => {
                 vec![Line::from(Span::styled(
                     format!("> {}", text),
-                    Style::default().fg(Color::White),
+                    Style::default().fg(Color::Black).bold(),
                 ))]
             }
             Message::AgentMessages(chat_message) => {
                 let role_style = match chat_message.role {
-                    Role::User => Style::default().fg(Color::Cyan),
-                    Role::Assistant => Style::default().fg(Color::Green),
+                    Role::User => Style::default().fg(Color::Cyan).bg(Color::DarkGray),
+                    Role::Assistant => Style::default().fg(Color::DarkGray),
                     Role::Tool => Style::default().fg(Color::Yellow).bg(Color::DarkGray),
                     Role::System => return Vec::new(),
                 };
@@ -67,19 +65,19 @@ impl Message {
         }
     }
 
-    /// 返回此消息占用的总行数（用于滚动计算）
-    fn line_count(&self) -> usize {
-        // 简单实现：对于 UiMessages 固定 1 行
-        // 对于 AgentMessages，需要根据实际产生的行数计算
-        match self {
-            Message::UiMessages(_) => 1,
-            Message::AgentMessages(chat) => {
-                let mut count = 1;
-                if let Some(tool_calls) = &chat.tool_calls {
-                    count += tool_calls.len() * 2; // 每个工具占两行（名称+参数）
-                }
-                count
-            }
-        }
-    }
+    // 返回此消息占用的总行数（用于滚动计算）
+    // fn line_count(&self) -> usize {
+    //     // 简单实现：对于 UiMessages 固定 1 行
+    //     // 对于 AgentMessages，需要根据实际产生的行数计算
+    //     match self {
+    //         Message::UiMessages(_) => 1,
+    //         Message::AgentMessages(chat) => {
+    //             let mut count = 1;
+    //             if let Some(tool_calls) = &chat.tool_calls {
+    //                 count += tool_calls.len() * 2; // 每个工具占两行（名称+参数）
+    //             }
+    //             count
+    //         }
+    //     }
+    // }
 }

@@ -1,11 +1,15 @@
 // app.rs
 use crate::{
     event::{AppEvent, Event, EventHandler},
+    load_config::GlobalTomlConfig,
     message::Message,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::DefaultTerminal;
-use std::{cell::Cell, collections::{HashMap, VecDeque}};
+use std::{
+    cell::Cell,
+    collections::{HashMap, VecDeque},
+};
 
 /// Application state
 #[derive(Debug)]
@@ -32,20 +36,23 @@ pub struct App {
     pub paste_counter: usize,
     /// 事件处理器
     pub events: EventHandler,
+    /// ai配置
+    pub global_toml_config: Option<GlobalTomlConfig>,
 }
 
 impl Default for App {
     fn default() -> Self {
         let mut messages = VecDeque::new();
+        messages.push_back(Message::UiMessages("OY v0.0.1".to_string()));
         messages.push_back(Message::UiMessages(
-            "Welcome to Claude Code Chat!".to_string(),
-        ));
-        messages.push_back(Message::UiMessages(
-            "Type a message and press Enter to send.".to_string(),
+            "Type a message and press Enter to send.\nThen communicate with the LLM to achieve your goal".to_string(),
         ));
         messages.push_back(Message::UiMessages(
             "Use ↑/↓/←/→ to move cursor, Enter to send, Ctrl+C/Esc/q to quit.".to_string(),
         ));
+
+        let global_toml_config = GlobalTomlConfig::load();
+
         Self {
             running: true,
             messages,
@@ -58,6 +65,7 @@ impl Default for App {
             paste_snippets: HashMap::new(),
             paste_counter: 0,
             events: EventHandler::new(),
+            global_toml_config,
         }
     }
 }
@@ -86,11 +94,11 @@ impl App {
                     }
                     _ => {}
                 },
-                Event::App(app_event) => match app_event {
-                    AppEvent::Quit => self.quit(),
-                    // Add other custom events if needed
-                    _ => {}
-                },
+                Event::App(app_event) => {
+                    if let AppEvent::Quit = app_event {
+                        self.quit()
+                    }
+                }
             }
         }
         Ok(())
@@ -102,47 +110,38 @@ impl App {
             KeyCode::Char('c' | 'C') if key_event.modifiers == KeyModifiers::CONTROL => {
                 self.events.send(AppEvent::Quit)
             }
-            KeyCode::Enter => {
-                if !self.input.is_empty() {
-                    self.expand_paste_snippets();
-                    self.input.clear();
-                    self.cursor_pos = 0;
-                    self.paste_counter = 0;
-                    self.scroll_offset.set(u16::MAX);
-                }
+            KeyCode::Enter if !self.input.is_empty() => {
+                self.expand_paste_snippets();
+                self.input.clear();
+                self.cursor_pos = 0;
+                self.paste_counter = 0;
+                self.scroll_offset.set(u16::MAX);
             }
-            KeyCode::Backspace => {
-                if self.cursor_pos > 0 {
-                    if !self.delete_paste_placeholder() {
-                        let len = self.input[..self.cursor_pos]
-                            .chars()
-                            .last()
-                            .map(|c| c.len_utf8())
-                            .unwrap_or(0);
-                        self.input.replace_range(self.cursor_pos - len..self.cursor_pos, "");
-                        self.cursor_pos -= len;
-                    }
-                }
+            KeyCode::Backspace if self.cursor_pos > 0 && !self.delete_paste_placeholder() => {
+                let len = self.input[..self.cursor_pos]
+                    .chars()
+                    .last()
+                    .map(|c| c.len_utf8())
+                    .unwrap_or(0);
+                self.input
+                    .replace_range(self.cursor_pos - len..self.cursor_pos, "");
+                self.cursor_pos -= len;
             }
-            KeyCode::Left => {
-                if self.cursor_pos > 0 {
-                    let len = self.input[..self.cursor_pos]
-                        .chars()
-                        .last()
-                        .map(|c| c.len_utf8())
-                        .unwrap_or(0);
-                    self.cursor_pos -= len;
-                }
+            KeyCode::Left if self.cursor_pos > 0 => {
+                let len = self.input[..self.cursor_pos]
+                    .chars()
+                    .last()
+                    .map(|c| c.len_utf8())
+                    .unwrap_or(0);
+                self.cursor_pos -= len;
             }
-            KeyCode::Right => {
-                if self.cursor_pos < self.input.len() {
-                    let len = self.input[self.cursor_pos..]
-                        .chars()
-                        .next()
-                        .map(|c| c.len_utf8())
-                        .unwrap_or(0);
-                    self.cursor_pos += len;
-                }
+            KeyCode::Right if self.cursor_pos < self.input.len() => {
+                let len = self.input[self.cursor_pos..]
+                    .chars()
+                    .next()
+                    .map(|c| c.len_utf8())
+                    .unwrap_or(0);
+                self.cursor_pos += len;
             }
             KeyCode::Up => {
                 let width = self.input_width.get() as usize;
@@ -159,7 +158,9 @@ impl App {
             KeyCode::Char('v') if key_event.modifiers == KeyModifiers::CONTROL => {
                 self.paste_from_clipboard();
             }
-            KeyCode::Char('V') if key_event.modifiers == KeyModifiers::CONTROL | KeyModifiers::SHIFT => {
+            KeyCode::Char('V')
+                if key_event.modifiers == KeyModifiers::CONTROL | KeyModifiers::SHIFT =>
+            {
                 self.paste_from_clipboard();
             }
             KeyCode::Char('v') if key_event.modifiers == KeyModifiers::ALT => {
@@ -375,7 +376,8 @@ impl App {
         for (id, content) in snippets {
             let placeholder = format!("[{} +{} lines]", id, content.lines().count());
             while let Some(pos) = self.input.find(&placeholder) {
-                self.input.replace_range(pos..pos + placeholder.len(), &content);
+                self.input
+                    .replace_range(pos..pos + placeholder.len(), &content);
                 if pos + placeholder.len() <= self.cursor_pos {
                     self.cursor_pos = self.cursor_pos - placeholder.len() + content.len();
                 } else if pos < self.cursor_pos {

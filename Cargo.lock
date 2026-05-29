@@ -1637,12 +1637,16 @@ dependencies = [
 name = "oy-tui"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "color-eyre",
  "crossterm 0.28.1",
+ "dirs",
  "futures",
  "oy-agent",
  "ratatui",
+ "serde",
  "tokio",
+ "toml",
  "unicode-width",
 ]
 
