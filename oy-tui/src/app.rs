@@ -3,7 +3,10 @@ use crate::{
     agent::AgentManager,
     event::{AppEvent, Event, EventHandler},
     load_config::{GlobalTomlConfig, build_provider_config, register_default_tools},
-    message::Message::{self, AgentMessages},
+    message::{
+        Message::{self, AgentMessages, AgentStatus, UiMessages},
+        Status,
+    },
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use oy_agent::{
@@ -49,8 +52,8 @@ pub struct App {
     pub main_agent: Option<AgentManager>,
 }
 
-impl Default for App {
-    fn default() -> Self {
+impl App {
+    pub async fn new() -> Self {
         let mut messages = VecDeque::new();
         messages.push_back(Message::UiMessages("OY v0.0.1".to_string()));
         messages.push_back(Message::UiMessages(
@@ -61,6 +64,21 @@ impl Default for App {
         ));
 
         let global_toml_config = GlobalTomlConfig::load();
+
+        let mut main_agent: Option<AgentManager> = None;
+        if let Some(global_toml_config) = &global_toml_config {
+            main_agent = Some(start_main_agent_background(global_toml_config).await);
+        }
+
+        let events = if let Some(agent_manager) = &mut main_agent {
+            if let Some(response_receiver) = agent_manager.response_receiver.take() {
+                EventHandler::new_with_receiver(response_receiver)
+            } else {
+                EventHandler::new()
+            }
+        } else {
+            EventHandler::new()
+        };
 
         Self {
             running: true,
@@ -73,47 +91,10 @@ impl Default for App {
             scroll_offset: Cell::new(0),
             paste_snippets: HashMap::new(),
             paste_counter: 0,
-            events: EventHandler::new(),
+            events,
             global_toml_config,
-            main_agent: None,
+            main_agent,
         }
-    }
-}
-
-impl App {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub async fn start_main_agent_background(mut self) -> Self {
-        if self.main_agent.is_some() {
-            return self;
-        }
-
-        let Some(global_toml_config) = &self.global_toml_config else {
-            return self;
-        };
-
-        let ai_config = build_provider_config(global_toml_config);
-
-        let provider = OpenCodeGoProvider::new(ai_config);
-        let mut registry = ToolRegistry::new();
-        register_default_tools(&mut registry);
-
-        let main_agent = MainAgent::new_with_max_iterations(None);
-        let (request_sender, response_receiver, join_handle) =
-            start_agent_background(main_agent, provider, registry).await;
-
-        let main_agent = AgentManager::new(
-            "MainAgent".to_owned(),
-            join_handle,
-            request_sender,
-            response_receiver,
-        );
-
-        self.main_agent = Some(main_agent);
-
-        self
     }
 
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> color_eyre::Result<()> {
@@ -135,11 +116,17 @@ impl App {
                     }
                     _ => {}
                 },
-                Event::App(app_event) => {
-                    if let AppEvent::Quit = app_event {
-                        self.quit()
+                Event::App(app_event) => match app_event {
+                    AppEvent::Quit => self.quit(),
+                    AppEvent::ChatMessage(chat_message) => {
+                        self.messages.push_back(AgentMessages(chat_message))
                     }
-                }
+                    AppEvent::AgentError(e) => self
+                        .messages
+                        .push_back(UiMessages(format!("errors: {}", e))),
+                    AppEvent::Pause => self.messages.push_back(AgentStatus(Status::Pause)),
+                    AppEvent::Running => self.messages.push_back(AgentStatus(Status::Running)),
+                },
             }
         }
         Ok(())
@@ -441,6 +428,25 @@ impl App {
     pub fn quit(&mut self) {
         self.running = false;
     }
+}
+
+pub async fn start_main_agent_background(global_toml_config: &GlobalTomlConfig) -> AgentManager {
+    let ai_config = build_provider_config(global_toml_config);
+
+    let provider = OpenCodeGoProvider::new(ai_config);
+    let mut registry = ToolRegistry::new();
+    register_default_tools(&mut registry);
+
+    let main_agent = MainAgent::new_with_max_iterations(None);
+    let (request_sender, response_receiver, join_handle) =
+        start_agent_background(main_agent, provider, registry).await;
+
+    AgentManager::new(
+        "MainAgent".to_owned(),
+        join_handle,
+        request_sender,
+        response_receiver,
+    )
 }
 
 pub(crate) fn visual_cursor_pos(input: &str, cursor_pos: usize, width: usize) -> (u16, u16) {

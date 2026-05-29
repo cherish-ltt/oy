@@ -6,7 +6,7 @@ pub(crate) struct AgentManager {
     pub name: String,
     pub handle: JoinHandle<()>,
     pub request_sender: mpsc::Sender<InputAgentSignal>,
-    pub response_receiver: mpsc::Receiver<OutputAgentSignal>,
+    pub response_receiver: Option<mpsc::Receiver<OutputAgentSignal>>,
 }
 
 impl AgentManager {
@@ -20,7 +20,7 @@ impl AgentManager {
             name,
             handle,
             request_sender,
-            response_receiver,
+            response_receiver: Some(response_receiver),
         }
     }
 }

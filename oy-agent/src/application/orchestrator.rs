@@ -99,7 +99,7 @@ pub(crate) async fn start(
     let (request_tx, mut request_rx) = channel::<InputOrchestratorSignal>(CHANNEL_SIZE);
     let (response_tx, response_rx) = channel::<OutputOrchestratorSignal>(CHANNEL_SIZE);
     let join_handle = tokio::spawn(async move {
-        loop {
+        'l:loop {
             let _ = response_tx.send(OutputOrchestratorSignal::Pause).await;
             if let Some(request) = request_rx.recv().await {
                 match request {
@@ -138,7 +138,7 @@ pub(crate) async fn start(
                                         .await;
 
                                     if !has_tool_calls {
-                                        continue;
+                                        continue 'l;
                                     }
 
                                     for tool_call in response.tool_calls.unwrap() {

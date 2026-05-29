@@ -8,6 +8,7 @@ use ratatui::{
 pub enum Message {
     UiMessages(String),
     AgentMessages(ChatMessage),
+    AgentStatus(Status),
 }
 
 impl Message {
@@ -62,6 +63,16 @@ impl Message {
 
                 lines
             }
+            Message::AgentStatus(status) => match status {
+                Status::Pause => vec![Line::from(Span::styled(
+                    format!("> pause"),
+                    Style::default().fg(Color::Black).bold(),
+                ))],
+                Status::Running => vec![Line::from(Span::styled(
+                    format!("> running"),
+                    Style::default().fg(Color::Black).bold(),
+                ))],
+            },
         }
     }
 
@@ -80,4 +91,10 @@ impl Message {
     //         }
     //     }
     // }
+}
+
+#[derive(Debug)]
+pub enum Status {
+    Pause,
+    Running,
 }

@@ -2,6 +2,7 @@
 use color_eyre::eyre::OptionExt;
 use crossterm::event::Event as CrosstermEvent;
 use futures::{FutureExt, StreamExt};
+use oy_agent::{AgentError, agent::OutputAgentSignal, oy_ai::ChatMessage};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -16,9 +17,11 @@ pub enum Event {
 
 #[derive(Clone, Debug)]
 pub enum AppEvent {
-    Increment,
-    Decrement,
     Quit,
+    ChatMessage(ChatMessage),
+    AgentError(String),
+    Pause,
+    Running,
 }
 
 #[derive(Debug)]
@@ -41,6 +44,13 @@ impl EventHandler {
         Self { sender, receiver }
     }
 
+    pub fn new_with_receiver(response_receiver: mpsc::Receiver<OutputAgentSignal>) -> Self {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        let actor = EventTask::new_with_response_receiver(sender.clone(), response_receiver);
+        tokio::spawn(async { actor.run().await });
+        Self { sender, receiver }
+    }
+
     pub async fn next(&mut self) -> color_eyre::Result<Event> {
         self.receiver
             .recv()
@@ -55,14 +65,28 @@ impl EventHandler {
 
 struct EventTask {
     sender: mpsc::UnboundedSender<Event>,
+    response_receiver: Option<mpsc::Receiver<OutputAgentSignal>>,
 }
 
 impl EventTask {
     fn new(sender: mpsc::UnboundedSender<Event>) -> Self {
-        Self { sender }
+        Self {
+            sender,
+            response_receiver: None,
+        }
     }
 
-    async fn run(self) -> color_eyre::Result<()> {
+    fn new_with_response_receiver(
+        sender: mpsc::UnboundedSender<Event>,
+        response_receiver: mpsc::Receiver<OutputAgentSignal>,
+    ) -> Self {
+        Self {
+            sender,
+            response_receiver: Some(response_receiver),
+        }
+    }
+
+    async fn run(mut self) -> color_eyre::Result<()> {
         let tick_rate = Duration::from_secs_f64(1.0 / TICK_FPS);
         let mut reader = crossterm::event::EventStream::new();
         let mut tick = tokio::time::interval(tick_rate);
@@ -79,6 +103,28 @@ impl EventTask {
               Some(Ok(evt)) = crossterm_event => {
                 self.send(Event::Crossterm(evt));
               }
+              msg_opt = async {
+                    if let Some(rx) = self.response_receiver.as_mut() {
+                        rx.recv().await
+                    } else {
+                        std::future::pending().await
+                    }
+                } => {
+                    match msg_opt {
+                        Some(msg) => {
+                            match msg {
+                                OutputAgentSignal::Pause => self.send(Event::App(AppEvent::Pause)),
+                                OutputAgentSignal::Running => self.send(Event::App(AppEvent::Running)),
+                                OutputAgentSignal::ChatMessage(chat_message) => self.send(Event::App(AppEvent::ChatMessage(chat_message))),
+                                OutputAgentSignal::AgentError(agent_error) => self.send(Event::App(AppEvent::AgentError(agent_error.to_string()))),
+                            }
+                        }
+                        None => {
+                            self.response_receiver = None;
+                            break; // 或继续
+                        }
+                    }
+                }
             };
         }
         Ok(())
