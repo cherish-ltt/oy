@@ -107,6 +107,7 @@ impl App {
                     self.expand_paste_snippets();
                     self.input.clear();
                     self.cursor_pos = 0;
+                    self.paste_counter = 0;
                     self.scroll_offset.set(u16::MAX);
                 }
             }
