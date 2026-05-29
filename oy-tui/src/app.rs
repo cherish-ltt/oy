@@ -207,11 +207,13 @@ impl App {
             if ch == '\n' {
                 row += 1;
                 col = 0;
-            } else {
-                col += 1;
-                if col as usize >= width {
-                    col = 0;
+            } else if let Some(w) = unicode_width::UnicodeWidthChar::width(ch) {
+                let w = w as u16;
+                if col + w > width as u16 {
+                    col = w;
                     row += 1;
+                } else {
+                    col += w;
                 }
             }
         }
@@ -231,28 +233,35 @@ impl App {
                 break;
             }
 
-            if row == target_row {
-                if col == target_col {
-                    return i;
-                }
-                best = i + ch.len_utf8();
-            }
-
             if ch == '\n' {
                 if row == target_row {
                     break;
                 }
                 row += 1;
                 col = 0;
-            } else {
-                col += 1;
-                if col as usize >= width {
-                    col = 0;
-                    row += 1;
-                    if row == target_row {
-                        best = i + ch.len_utf8();
-                    }
+                continue;
+            }
+
+            let w = match unicode_width::UnicodeWidthChar::width(ch) {
+                Some(w) => w as u16,
+                None => continue,
+            };
+
+            if row == target_row {
+                if col == target_col || (target_col > col && target_col < col + w) {
+                    return i;
                 }
+                best = i + ch.len_utf8();
+            }
+
+            if col + w > width as u16 {
+                col = w;
+                row += 1;
+                if row == target_row {
+                    best = i + ch.len_utf8();
+                }
+            } else {
+                col += w;
             }
         }
 
@@ -273,11 +282,13 @@ impl App {
             if ch == '\n' {
                 lines += 1;
                 col = 0;
-            } else {
-                col += 1;
-                if col as usize >= width {
-                    col = 0;
+            } else if let Some(w) = unicode_width::UnicodeWidthChar::width(ch) {
+                let w = w as u16;
+                if col + w > width as u16 {
+                    col = w;
                     lines += 1;
+                } else {
+                    col += w;
                 }
             }
         }
@@ -396,11 +407,13 @@ pub(crate) fn visual_cursor_pos(input: &str, cursor_pos: usize, width: usize) ->
         if ch == '\n' {
             row += 1;
             col = 0;
-        } else {
-            col += 1;
-            if col as usize >= width {
-                col = 0;
+        } else if let Some(w) = unicode_width::UnicodeWidthChar::width(ch) {
+            let w = w as u16;
+            if col + w > width as u16 {
+                col = w;
                 row += 1;
+            } else {
+                col += w;
             }
         }
     }

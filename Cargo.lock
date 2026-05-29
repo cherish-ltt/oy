@@ -1643,6 +1643,7 @@ dependencies = [
  "oy-agent",
  "ratatui",
  "tokio",
+ "unicode-width",
 ]
 
 [[package]]
