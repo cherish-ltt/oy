@@ -5,7 +5,7 @@ use crate::{
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::DefaultTerminal;
-use std::{cell::Cell, collections::VecDeque};
+use std::{cell::Cell, collections::{HashMap, VecDeque}};
 
 /// Application state
 #[derive(Debug)]
@@ -26,6 +26,10 @@ pub struct App {
     pub input_width: Cell<u16>,
     /// 消息区域的垂直滚动偏移量（从顶部数行的数量）
     pub scroll_offset: Cell<u16>,
+    /// 粘贴片段存储（占位符 -> 原始内容）
+    pub paste_snippets: HashMap<String, String>,
+    /// 粘贴计数器
+    pub paste_counter: usize,
     /// 事件处理器
     pub events: EventHandler,
 }
@@ -51,6 +55,8 @@ impl Default for App {
             cursor_y: Cell::new(0),
             input_width: Cell::new(0),
             scroll_offset: Cell::new(0),
+            paste_snippets: HashMap::new(),
+            paste_counter: 0,
             events: EventHandler::new(),
         }
     }
@@ -75,6 +81,9 @@ impl App {
                     {
                         self.handle_key_events(key_event)?
                     }
+                    crossterm::event::Event::Paste(text) => {
+                        self.handle_paste(&text);
+                    }
                     _ => {}
                 },
                 Event::App(app_event) => match app_event {
@@ -95,6 +104,7 @@ impl App {
             }
             KeyCode::Enter => {
                 if !self.input.is_empty() {
+                    self.expand_paste_snippets();
                     self.input.clear();
                     self.cursor_pos = 0;
                     self.scroll_offset.set(u16::MAX);
@@ -102,13 +112,15 @@ impl App {
             }
             KeyCode::Backspace => {
                 if self.cursor_pos > 0 {
-                    let len = self.input[..self.cursor_pos]
-                        .chars()
-                        .last()
-                        .map(|c| c.len_utf8())
-                        .unwrap_or(0);
-                    self.input.replace_range(self.cursor_pos - len..self.cursor_pos, "");
-                    self.cursor_pos -= len;
+                    if !self.delete_paste_placeholder() {
+                        let len = self.input[..self.cursor_pos]
+                            .chars()
+                            .last()
+                            .map(|c| c.len_utf8())
+                            .unwrap_or(0);
+                        self.input.replace_range(self.cursor_pos - len..self.cursor_pos, "");
+                        self.cursor_pos -= len;
+                    }
                 }
             }
             KeyCode::Left => {
@@ -143,6 +155,18 @@ impl App {
                     self.move_cursor_down(width);
                 }
             }
+            KeyCode::Char('v') if key_event.modifiers == KeyModifiers::CONTROL => {
+                self.paste_from_clipboard();
+            }
+            KeyCode::Char('V') if key_event.modifiers == KeyModifiers::CONTROL | KeyModifiers::SHIFT => {
+                self.paste_from_clipboard();
+            }
+            KeyCode::Char('v') if key_event.modifiers == KeyModifiers::ALT => {
+                self.paste_from_clipboard();
+            }
+            KeyCode::Insert if key_event.modifiers == KeyModifiers::SHIFT => {
+                self.paste_from_clipboard();
+            }
             KeyCode::Char(c) => {
                 self.input.insert(self.cursor_pos, c);
                 self.cursor_pos += c.len_utf8();
@@ -175,14 +199,19 @@ impl App {
         }
         let mut row = 0u16;
         let mut col = 0u16;
-        for (i, _) in self.input.char_indices() {
+        for (i, ch) in self.input.char_indices() {
             if i >= self.cursor_pos {
                 break;
             }
-            col += 1;
-            if col as usize >= width {
-                col = 0;
+            if ch == '\n' {
                 row += 1;
+                col = 0;
+            } else {
+                col += 1;
+                if col as usize >= width {
+                    col = 0;
+                    row += 1;
+                }
             }
         }
         (row, col)
@@ -196,22 +225,32 @@ impl App {
         let mut col = 0u16;
         let mut best = 0usize;
 
-        for (i, c) in self.input.char_indices() {
+        for (i, ch) in self.input.char_indices() {
             if row > target_row {
                 break;
             }
+
             if row == target_row {
                 if col == target_col {
                     return i;
                 }
-                best = i + c.len_utf8();
+                best = i + ch.len_utf8();
             }
-            col += 1;
-            if col as usize >= width {
-                col = 0;
-                row += 1;
+
+            if ch == '\n' {
                 if row == target_row {
-                    best = i + c.len_utf8();
+                    break;
+                }
+                row += 1;
+                col = 0;
+            } else {
+                col += 1;
+                if col as usize >= width {
+                    col = 0;
+                    row += 1;
+                    if row == target_row {
+                        best = i + ch.len_utf8();
+                    }
                 }
             }
         }
@@ -229,14 +268,109 @@ impl App {
         }
         let mut lines = 1u16;
         let mut col = 0u16;
-        for _ in self.input.chars() {
-            col += 1;
-            if col as usize >= width {
-                col = 0;
+        for ch in self.input.chars() {
+            if ch == '\n' {
                 lines += 1;
+                col = 0;
+            } else {
+                col += 1;
+                if col as usize >= width {
+                    col = 0;
+                    lines += 1;
+                }
             }
         }
         lines
+    }
+
+    fn handle_paste(&mut self, raw: &str) {
+        let mut text = raw.to_string();
+        // Strip UTF-8 BOM if present
+        if text.starts_with('\u{FEFF}') {
+            text = text[3..].to_string();
+        }
+        // Normalize line endings: CRLF → LF, then stray CR → LF
+        text = text.replace("\r\n", "\n").replace('\r', "\n");
+        // Trim trailing newline(s)
+        let text = text.trim_end_matches('\n').to_string();
+
+        if text.is_empty() {
+            return;
+        }
+
+        let line_count = text.lines().count();
+
+        if line_count >= 2 {
+            self.paste_counter += 1;
+            let snippet_id = format!("paste #{}", self.paste_counter);
+            let placeholder = format!("[{} +{} lines]", snippet_id, line_count);
+            self.input.insert_str(self.cursor_pos, &placeholder);
+            self.cursor_pos += placeholder.len();
+            self.paste_snippets.insert(snippet_id, text);
+        } else {
+            self.input.insert_str(self.cursor_pos, &text);
+            self.cursor_pos += text.len();
+        }
+    }
+
+    fn paste_from_clipboard(&mut self) {
+        let output = match std::process::Command::new("pbpaste").output() {
+            Ok(o) => o,
+            Err(_) => return,
+        };
+        if !output.status.success() {
+            return;
+        }
+        let text = match String::from_utf8(output.stdout) {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        self.handle_paste(&text);
+    }
+
+    fn delete_paste_placeholder(&mut self) -> bool {
+        if self.cursor_pos == 0 {
+            return false;
+        }
+        let search_start = self.cursor_pos.saturating_sub(256);
+        let head = &self.input[search_start..self.cursor_pos];
+
+        if !head.ends_with(']') {
+            return false;
+        }
+
+        if let Some(rel) = head.rfind("[paste #") {
+            let start = search_start + rel;
+            let placeholder = &self.input[start..self.cursor_pos];
+
+            if placeholder.len() > 14 && placeholder.ends_with(" lines]") {
+                let inner = &placeholder[1..placeholder.len() - 1];
+                let parts: Vec<&str> = inner.splitn(3, ' ').collect();
+                if parts.len() == 3 && parts[0] == "paste" {
+                    let id = parts[1].to_string();
+                    self.input.replace_range(start..self.cursor_pos, "");
+                    self.cursor_pos = start;
+                    self.paste_snippets.remove(&id);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn expand_paste_snippets(&mut self) {
+        let snippets = std::mem::take(&mut self.paste_snippets);
+        for (id, content) in snippets {
+            let placeholder = format!("[{} +{} lines]", id, content.lines().count());
+            while let Some(pos) = self.input.find(&placeholder) {
+                self.input.replace_range(pos..pos + placeholder.len(), &content);
+                if pos + placeholder.len() <= self.cursor_pos {
+                    self.cursor_pos = self.cursor_pos - placeholder.len() + content.len();
+                } else if pos < self.cursor_pos {
+                    self.cursor_pos = pos + content.len();
+                }
+            }
+        }
     }
 
     pub fn tick(&self) {
@@ -254,14 +388,19 @@ pub(crate) fn visual_cursor_pos(input: &str, cursor_pos: usize, width: usize) ->
     }
     let mut row = 0u16;
     let mut col = 0u16;
-    for (i, _) in input.char_indices() {
+    for (i, ch) in input.char_indices() {
         if i >= cursor_pos {
             break;
         }
-        col += 1;
-        if col as usize >= width {
-            col = 0;
+        if ch == '\n' {
             row += 1;
+            col = 0;
+        } else {
+            col += 1;
+            if col as usize >= width {
+                col = 0;
+                row += 1;
+            }
         }
     }
     (row, col)
