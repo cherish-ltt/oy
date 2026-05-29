@@ -100,10 +100,14 @@ impl Widget for &App {
         input_paragraph.render(chunks[1], buf);
 
         // --- Status Area (information) ---
-        let status_text = format!(
-            " Messages: {} | ↑/↓/←/→ move cursor | Enter send | Ctrl+C/Esc/q quit",
+        let mut status_text = format!(
+            " <Current Agent> (Cycle with shift+tab)\n Messages: {} | ↑/↓/←/→ move cursor | Enter send | Ctrl+C/Esc/q quit",
             self.messages.len()
         );
+
+        if let Some(main_agent) = &self.main_agent {
+            status_text = status_text.replace("<Current Agent>", &format!("<🖥 {}>",&main_agent.name));
+        }
         let status_paragraph = Paragraph::new(status_text)
             .alignment(Alignment::Left)
             .style(Style::default().fg(Color::Black).bg(Color::White));

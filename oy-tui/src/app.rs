@@ -1,14 +1,23 @@
 // app.rs
 use crate::{
+    agent::AgentManager,
     event::{AppEvent, Event, EventHandler},
-    load_config::GlobalTomlConfig,
-    message::Message,
+    load_config::{GlobalTomlConfig, build_provider_config, register_default_tools},
+    message::Message::{self, AgentMessages},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use oy_agent::{
+    application::orchestrator::start_agent_background,
+    infrastructure::{
+        agents::main_agent::MainAgent,
+        tools::ToolRegistry ,
+    },
+    oy_ai::OpenCodeGoProvider,
+};
 use ratatui::DefaultTerminal;
 use std::{
     cell::Cell,
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, VecDeque}
 };
 
 /// Application state
@@ -38,6 +47,8 @@ pub struct App {
     pub events: EventHandler,
     /// ai配置
     pub global_toml_config: Option<GlobalTomlConfig>,
+    /// main-agent
+    pub main_agent: Option<AgentManager>,
 }
 
 impl Default for App {
@@ -66,6 +77,7 @@ impl Default for App {
             paste_counter: 0,
             events: EventHandler::new(),
             global_toml_config,
+            main_agent: None,
         }
     }
 }
@@ -73,6 +85,37 @@ impl Default for App {
 impl App {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub async fn start_main_agent_background(mut self) -> Self {
+        if self.main_agent.is_some() {
+            return self;
+        }
+
+        let Some(global_toml_config) = &self.global_toml_config else {
+            return self;
+        };
+
+        let ai_config = build_provider_config(global_toml_config);
+
+        let provider = OpenCodeGoProvider::new(ai_config);
+        let mut registry = ToolRegistry::new();
+        register_default_tools(&mut registry);
+
+        let main_agent = MainAgent::new_with_max_iterations(None);
+        let (request_sender, response_receiver, join_handle) =
+            start_agent_background(main_agent, provider, registry).await;
+
+        let main_agent = AgentManager::new(
+            "MainAgent".to_owned(),
+            join_handle,
+            request_sender,
+            response_receiver,
+        );
+
+        self.main_agent = Some(main_agent);
+
+        self
     }
 
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> color_eyre::Result<()> {

@@ -1,6 +1,7 @@
 use crate::app::App;
 use crossterm::execute;
 
+mod agent;
 pub mod app;
 pub mod event;
 mod load_config;
@@ -12,7 +13,11 @@ async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
     execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste)?;
     let terminal = ratatui::init();
-    let result = App::new().run(terminal).await;
+    let result = App::new()
+        .start_main_agent_background()
+        .await
+        .run(terminal)
+        .await;
     ratatui::restore();
     execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste)?;
     result

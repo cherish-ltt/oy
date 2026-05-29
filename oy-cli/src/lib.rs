@@ -110,6 +110,7 @@ pub async fn run(args: CliArgs) -> Result<(), anyhow::Error> {
 
     let main_agent = MainAgent::new_with_max_iterations(None);
     let mut orchestrator = Orchestrator::new(main_agent, provider, registry);
+    orchestrator.init();
     let result = orchestrator.execute(&args.prompt).await?;
     println!("{}", result);
     Ok(())
