@@ -79,9 +79,15 @@ impl Orchestrator {
                         ))
                     })?;
                 let result = tool.execute(tool_call.arguments.clone())?;
-                let _ = self
-                    .agent
-                    .push_message_back(self.uuid, ChatMessage::tool(result, tool_call.id, Some(tool_call.function_name), Some(tool_call.arguments)));
+                let _ = self.agent.push_message_back(
+                    self.uuid,
+                    ChatMessage::tool(
+                        result,
+                        tool_call.id,
+                        Some(tool_call.function_name),
+                        Some(tool_call.arguments),
+                    ),
+                );
             }
         }
 
@@ -99,7 +105,7 @@ pub(crate) async fn start(
     let (request_tx, mut request_rx) = channel::<InputOrchestratorSignal>(CHANNEL_SIZE);
     let (response_tx, response_rx) = channel::<OutputOrchestratorSignal>(CHANNEL_SIZE);
     let join_handle = tokio::spawn(async move {
-        'l:loop {
+        'l: loop {
             let _ = response_tx.send(OutputOrchestratorSignal::Pause).await;
             if let Some(request) = request_rx.recv().await {
                 match request {
@@ -164,8 +170,14 @@ pub(crate) async fn start(
                                                                 ChatMessage::tool(
                                                                     result.clone(),
                                                                     tool_call.id.clone(),
-                                                                    Some(tool_call.function_name.clone()),
-                                                                    Some(tool_call.arguments.clone()),
+                                                                    Some(
+                                                                        tool_call
+                                                                            .function_name
+                                                                            .clone(),
+                                                                    ),
+                                                                    Some(
+                                                                        tool_call.arguments.clone(),
+                                                                    ),
                                                                 ),
                                                             );
                                                         let _ = response_tx
@@ -279,7 +291,13 @@ pub async fn start_agent_background(
         let mut orchestrator = Orchestrator::new(agent, provider, tool_registry);
         orchestrator.init();
         let (prompt_sender, response_receiver, _join_handle) = start(orchestrator).await;
-        agent_background_loop(signal_rx, prompt_sender, response_receiver, external_signal_tx).await;
+        agent_background_loop(
+            signal_rx,
+            prompt_sender,
+            response_receiver,
+            external_signal_tx,
+        )
+        .await;
     });
 
     (signal_tx, external_signal_rx, join_handle)
@@ -304,7 +322,13 @@ pub async fn start_agent_background_with_context(
             let _ = orchestrator.agent.push_message_back(orchestrator.uuid, msg);
         }
         let (prompt_sender, response_receiver, _join_handle) = start(orchestrator).await;
-        agent_background_loop(signal_rx, prompt_sender, response_receiver, external_signal_tx).await;
+        agent_background_loop(
+            signal_rx,
+            prompt_sender,
+            response_receiver,
+            external_signal_tx,
+        )
+        .await;
     });
 
     (signal_tx, external_signal_rx, join_handle)

@@ -24,7 +24,10 @@ impl Widget for &App {
         let input_height = input_text_height + 2;
 
         // Reserve space for popups when in selector/menu mode
-        let has_popup = matches!(self.app_mode, AppMode::CommandSelector{..} | AppMode::SubMenu{..});
+        let has_popup = matches!(
+            self.app_mode,
+            AppMode::CommandSelector { .. } | AppMode::SubMenu { .. }
+        );
         let popup_rows: u16 = if has_popup { 7 } else { 0 };
 
         let chunks = Layout::vertical([
@@ -89,7 +92,12 @@ impl Widget for &App {
         let inner_w = content_width as u16;
         let mut used_lines = 0usize;
 
-        for i in msg_idx..self.messages.len() {
+        for (i, _) in msg_heights
+            .iter()
+            .enumerate()
+            .take(self.messages.len())
+            .skip(msg_idx)
+        {
             if used_lines >= visible_height {
                 break;
             }
@@ -167,12 +175,12 @@ impl Widget for &App {
             .set(chunks[1].y + 1 + cursor_visual_row - input_scroll);
         self.input_width.set(chunks[1].width.saturating_sub(2));
 
-        let input_title = if matches!(self.app_mode, AppMode::ModelForm { .. }) && !self.input_title.is_empty()
-        {
-            self.input_title.clone()
-        } else {
-            "Input".to_string()
-        };
+        let input_title =
+            if matches!(self.app_mode, AppMode::ModelForm { .. }) && !self.input_title.is_empty() {
+                self.input_title.clone()
+            } else {
+                "Input".to_string()
+            };
 
         let input_paragraph = Paragraph::new(input_display)
             .block(
@@ -244,32 +252,31 @@ impl Widget for &App {
             items,
             selected,
         } = &self.app_mode
+            && !items.is_empty()
         {
-            if !items.is_empty() {
-                let sel = *selected;
-                let mut popup_text = Text::default();
-                for (i, (name, desc)) in items.iter().enumerate() {
-                    let style = if i == sel {
-                        Style::default().fg(t.surface_bg).bg(t.accent)
-                    } else {
-                        Style::default().fg(t.surface_fg)
-                    };
-                    popup_text.push_line(Line::from(vec![
-                        Span::styled(if i == sel { "\u{25b8} " } else { "  " }, style),
-                        Span::styled(format!("{}  - {}", name, desc), style),
-                    ]));
-                }
-                let popup = Paragraph::new(popup_text)
-                    .block(
-                        Block::bordered()
-                            .title("Settings")
-                            .title_alignment(Alignment::Left)
-                            .border_type(BorderType::Rounded)
-                            .border_style(Style::default().fg(t.accent)),
-                    )
-                    .style(Style::default().bg(t.surface_bg));
-                popup.render(chunks[2], buf);
+            let sel = *selected;
+            let mut popup_text = Text::default();
+            for (i, (name, desc)) in items.iter().enumerate() {
+                let style = if i == sel {
+                    Style::default().fg(t.surface_bg).bg(t.accent)
+                } else {
+                    Style::default().fg(t.surface_fg)
+                };
+                popup_text.push_line(Line::from(vec![
+                    Span::styled(if i == sel { "\u{25b8} " } else { "  " }, style),
+                    Span::styled(format!("{}  - {}", name, desc), style),
+                ]));
             }
+            let popup = Paragraph::new(popup_text)
+                .block(
+                    Block::bordered()
+                        .title("Settings")
+                        .title_alignment(Alignment::Left)
+                        .border_type(BorderType::Rounded)
+                        .border_style(Style::default().fg(t.accent)),
+                )
+                .style(Style::default().bg(t.surface_bg));
+            popup.render(chunks[2], buf);
         }
 
         // ── Command Selector Popup ──
@@ -284,11 +291,8 @@ impl Widget for &App {
                 let scroll = *scroll_offset;
                 let total = matches.len();
                 let max_rows = 5usize;
-                let visible: Vec<&&CommandInfo> = matches
-                    .iter()
-                    .skip(scroll)
-                    .take(max_rows)
-                    .collect();
+                let visible: Vec<&&CommandInfo> =
+                    matches.iter().skip(scroll).take(max_rows).collect();
                 let has_more_down = scroll + max_rows < total;
                 let has_more_up = scroll > 0;
 
@@ -314,14 +318,8 @@ impl Widget for &App {
                         Style::default().fg(t.surface_fg)
                     };
                     popup_text.push_line(Line::from(vec![
-                        Span::styled(
-                            if abs_idx == sel { "\u{25b8} " } else { "  " },
-                            style,
-                        ),
-                        Span::styled(
-                            format!("{}  - {}", cmd.name, cmd.description),
-                            style,
-                        ),
+                        Span::styled(if abs_idx == sel { "\u{25b8} " } else { "  " }, style),
+                        Span::styled(format!("{}  - {}", cmd.name, cmd.description), style),
                     ]));
                 }
                 if has_more_down {

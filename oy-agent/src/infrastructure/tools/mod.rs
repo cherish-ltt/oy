@@ -62,7 +62,9 @@ impl ToolRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::tools::{read::ReadTool, write::WriteTool, edit::EditTool, bash::BashTool};
+    use crate::infrastructure::tools::{
+        bash::BashTool, edit::EditTool, read::ReadTool, write::WriteTool,
+    };
 
     fn sample_registry() -> ToolRegistry {
         let mut r = ToolRegistry::new();

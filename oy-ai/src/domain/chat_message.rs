@@ -78,7 +78,12 @@ impl ChatMessage {
         }
     }
 
-    pub fn tool(content: impl Into<String>, tool_call_id: String, function_name: Option<String>, tool_call_arguments: Option<Value>) -> Self {
+    pub fn tool(
+        content: impl Into<String>,
+        tool_call_id: String,
+        function_name: Option<String>,
+        tool_call_arguments: Option<Value>,
+    ) -> Self {
         Self {
             role: Role::Tool,
             content: Some(content.into()),
@@ -273,7 +278,9 @@ mod tests {
         assert_eq!(msg.role, Role::Tool);
         assert_eq!(msg.function_name.as_deref(), Some("Edit"));
         assert_eq!(
-            msg.tool_call_arguments.as_ref().and_then(|v| v.get("old_text")),
+            msg.tool_call_arguments
+                .as_ref()
+                .and_then(|v| v.get("old_text")),
             Some(&json!("foo"))
         );
     }
@@ -301,7 +308,10 @@ mod tests {
         let json_str = serde_json::to_string(&original).unwrap();
         let deserialized: ChatMessage = serde_json::from_str(&json_str).unwrap();
         assert_eq!(deserialized.tool_calls.as_ref().unwrap().len(), 1);
-        assert_eq!(deserialized.tool_calls.as_ref().unwrap()[0].function_name, "Bash");
+        assert_eq!(
+            deserialized.tool_calls.as_ref().unwrap()[0].function_name,
+            "Bash"
+        );
     }
 
     #[test]

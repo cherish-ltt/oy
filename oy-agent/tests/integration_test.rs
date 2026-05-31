@@ -108,17 +108,15 @@ async fn test_orchestrator_max_iterations() {
 
 #[tokio::test]
 async fn test_orchestrator_unknown_tool() {
-    let provider = MockProvider::new(vec![
-        ChatMessage::assistant(
-            None,
-            None,
-            Some(vec![ToolCall {
-                id: "call_1".into(),
-                function_name: "FakeTool".into(),
-                arguments: serde_json::json!({}),
-            }]),
-        ),
-    ]);
+    let provider = MockProvider::new(vec![ChatMessage::assistant(
+        None,
+        None,
+        Some(vec![ToolCall {
+            id: "call_1".into(),
+            function_name: "FakeTool".into(),
+            arguments: serde_json::json!({}),
+        }]),
+    )]);
     let registry = ToolRegistry::new();
     let main_agent = MainAgent::new_with_max_iterations(Some(10));
     let mut orchestrator = Orchestrator::new(main_agent, provider, registry);

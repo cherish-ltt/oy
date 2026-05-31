@@ -5,17 +5,15 @@ use crate::{
     event::{AppEvent, Event, EventHandler},
     load_config::{GlobalTomlConfig, build_provider_config, register_default_tools},
     message::{
-        Message::{self, AgentMessages, ToolCallMessage, UiMessages},
+        Message::{self, AgentMessages, ToolCallMsg, UiMessages},
         Status, ToolCallState,
     },
-    theme::{Theme, DARK_THEME, LIGHT_THEME},
+    theme::{DARK_THEME, LIGHT_THEME, Theme},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use oy_agent::{
     agent::InputAgentSignal,
-    application::orchestrator::{
-        start_agent_background, start_agent_background_with_context,
-    },
+    application::orchestrator::{start_agent_background, start_agent_background_with_context},
     infrastructure::{agents::main_agent::MainAgent, tools::ToolRegistry},
     oy_ai::OpenCodeGoProvider,
 };
@@ -40,7 +38,10 @@ pub enum AppMode {
         items: Vec<(String, String)>,
         selected: usize,
     },
-    ModelForm { step: usize, values: [String; 3] },
+    ModelForm {
+        step: usize,
+        values: [String; 3],
+    },
 }
 
 /// Application state
@@ -211,52 +212,52 @@ impl App {
     async fn handle_chat_message(&mut self, chat_message: oy_agent::oy_ai::ChatMessage) {
         use oy_agent::oy_ai::Role;
 
-        // Assistant message with tool calls: split into content + ToolCallMessage
-        if chat_message.role == Role::Assistant {
-            if let Some(tool_calls) = &chat_message.tool_calls {
-                if !tool_calls.is_empty() {
-                    // Push assistant content (thinking/reasoning) without tool calls
-                    let mut content_msg = chat_message.clone();
-                    content_msg.tool_calls = None;
-                    if content_msg.content.is_some() || content_msg.reasoning_content.is_some() {
-                        self.messages.push_back(AgentMessages(content_msg, false));
-                    }
-                    // Push a ToolCallMessage for each tool call
-                    for tc in tool_calls {
-                        self.messages.push_back(ToolCallMessage(ToolCallState {
-                            function_name: tc.function_name.clone(),
-                            tool_call_id: tc.id.clone(),
-                            result: None,
-                            start_time: Instant::now(),
-                            end_time: None,
-                            expanded: false,
-                        }));
-                    }
-                    if self.auto_scroll.get() {
-                        self.scroll_offset.set(u16::MAX);
-                    }
-                    return;
-                }
+        // Assistant message with tool calls: split into content + ToolCallMsg
+        if chat_message.role == Role::Assistant
+            && let Some(tool_calls) = &chat_message.tool_calls
+            && !tool_calls.is_empty()
+        {
+            // Push assistant content (thinking/reasoning) without tool calls
+            let mut content_msg = chat_message.clone();
+            content_msg.tool_calls = None;
+            if content_msg.content.is_some() || content_msg.reasoning_content.is_some() {
+                self.messages.push_back(AgentMessages(content_msg, false));
             }
+            // Push a ToolCallMsg for each tool call
+            for tc in tool_calls {
+                self.messages.push_back(ToolCallMsg(ToolCallState {
+                    function_name: tc.function_name.clone(),
+                    tool_call_id: tc.id.clone(),
+                    result: None,
+                    start_time: Instant::now(),
+                    end_time: None,
+                    expanded: false,
+                }));
+            }
+            if self.auto_scroll.get() {
+                self.scroll_offset.set(u16::MAX);
+            }
+            return;
         }
 
-        // Tool result: find matching ToolCallMessage by tool_call_id
-        if chat_message.role == Role::Tool {
-            if let Some(call_id) = &chat_message.tool_call_id {
-                for msg in self.messages.iter_mut().rev() {
-                    if let ToolCallMessage(state) = msg {
-                        if state.result.is_none() && state.tool_call_id == *call_id {
-                            state.result = Some(chat_message);
-                            state.end_time = Some(Instant::now());
-                            break;
-                        }
-                    }
+        // Tool result: find matching ToolCallMsg by tool_call_id
+        if chat_message.role == Role::Tool
+            && let Some(call_id) = &chat_message.tool_call_id
+        {
+            for msg in self.messages.iter_mut().rev() {
+                if let ToolCallMsg(state) = msg
+                    && state.result.is_none()
+                    && state.tool_call_id == *call_id
+                {
+                    state.result = Some(chat_message);
+                    state.end_time = Some(Instant::now());
+                    break;
                 }
-                if self.auto_scroll.get() {
-                    self.scroll_offset.set(u16::MAX);
-                }
-                return;
             }
+            if self.auto_scroll.get() {
+                self.scroll_offset.set(u16::MAX);
+            }
+            return;
         }
 
         // Regular message (no tool calls / no tool result): push as-is
@@ -275,7 +276,7 @@ impl App {
                         *expanded = !*expanded;
                         break;
                     }
-                    Message::ToolCallMessage(state) => {
+                    Message::ToolCallMsg(state) => {
                         state.expanded = !state.expanded;
                         break;
                     }
@@ -287,15 +288,11 @@ impl App {
 
         match self.app_mode {
             AppMode::Normal => self.handle_key_normal(key_event).await,
-            AppMode::CommandSelector {
-                selected, ..
-            } => self.handle_key_command_selector(key_event, selected).await,
-            AppMode::ModelForm { .. } => {
-                self.handle_key_model_form(key_event).await
+            AppMode::CommandSelector { selected, .. } => {
+                self.handle_key_command_selector(key_event, selected).await
             }
-            AppMode::SubMenu { .. } => {
-                self.handle_key_submenu(key_event).await
-            }
+            AppMode::ModelForm { .. } => self.handle_key_model_form(key_event).await,
+            AppMode::SubMenu { .. } => self.handle_key_submenu(key_event).await,
         }
     }
 
@@ -413,11 +410,7 @@ impl App {
         match key_event.code {
             KeyCode::Up => {
                 let new_sel = if selected == 0 { max_idx } else { selected - 1 };
-                let scroll_offset = Self::adjust_scroll(
-                    new_sel,
-                    matches.len(),
-                    MAX_POPUP_ROWS,
-                );
+                let scroll_offset = Self::adjust_scroll(new_sel, matches.len(), MAX_POPUP_ROWS);
                 self.app_mode = AppMode::CommandSelector {
                     selected: new_sel,
                     scroll_offset,
@@ -425,30 +418,24 @@ impl App {
             }
             KeyCode::Down => {
                 let new_sel = if selected >= max_idx { 0 } else { selected + 1 };
-                let scroll_offset = Self::adjust_scroll(
-                    new_sel,
-                    matches.len(),
-                    MAX_POPUP_ROWS,
-                );
+                let scroll_offset = Self::adjust_scroll(new_sel, matches.len(), MAX_POPUP_ROWS);
                 self.app_mode = AppMode::CommandSelector {
                     selected: new_sel,
                     scroll_offset,
                 };
             }
-            KeyCode::Enter => {
-                if !matches.is_empty() {
-                    let cmd = matches[selected.min(max_idx)].name;
-                    let input = std::mem::take(&mut self.input);
-                    self.cursor_pos = 0;
-                    // If user typed the full command or selected from menu, execute it
-                    if input == cmd || input.starts_with(cmd) {
-                        self.execute_command(cmd).await;
-                    } else {
-                        // Replace input with full command name
-                        self.input = cmd.to_string();
-                        self.cursor_pos = self.input.len();
-                        self.execute_command(cmd).await;
-                    }
+            KeyCode::Enter if !matches.is_empty() => {
+                let cmd = matches[selected.min(max_idx)].name;
+                let input = std::mem::take(&mut self.input);
+                self.cursor_pos = 0;
+                // If user typed the full command or selected from menu, execute it
+                if input == cmd || input.starts_with(cmd) {
+                    self.execute_command(cmd).await;
+                } else {
+                    // Replace input with full command name
+                    self.input = cmd.to_string();
+                    self.cursor_pos = self.input.len();
+                    self.execute_command(cmd).await;
                 }
             }
             KeyCode::Esc => {
@@ -517,8 +504,7 @@ impl App {
                 values[step] = std::mem::take(&mut self.input);
                 self.cursor_pos = 0;
                 if step == 2 {
-                    let [url, key, model] =
-                        std::mem::take(&mut values);
+                    let [url, key, model] = std::mem::take(&mut values);
                     self.execute_model_command(url, key, model).await;
                     self.app_mode = AppMode::Normal;
                     self.input_title.clear();
@@ -804,20 +790,20 @@ impl App {
             return false;
         }
 
-        if let Some(rel) = before.rfind("[paste #") {
-            if rel >= search_from {
-                let placeholder = &self.input[rel..self.cursor_pos];
+        if let Some(rel) = before.rfind("[paste #")
+            && rel >= search_from
+        {
+            let placeholder = &self.input[rel..self.cursor_pos];
 
-                if placeholder.len() > 14 && placeholder.ends_with(" lines]") {
-                    let inner = &placeholder[1..placeholder.len() - 1];
-                    let parts: Vec<&str> = inner.splitn(3, ' ').collect();
-                    if parts.len() == 3 && parts[0] == "paste" {
-                        let id = parts[1].to_string();
-                        self.input.replace_range(rel..self.cursor_pos, "");
-                        self.cursor_pos = rel;
-                        self.paste_snippets.remove(&id);
-                        return true;
-                    }
+            if placeholder.len() > 14 && placeholder.ends_with(" lines]") {
+                let inner = &placeholder[1..placeholder.len() - 1];
+                let parts: Vec<&str> = inner.splitn(3, ' ').collect();
+                if parts.len() == 3 && parts[0] == "paste" {
+                    let id = parts[1].to_string();
+                    self.input.replace_range(rel..self.cursor_pos, "");
+                    self.cursor_pos = rel;
+                    self.paste_snippets.remove(&id);
+                    return true;
                 }
             }
         }
@@ -848,22 +834,16 @@ impl App {
                 };
             }
             KeyCode::Down => {
-                let new_sel = if selected >= max_idx {
-                    0
-                } else {
-                    selected + 1
-                };
+                let new_sel = if selected >= max_idx { 0 } else { selected + 1 };
                 self.app_mode = AppMode::SubMenu {
                     title,
                     items,
                     selected: new_sel,
                 };
             }
-            KeyCode::Enter => {
-                if !items.is_empty() {
-                    let item = &items[selected.min(max_idx)];
-                    self.execute_submenu_item(&title, &item.0).await;
-                }
+            KeyCode::Enter if !items.is_empty() => {
+                let item = &items[selected.min(max_idx)];
+                self.execute_submenu_item(&title, &item.0).await;
             }
             KeyCode::Esc => {
                 self.app_mode = AppMode::Normal;
@@ -907,10 +887,8 @@ impl App {
                     Some(CommandId::ThemeLight) => self.switch_theme("light"),
                     Some(CommandId::ThemeDark) => self.switch_theme("dark"),
                     _ => {
-                        self.messages.push_back(UiMessages(format!(
-                            "Unknown submenu item: {}",
-                            item_name
-                        )));
+                        self.messages
+                            .push_back(UiMessages(format!("Unknown submenu item: {}", item_name)));
                         if self.auto_scroll.get() {
                             self.scroll_offset.set(u16::MAX);
                         }
@@ -927,21 +905,21 @@ impl App {
         let trimmed = input.trim();
 
         // Check if any top-level command matches and has children → open submenu
-        if let Some(cmd) = self.command_registry.search(trimmed).first() {
-            if !cmd.children.is_empty() {
-                let items: Vec<(String, String)> = cmd
-                    .children
-                    .iter()
-                    .map(|c| (c.name.to_string(), c.description.to_string()))
-                    .collect();
-                let title = cmd.name.to_string();
-                self.app_mode = AppMode::SubMenu {
-                    title,
-                    items,
-                    selected: 0,
-                };
-                return;
-            }
+        if let Some(cmd) = self.command_registry.search(trimmed).first()
+            && !cmd.children.is_empty()
+        {
+            let items: Vec<(String, String)> = cmd
+                .children
+                .iter()
+                .map(|c| (c.name.to_string(), c.description.to_string()))
+                .collect();
+            let title = cmd.name.to_string();
+            self.app_mode = AppMode::SubMenu {
+                title,
+                items,
+                selected: 0,
+            };
+            return;
         }
 
         if trimmed == "/model" || trimmed.starts_with("/model ") {

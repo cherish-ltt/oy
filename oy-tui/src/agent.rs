@@ -1,10 +1,16 @@
-use oy_agent::{agent::{InputAgentSignal, OutputAgentSignal}, oy_ai::ChatMessage};
-use tokio::{sync::{mpsc, oneshot}, task::JoinHandle};
+use oy_agent::{
+    agent::{InputAgentSignal, OutputAgentSignal},
+    oy_ai::ChatMessage,
+};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinHandle,
+};
 
 #[derive(Debug)]
-pub(crate) struct AgentManager {
+pub struct AgentManager {
     pub name: String,
-    pub handle: JoinHandle<()>,
+    pub _handle: JoinHandle<()>,
     pub request_sender: mpsc::Sender<InputAgentSignal>,
     pub response_receiver: Option<mpsc::Receiver<OutputAgentSignal>>,
 }
@@ -28,7 +34,7 @@ impl AgentManager {
     ) -> Self {
         Self {
             name,
-            handle,
+            _handle: handle,
             request_sender,
             response_receiver: Some(response_receiver),
         }

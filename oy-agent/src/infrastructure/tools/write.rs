@@ -113,10 +113,12 @@ mod tests {
     fn test_write_tool_flat_path() {
         let tmp = std::env::temp_dir().join("oy_test_write_flat.txt");
         let path_str = tmp.to_string_lossy().to_string();
-        let result = WriteTool.execute(json!({
-            "file_path": path_str,
-            "content": "flat"
-        })).unwrap();
+        let result = WriteTool
+            .execute(json!({
+                "file_path": path_str,
+                "content": "flat"
+            }))
+            .unwrap();
         assert!(result.contains("Successfully wrote"));
         assert!(tmp.exists());
         let _ = std::fs::remove_file(&tmp);

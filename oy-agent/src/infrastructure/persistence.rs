@@ -46,7 +46,8 @@ pub fn load_session(path: &Path) -> Result<Box<dyn Agent>, AgentError> {
         AgentError::SessionPersistenceError(format!("Deserialization error: {}", e))
     })?;
 
-    let file_name = path.file_stem()
+    let file_name = path
+        .file_stem()
         .ok_or_else(|| AgentError::SessionPersistenceError("Invalid file name".into()))?;
     let uuid = Uuid::from_str(&file_name.to_string_lossy())?;
     let mut agent = Box::new(MainAgent::new_with_max_iterations(None));

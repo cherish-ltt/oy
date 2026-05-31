@@ -41,7 +41,8 @@ impl GlobalTomlConfig {
     pub fn save(&self) -> Result<(), String> {
         let path = config_path().ok_or("Cannot determine home directory")?;
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("Failed to create config dir: {}", e))?;
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create config dir: {}", e))?;
         }
         // Read existing config and merge
         let mut existing = Self::load().unwrap_or_default();
