@@ -40,7 +40,7 @@ jobs:
               EXT=""
               ;;
             macos-latest)
-              PLATFORM="x86_64-apple-darwin"
+              PLATFORM="aarch64-apple-darwin"
               EXT=""
               ;;
             windows-latest)
@@ -48,11 +48,11 @@ jobs:
               EXT=".exe"
               ;;
           esac
-          cp "target/release/oy-code-cli${EXT}" "oy-code-cli-${PLATFORM}${EXT}"
+          cp "target/release/oy${EXT}" "oy-${PLATFORM}${EXT}"
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          files: oy-code-cli-*
+          files: oy-*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
