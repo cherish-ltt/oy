@@ -1,13 +1,14 @@
 // app.rs
 use crate::{
     agent::AgentManager,
-    command::CommandRegistry,
+    command::{CommandId, CommandRegistry, theme_items},
     event::{AppEvent, Event, EventHandler},
     load_config::{GlobalTomlConfig, build_provider_config, register_default_tools},
     message::{
         Message::{self, AgentMessages, AgentStatus, ToolCallMessage, UiMessages},
         Status, ToolCallState,
     },
+    theme::{Theme, DARK_THEME, LIGHT_THEME},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use oy_agent::{
@@ -18,6 +19,8 @@ use oy_agent::{
     infrastructure::{agents::main_agent::MainAgent, tools::ToolRegistry},
     oy_ai::OpenCodeGoProvider,
 };
+const MAX_POPUP_ROWS: usize = 5;
+
 use ratatui::DefaultTerminal;
 use std::{
     cell::Cell,
@@ -28,7 +31,15 @@ use std::{
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppMode {
     Normal,
-    CommandSelector { selected: usize },
+    CommandSelector {
+        selected: usize,
+        scroll_offset: usize,
+    },
+    SubMenu {
+        title: String,
+        items: Vec<(String, String)>,
+        selected: usize,
+    },
     ModelForm { step: usize, values: [String; 3] },
 }
 
@@ -69,6 +80,8 @@ pub struct App {
     pub app_mode: AppMode,
     /// Input 框标题（form 模式下用）
     pub input_title: String,
+    /// 当前主题
+    pub theme: &'static Theme,
 }
 
 impl App {
@@ -119,6 +132,7 @@ impl App {
             command_registry,
             app_mode: AppMode::Normal,
             input_title: String::new(),
+            theme: &DARK_THEME,
         }
     }
 
@@ -245,11 +259,14 @@ impl App {
     pub async fn handle_key_events(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
         match self.app_mode {
             AppMode::Normal => self.handle_key_normal(key_event).await,
-            AppMode::CommandSelector { selected } => {
-                self.handle_key_command_selector(key_event, selected).await
-            }
+            AppMode::CommandSelector {
+                selected, ..
+            } => self.handle_key_command_selector(key_event, selected).await,
             AppMode::ModelForm { .. } => {
                 self.handle_key_model_form(key_event).await
+            }
+            AppMode::SubMenu { .. } => {
+                self.handle_key_submenu(key_event).await
             }
         }
     }
@@ -360,7 +377,10 @@ impl App {
                 self.cursor_pos += c.len_utf8();
                 // Enter command mode when input starts with "/"
                 if self.input == "/" || (self.input.starts_with('/') && self.input.len() > 1) {
-                    self.app_mode = AppMode::CommandSelector { selected: 0 };
+                    self.app_mode = AppMode::CommandSelector {
+                        selected: 0,
+                        scroll_offset: 0,
+                    };
                 }
             }
             _ => {}
@@ -379,11 +399,27 @@ impl App {
         match key_event.code {
             KeyCode::Up => {
                 let new_sel = if selected == 0 { max_idx } else { selected - 1 };
-                self.app_mode = AppMode::CommandSelector { selected: new_sel };
+                let scroll_offset = Self::adjust_scroll(
+                    new_sel,
+                    matches.len(),
+                    MAX_POPUP_ROWS,
+                );
+                self.app_mode = AppMode::CommandSelector {
+                    selected: new_sel,
+                    scroll_offset,
+                };
             }
             KeyCode::Down => {
                 let new_sel = if selected >= max_idx { 0 } else { selected + 1 };
-                self.app_mode = AppMode::CommandSelector { selected: new_sel };
+                let scroll_offset = Self::adjust_scroll(
+                    new_sel,
+                    matches.len(),
+                    MAX_POPUP_ROWS,
+                );
+                self.app_mode = AppMode::CommandSelector {
+                    selected: new_sel,
+                    scroll_offset,
+                };
             }
             KeyCode::Enter => {
                 if !matches.is_empty() {
@@ -414,7 +450,10 @@ impl App {
                 if new_matches.is_empty() {
                     self.app_mode = AppMode::Normal;
                 } else {
-                    self.app_mode = AppMode::CommandSelector { selected: 0 };
+                    self.app_mode = AppMode::CommandSelector {
+                        selected: 0,
+                        scroll_offset: 0,
+                    };
                 }
             }
             KeyCode::Backspace if self.cursor_pos > 0 => {
@@ -433,7 +472,10 @@ impl App {
                     if new_matches.is_empty() {
                         self.app_mode = AppMode::Normal;
                     } else {
-                        self.app_mode = AppMode::CommandSelector { selected: 0 };
+                        self.app_mode = AppMode::CommandSelector {
+                            selected: 0,
+                            scroll_offset: 0,
+                        };
                     }
                 }
             }
@@ -769,8 +811,125 @@ impl App {
     }
 
     /// Execute a slash command (called after input is already taken from self.input).
+    async fn handle_key_submenu(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
+        // Extract current submenu state
+        let snapshot = match &self.app_mode {
+            AppMode::SubMenu {
+                title,
+                items,
+                selected,
+            } => (title.clone(), items.clone(), *selected),
+            _ => return Ok(()),
+        };
+        let (title, items, selected) = snapshot;
+        let max_idx = items.len().saturating_sub(1);
+
+        match key_event.code {
+            KeyCode::Up => {
+                let new_sel = if selected == 0 { max_idx } else { selected - 1 };
+                self.app_mode = AppMode::SubMenu {
+                    title,
+                    items,
+                    selected: new_sel,
+                };
+            }
+            KeyCode::Down => {
+                let new_sel = if selected >= max_idx {
+                    0
+                } else {
+                    selected + 1
+                };
+                self.app_mode = AppMode::SubMenu {
+                    title,
+                    items,
+                    selected: new_sel,
+                };
+            }
+            KeyCode::Enter => {
+                if !items.is_empty() {
+                    let item = &items[selected.min(max_idx)];
+                    self.execute_submenu_item(&title, &item.0).await;
+                }
+            }
+            KeyCode::Esc => {
+                self.app_mode = AppMode::Normal;
+                self.input.clear();
+                self.cursor_pos = 0;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn execute_submenu_item(&mut self, parent_title: &str, item_name: &str) {
+        match parent_title {
+            "/settings" if item_name == "/theme" => {
+                // Open theme submenu
+                let theme_items = theme_items();
+                let items: Vec<(String, String)> = theme_items
+                    .iter()
+                    .map(|c| (c.name.to_string(), c.description.to_string()))
+                    .collect();
+                self.app_mode = AppMode::SubMenu {
+                    title: format!("{} {}", parent_title, item_name),
+                    items,
+                    selected: 0,
+                };
+            }
+            _ => {
+                // Check if item has a CommandId
+                let matched_id = theme_items()
+                    .iter()
+                    .chain(
+                        self.command_registry
+                            .commands
+                            .iter()
+                            .flat_map(|c| c.children.iter()),
+                    )
+                    .find(|ci| ci.name == item_name)
+                    .map(|ci| ci.id);
+
+                match matched_id {
+                    Some(CommandId::ThemeLight) => self.switch_theme("light"),
+                    Some(CommandId::ThemeDark) => self.switch_theme("dark"),
+                    _ => {
+                        self.messages.push_back(UiMessages(format!(
+                            "Unknown submenu item: {}",
+                            item_name
+                        )));
+                        if self.auto_scroll.get() {
+                            self.scroll_offset.set(u16::MAX);
+                        }
+                    }
+                }
+                self.app_mode = AppMode::Normal;
+                self.input.clear();
+                self.cursor_pos = 0;
+            }
+        }
+    }
+
     async fn execute_command(&mut self, input: &str) {
         let trimmed = input.trim();
+
+        // Check if any top-level command matches and has children → open submenu
+        if let Some(cmd) = self.command_registry.search(trimmed).first() {
+            if !cmd.children.is_empty() {
+                let items: Vec<(String, String)> = cmd
+                    .children
+                    .iter()
+                    .map(|c| (c.name.to_string(), c.description.to_string()))
+                    .collect();
+                let title = cmd.name.to_string();
+                self.app_mode = AppMode::SubMenu {
+                    title,
+                    items,
+                    selected: 0,
+                };
+                return;
+            }
+        }
+
         if trimmed == "/model" || trimmed.starts_with("/model ") {
             self.input_title = "API Base URL:".to_string();
             self.app_mode = AppMode::ModelForm {
@@ -783,6 +942,18 @@ impl App {
             if self.auto_scroll.get() {
                 self.scroll_offset.set(u16::MAX);
             }
+        }
+    }
+
+    fn switch_theme(&mut self, name: &str) {
+        self.theme = match name {
+            "light" => &LIGHT_THEME,
+            _ => &DARK_THEME,
+        };
+        self.messages
+            .push_back(UiMessages(format!("Switched to {} theme", self.theme.name)));
+        if self.auto_scroll.get() {
+            self.scroll_offset.set(u16::MAX);
         }
     }
 
@@ -860,6 +1031,23 @@ impl App {
                     self.cursor_pos = pos + content.len();
                 }
             }
+        }
+    }
+
+    /// Adjust scroll offset so `selected` stays visible within `max_visible` rows.
+    fn adjust_scroll(selected: usize, total: usize, max_visible: usize) -> usize {
+        if total <= max_visible {
+            return 0;
+        }
+        if selected < max_visible {
+            // First page
+            0
+        } else if selected + max_visible >= total {
+            // Last page
+            total - max_visible
+        } else {
+            // Middle — keep selected near middle of visible window
+            selected - max_visible / 2
         }
     }
 

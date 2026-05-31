@@ -7,6 +7,7 @@ mod command;
 pub mod event;
 mod load_config;
 mod message;
+mod theme;
 pub mod ui;
 
 #[tokio::main]

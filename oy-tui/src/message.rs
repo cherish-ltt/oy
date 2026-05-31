@@ -7,6 +7,8 @@ use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use std::time::Instant;
 use unicode_width::UnicodeWidthStr;
 
+use crate::theme::Theme;
+
 /// Maximum lines to show for a read tool result (when collapsed)
 const MAX_READ_LINES: usize = 5;
 /// Maximum lines to show for a bash tool result (when collapsed) — shows the *last* N lines
@@ -35,22 +37,22 @@ impl Message {
     /// Build the styled lines for display.
     /// For Tool messages with a known function_name, content is truncated per tool type
     /// unless `expanded` is true.
-    pub fn to_lines(&self) -> Vec<Line<'_>> {
+    pub fn to_lines(&self, theme: &Theme) -> Vec<Line<'_>> {
         match self {
             Message::UiMessages(text) => {
                 vec![
                     Line::from(Span::styled(
                         format!("> {}", text),
-                        Style::default().fg(Color::Blue).bold(),
+                        Style::default().fg(theme.info_fg).bold(),
                     )),
                     Line::from(Span::raw("")),
                 ]
             }
             Message::AgentMessages(chat_message, expanded) => {
                 let role_style = match chat_message.role {
-                    Role::User => Style::default().fg(Color::Blue),
-                    Role::Assistant => Style::default().fg(Color::Green),
-                    Role::Tool => Style::default().fg(Color::Magenta),
+                    Role::User => Style::default().fg(theme.user_fg),
+                    Role::Assistant => Style::default().fg(theme.assistant_fg),
+                    Role::Tool => Style::default().fg(theme.tool_fg),
                     Role::System => return Vec::new(),
                 };
                 let mut lines = Vec::new();
@@ -71,31 +73,28 @@ impl Message {
                     if let Some(fn_name) = &chat_message.function_name {
                         match fn_name.as_str() {
                             "Read" => {
-                                Self::add_read_lines(&mut lines, chat_message, *expanded, &role_style);
+                                Self::add_read_lines(&mut lines, chat_message, *expanded, &role_style, theme);
                             }
                             "Bash" => {
-                                Self::add_bash_lines(&mut lines, chat_message, *expanded, &role_style);
+                                Self::add_bash_lines(&mut lines, chat_message, *expanded, &role_style, theme);
                             }
                             "Edit" => {
-                                Self::add_edit_lines(&mut lines, chat_message, *expanded, &role_style);
+                                Self::add_edit_lines(&mut lines, chat_message, *expanded, &role_style, theme);
                             }
                             "Write" => {
-                                Self::add_write_lines(&mut lines, chat_message, &role_style);
+                                Self::add_write_lines(&mut lines, chat_message, &role_style, theme);
                             }
                             _ => {
-                                // Unknown tool: show content normally
                                 Self::add_content_lines(&mut lines, chat_message, &role_style);
                             }
                         }
                     } else {
-                        // No function_name — show as plain content
                         Self::add_content_lines(&mut lines, chat_message, &role_style);
                     }
                 } else {
-                    // Non-tool messages: render as markdown
                     if let Some(content) = &chat_message.content {
                         let prefix = format!("[{:#?}] ", chat_message.role);
-                        let md_lines = Self::render_markdown(content, role_style);
+                        let md_lines = Self::render_markdown(content, role_style, theme);
                         for (i, line) in md_lines.into_iter().enumerate() {
                             if i == 0 {
                                 let mut spans = vec![Span::styled(prefix.clone(), role_style)];
@@ -108,16 +107,15 @@ impl Message {
                     }
                 }
 
-                // Tool calls (for Assistant messages)
                 if let Some(tool_calls) = &chat_message.tool_calls {
                     for tool in tool_calls {
                         lines.push(Line::from(Span::styled(
                             format!("  🔧 调用工具: {}", tool.function_name),
-                            Style::default().fg(Color::Cyan),
+                            Style::default().fg(theme.accent),
                         )));
                         lines.push(Line::from(Span::styled(
                             format!("     参数: {}", tool.arguments),
-                            Style::default().fg(Color::DarkGray),
+                            Style::default().fg(theme.subtle),
                         )));
                     }
                 }
@@ -136,22 +134,21 @@ impl Message {
                 let icon = if state.result.is_some() { "✓" } else { "·" };
 
                 lines.push(Line::from(vec![
-                    Span::styled("🔧 ", Style::default().fg(Color::Cyan)),
+                    Span::styled("🔧 ", Style::default().fg(theme.accent)),
                     Span::styled(
                         format!("工具调用 {} ", icon),
-                        Style::default().fg(Color::Cyan),
+                        Style::default().fg(theme.accent),
                     ),
                     Span::styled(
                         &state.function_name,
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        Style::default().fg(theme.warning).add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
                         format!(" ({:.1}s)", duration),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(theme.subtle),
                     ),
                 ]));
 
-                // Result content (when available)
                 if let Some(result) = &state.result {
                     if let Some(content) = &result.content {
                         let all_lines: Vec<&str> = content.lines().collect();
@@ -167,13 +164,13 @@ impl Message {
                                 for line in &all_lines[..display] {
                                     lines.push(Line::from(Span::styled(
                                         format!("  {}", line),
-                                        Style::default().fg(Color::Magenta),
+                                        Style::default().fg(theme.tool_fg),
                                     )));
                                 }
                                 if !state.expanded && total > MAX_READ_LINES {
                                     lines.push(Line::from(Span::styled(
                                         format!("  ... ({} more lines, ctrl+o to expand) ", total - MAX_READ_LINES),
-                                        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                                        Style::default().fg(theme.subtle).add_modifier(Modifier::ITALIC),
                                     )));
                                 }
                             }
@@ -182,19 +179,19 @@ impl Message {
                                     let hidden = total - MAX_BASH_LINES;
                                     lines.push(Line::from(Span::styled(
                                         format!("  ... ({} earlier lines, ctrl+o to expand) ", hidden),
-                                        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                                        Style::default().fg(theme.subtle).add_modifier(Modifier::ITALIC),
                                     )));
                                     for line in &all_lines[total - MAX_BASH_LINES..] {
                                         lines.push(Line::from(Span::styled(
                                             format!("  {}", line),
-                                            Style::default().fg(Color::Magenta),
+                                            Style::default().fg(theme.tool_fg),
                                         )));
                                     }
                                 } else {
                                     for line in &all_lines {
                                         lines.push(Line::from(Span::styled(
                                             format!("  {}", line),
-                                            Style::default().fg(Color::Magenta),
+                                            Style::default().fg(theme.tool_fg),
                                         )));
                                     }
                                 }
@@ -203,7 +200,7 @@ impl Message {
                                 for line in &all_lines {
                                     lines.push(Line::from(Span::styled(
                                         format!("  {}", line),
-                                        Style::default().fg(Color::Magenta),
+                                        Style::default().fg(theme.tool_fg),
                                     )));
                                 }
                             }
@@ -218,14 +215,14 @@ impl Message {
                 Status::Pause => vec![
                     Line::from(Span::styled(
                         "> pause",
-                        Style::default().fg(Color::Gray).bold(),
+                        Style::default().fg(theme.subtle).bold(),
                     )),
                     Line::from(Span::raw("")),
                 ],
                 Status::Running => vec![
                     Line::from(Span::styled(
                         "> running",
-                        Style::default().fg(Color::Green).bold(),
+                        Style::default().fg(theme.success).bold(),
                     )),
                     Line::from(Span::raw("")),
                 ],
@@ -241,6 +238,7 @@ impl Message {
         msg: &ChatMessage,
         expanded: bool,
         style: &Style,
+        theme: &Theme,
     ) {
         let content = msg.content.as_deref().unwrap_or("");
         let all_lines: Vec<&str> = content.lines().collect();
@@ -263,7 +261,7 @@ impl Message {
             let hidden = total - MAX_READ_LINES;
             lines.push(Line::from(Span::styled(
                 format!("... ({} more lines, ctrl+o to expand) ", hidden),
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                Style::default().fg(theme.subtle).add_modifier(Modifier::ITALIC),
             )));
         }
     }
@@ -274,6 +272,7 @@ impl Message {
         msg: &ChatMessage,
         expanded: bool,
         style: &Style,
+        theme: &Theme,
     ) {
         let content = msg.content.as_deref().unwrap_or("");
         let all_lines: Vec<&str> = content.lines().collect();
@@ -283,7 +282,7 @@ impl Message {
             let hidden = total - MAX_BASH_LINES;
             lines.push(Line::from(Span::styled(
                 format!("... ({} earlier lines, ctrl+o to expand) ", hidden),
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                Style::default().fg(theme.subtle).add_modifier(Modifier::ITALIC),
             )));
             for line in &all_lines[total - MAX_BASH_LINES..] {
                 lines.push(Line::from(Span::styled(
@@ -307,8 +306,8 @@ impl Message {
         msg: &ChatMessage,
         expanded: bool,
         style: &Style,
+        theme: &Theme,
     ) {
-        // Try to extract old_text & new_text from arguments
         let (old_text, new_text) = msg
             .tool_call_arguments
             .as_ref()
@@ -327,7 +326,6 @@ impl Message {
             })
             .unwrap_or(("?".to_string(), "?".to_string()));
 
-        // Use the result content (success/error message) as a header
         if let Some(result) = &msg.content {
             lines.push(Line::from(Span::styled(
                 format!("[Tool - Edit] {}", result),
@@ -335,39 +333,36 @@ impl Message {
             )));
         }
 
-        // Show old → new diff with truncation
         let old_lines: Vec<&str> = old_text.lines().collect();
         let new_lines: Vec<&str> = new_text.lines().collect();
         let old_total = old_lines.len();
         let new_total = new_lines.len();
 
-        // Old text (red) — show first MAX_EDIT_LINES lines
         let old_display_count = if expanded { old_total } else { old_total.min(MAX_EDIT_LINES) };
         for line in &old_lines[..old_display_count] {
             lines.push(Line::from(vec![
-                Span::styled("      - ", Style::default().fg(Color::DarkGray)),
-                Span::styled(line.to_string(), Style::default().fg(Color::Red)),
+                Span::styled("      - ", Style::default().fg(theme.subtle)),
+                Span::styled(line.to_string(), Style::default().fg(theme.error)),
             ]));
         }
         if !expanded && old_total > MAX_EDIT_LINES {
             lines.push(Line::from(Span::styled(
                 format!("      ... ({} more lines, ctrl+o to expand) ", old_total - MAX_EDIT_LINES),
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                Style::default().fg(theme.subtle).add_modifier(Modifier::ITALIC),
             )));
         }
 
-        // New text (green) — show first MAX_EDIT_LINES lines
         let new_display_count = if expanded { new_total } else { new_total.min(MAX_EDIT_LINES) };
         for line in &new_lines[..new_display_count] {
             lines.push(Line::from(vec![
-                Span::styled("      + ", Style::default().fg(Color::DarkGray)),
-                Span::styled(line.to_string(), Style::default().fg(Color::Green)),
+                Span::styled("      + ", Style::default().fg(theme.subtle)),
+                Span::styled(line.to_string(), Style::default().fg(theme.success)),
             ]));
         }
         if !expanded && new_total > MAX_EDIT_LINES {
             lines.push(Line::from(Span::styled(
                 format!("      ... ({} more lines, ctrl+o to expand) ", new_total - MAX_EDIT_LINES),
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                Style::default().fg(theme.subtle).add_modifier(Modifier::ITALIC),
             )));
         }
     }
@@ -377,8 +372,8 @@ impl Message {
         lines: &mut Vec<Line<'static>>,
         msg: &ChatMessage,
         style: &Style,
+        theme: &Theme,
     ) {
-        // Extract file_path from arguments
         let file_path = msg
             .tool_call_arguments
             .as_ref()
@@ -386,7 +381,6 @@ impl Message {
             .unwrap_or("?")
             .to_string();
 
-        // Count lines from the written content (in arguments)
         let line_count = msg
             .tool_call_arguments
             .as_ref()
@@ -394,7 +388,6 @@ impl Message {
             .map(|c| c.lines().count())
             .unwrap_or(0);
 
-        // Show the result message
         if let Some(result) = &msg.content {
             lines.push(Line::from(Span::styled(
                 format!("[Tool - Write] {}", result),
@@ -402,10 +395,9 @@ impl Message {
             )));
         }
 
-        // Compact path + line count
         lines.push(Line::from(Span::styled(
             format!("      📄 {} ({} lines)", file_path, line_count),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.subtle),
         )));
     }
 
@@ -427,7 +419,7 @@ impl Message {
 
     /// Estimate the number of visual lines this message occupies
     /// at the given content width (for scroll computation).
-    pub fn visual_line_count(&self, width: usize) -> usize {
+    pub fn visual_line_count(&self, width: usize, _theme: &Theme) -> usize {
         if width == 0 {
             return 1;
         }
@@ -445,13 +437,13 @@ impl Message {
                             "Bash" => self.visual_bash_count(chat, *expanded, width),
                             "Edit" => self.visual_edit_count(chat, *expanded, width),
                             "Write" => self.visual_write_count(chat, width),
-                            _ => self.visual_default_count(chat, width),
+                            _ => self.visual_default_count(chat, width, _theme),
                         }
                     } else {
-                        self.visual_default_count(chat, width)
+                        self.visual_default_count(chat, width, _theme)
                     }
                 } else {
-                    self.visual_default_count(chat, width)
+                    self.visual_default_count(chat, width, _theme)
                 }
             }
             Message::ToolCallMessage(state) => {
@@ -552,13 +544,13 @@ impl Message {
         2
     }
 
-    fn visual_default_count(&self, chat: &ChatMessage, _width: usize) -> usize {
+    fn visual_default_count(&self, chat: &ChatMessage, _width: usize, theme: &Theme) -> usize {
         let mut count = 0usize;
         if let Some(r) = &chat.reasoning_content {
-            count += Self::render_markdown(r, Style::default()).len();
+            count += Self::render_markdown(r, Style::default(), theme).len();
         }
         if let Some(c) = &chat.content {
-            count += Self::render_markdown(c, Style::default()).len();
+            count += Self::render_markdown(c, Style::default(), theme).len();
         }
         if let Some(tools) = &chat.tool_calls {
             for _tool in tools {
@@ -569,7 +561,7 @@ impl Message {
     }
 
     /// Render Markdown text into styled ratatui lines.
-    fn render_markdown(text: &str, base_style: Style) -> Vec<Line<'static>> {
+    fn render_markdown(text: &str, base_style: Style, theme: &Theme) -> Vec<Line<'static>> {
         let mut lines: Vec<Vec<Span<'static>>> = Vec::new();
         let mut current: Vec<Span<'static>> = Vec::new();
         let mut style_stack: Vec<Style> = Vec::new();
@@ -691,8 +683,8 @@ impl Message {
                 Event::Rule => {
                     flush(&mut lines, &mut current);
                     current.push(Span::styled(
-                        "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
-                        base_style.fg(Color::DarkGray),
+                        "\u{2500}".repeat(50),
+                        base_style.fg(theme.subtle),
                     ));
                     flush(&mut lines, &mut current);
                 }

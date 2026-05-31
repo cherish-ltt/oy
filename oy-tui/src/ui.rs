@@ -1,63 +1,65 @@
 use std::env;
 
-// ui.rs
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Layout, Rect},
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Paragraph, Widget, Wrap},
 };
 
 use crate::{
     app::{App, AppMode, visual_cursor_pos},
+    command::CommandInfo,
 };
 
 impl Widget for &App {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // 根据输入内容行数动态调整 input 区域高度（2～7 行文本，加边框）
+        let t = self.theme;
+
         let input_text_width = area.width.saturating_sub(2) as usize;
         let visual_lines = self.total_visual_lines(input_text_width.max(1));
         let input_text_height = visual_lines.clamp(2, 7);
-        let input_height = input_text_height + 2; // +2 for borders
+        let input_height = input_text_height + 2;
+
+        // Reserve space for popups when in selector/menu mode
+        let has_popup = matches!(self.app_mode, AppMode::CommandSelector{..} | AppMode::SubMenu{..});
+        let popup_rows: u16 = if has_popup { 7 } else { 0 };
 
         let chunks = Layout::vertical([
-            Constraint::Min(5),               // Message area - flexible
-            Constraint::Length(input_height), // Input area (dynamic)
-            Constraint::Length(3),            // Status line
+            Constraint::Min(5),
+            Constraint::Length(input_height),
+            Constraint::Length(popup_rows),
+            Constraint::Length(3),
         ])
         .split(area);
 
-        // --- Message Area (scrollable) ---
-        // Convert messages to a Text object for proper wrapping
+        // ── Message Area ──
         let mut text = Text::default();
         for msg in &self.messages {
-            let lines = msg.to_lines();
+            let lines = msg.to_lines(t);
             text.extend(lines);
         }
 
-        // Create paragraph with wrapping
         let message_paragraph = Paragraph::new(text)
             .block(
                 Block::bordered()
                     .title("Chat History")
                     .title_alignment(Alignment::Center)
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::DarkGray)),
+                    .border_style(Style::default().fg(t.border)),
             )
             .scroll((self.scroll_offset.get(), 0))
             .wrap(Wrap { trim: false })
-            .style(Style::default().fg(Color::Black).bg(Color::White));
+            .style(Style::default().fg(t.surface_fg).bg(t.surface_bg));
 
-        // Render message area
         message_paragraph.render(chunks[0], buf);
 
-        // 根据实际内容高度和换行后的视觉行数计算并限制滚动偏移量
         let content_width = chunks[0].width.saturating_sub(2) as usize;
         let total_visual_lines: usize = self
             .messages
             .iter()
-            .map(|msg| msg.visual_line_count(content_width))
+            .map(|msg| msg.visual_line_count(content_width, t))
             .sum();
         let visible_height = chunks[0].height.saturating_sub(2) as usize;
         if total_visual_lines > visible_height {
@@ -66,7 +68,6 @@ impl Widget for &App {
             if current > max_offset {
                 self.scroll_offset.set(max_offset);
             }
-            // 如果当前已经滚动到底部，重新启用自动滚动
             if self.scroll_offset.get() >= max_offset {
                 self.auto_scroll.set(true);
             }
@@ -74,19 +75,16 @@ impl Widget for &App {
             if self.scroll_offset.get() > 0 {
                 self.scroll_offset.set(0);
             }
-            // 内容不足一屏时，始终自动滚动到底部
             self.auto_scroll.set(true);
         }
 
-        // --- Input Area (with dynamic title) ---
+        // ── Input Area ──
         let input_display = self.input.to_string();
         let input_text_width = chunks[1].width.saturating_sub(2) as usize;
 
-        // Calculate cursor visual position for input
         let (cursor_visual_row, cursor_visual_col) =
             visual_cursor_pos(&self.input, self.cursor_pos, input_text_width);
 
-        // Calculate scroll to keep cursor in view
         let input_visible_height = chunks[1].height.saturating_sub(2);
         let input_scroll = if cursor_visual_row >= input_visible_height {
             cursor_visual_row - input_visible_height + 1
@@ -94,13 +92,13 @@ impl Widget for &App {
             0
         };
 
-        // Store cursor screen position and input width for key handling
         self.cursor_x.set(chunks[1].x + 1 + cursor_visual_col);
         self.cursor_y
             .set(chunks[1].y + 1 + cursor_visual_row - input_scroll);
         self.input_width.set(chunks[1].width.saturating_sub(2));
 
-        let input_title = if matches!(self.app_mode, AppMode::ModelForm { .. }) && !self.input_title.is_empty() {
+        let input_title = if matches!(self.app_mode, AppMode::ModelForm { .. }) && !self.input_title.is_empty()
+        {
             self.input_title.clone()
         } else {
             "Input".to_string()
@@ -112,15 +110,15 @@ impl Widget for &App {
                     .title(input_title)
                     .title_alignment(Alignment::Left)
                     .border_type(BorderType::Double)
-                    .border_style(Style::default().fg(Color::Blue)),
+                    .border_style(Style::default().fg(t.input_border)),
             )
             .wrap(Wrap { trim: false })
             .scroll((input_scroll, 0))
-            .style(Style::default().fg(Color::Black).bg(Color::White));
+            .style(Style::default().fg(t.surface_fg).bg(t.surface_bg));
 
         input_paragraph.render(chunks[1], buf);
 
-        // --- Status Area (information) ---
+        // ── Status Area ──
         let mut status_text = format!(
             " <Current Agent> (Cycle with shift+tab)\n Messages: {} | ↑/↓/←/→ move cursor | Enter send | Ctrl+O expand | Ctrl+C/Esc/q quit",
             self.messages.len()
@@ -132,58 +130,112 @@ impl Widget for &App {
         }
         let status_paragraph = Paragraph::new(status_text)
             .alignment(Alignment::Left)
-            .style(Style::default().fg(Color::DarkGray).bg(Color::White));
+            .style(Style::default().fg(t.status_fg).bg(t.status_bg));
 
-        status_paragraph.render(chunks[2], buf);
+        status_paragraph.render(chunks[3], buf);
 
-        let mut status_text = "Use the /model command to set up one model 
+        let mut status_right = "Use the /model command to set up one model 
             Unknown directory "
             .to_string();
         if let Some(config) = &self.global_toml_config {
             if let Some(model_name) = &config.model {
-                status_text = status_text.replace(
+                status_right = status_right.replace(
                     "Use the /model command to set up one model ",
                     &format!("{} ", model_name),
                 );
             }
             if let Ok(path) = env::current_dir() {
-                status_text = status_text.replace(
+                status_right = status_right.replace(
                     "Unknown directory ",
                     &format!("{} ", &path.to_string_lossy()),
                 );
             }
         }
-        let status_paragraph = Paragraph::new(status_text)
+        let status_right_para = Paragraph::new(status_right)
             .alignment(Alignment::Right)
-            .style(Style::default().fg(Color::DarkGray).bg(Color::White));
+            .style(Style::default().fg(t.status_fg).bg(t.status_bg));
 
-        status_paragraph.render(chunks[2], buf);
+        status_right_para.render(chunks[3], buf);
 
-        // --- Command Selector Popup (rendered last, on top) ---
-        if let AppMode::CommandSelector { selected } = &self.app_mode {
+        // ── SubMenu / Command Selector Popup ──
+        // Render into chunks[2] (reserved popup area)
+        if let AppMode::SubMenu {
+            title: _,
+            items,
+            selected,
+        } = &self.app_mode
+        {
+            if !items.is_empty() {
+                let sel = *selected;
+                let mut popup_text = Text::default();
+                for (i, (name, desc)) in items.iter().enumerate() {
+                    let style = if i == sel {
+                        Style::default().fg(t.surface_bg).bg(t.accent)
+                    } else {
+                        Style::default().fg(t.surface_fg)
+                    };
+                    popup_text.push_line(Line::from(vec![
+                        Span::styled(if i == sel { "\u{25b8} " } else { "  " }, style),
+                        Span::styled(format!("{}  - {}", name, desc), style),
+                    ]));
+                }
+                let popup = Paragraph::new(popup_text)
+                    .block(
+                        Block::bordered()
+                            .title("Settings")
+                            .title_alignment(Alignment::Left)
+                            .border_type(BorderType::Rounded)
+                            .border_style(Style::default().fg(t.accent)),
+                    )
+                    .style(Style::default().bg(t.surface_bg));
+                popup.render(chunks[2], buf);
+            }
+        }
+
+        // ── Command Selector Popup ──
+        if let AppMode::CommandSelector {
+            selected,
+            scroll_offset,
+        } = &self.app_mode
+        {
             let matches = self.command_registry.search(&self.input);
             if !matches.is_empty() {
                 let sel = *selected;
-                let popup_height = matches.len() as u16 + 2;
+                let scroll = *scroll_offset;
+                let total = matches.len();
+                let max_rows = 5usize;
+                let visible: Vec<&&CommandInfo> = matches
+                    .iter()
+                    .skip(scroll)
+                    .take(max_rows)
+                    .collect();
+                let has_more_down = scroll + max_rows < total;
+                let has_more_up = scroll > 0;
+
                 let popup_area = Rect {
-                    x: chunks[1].x + 1,
-                    y: chunks[1].y + chunks[1].height,
-                    width: chunks[1].width.saturating_sub(2),
-                    height: popup_height.min(10),
+                    x: chunks[2].x + 1,
+                    y: chunks[2].y + 1,
+                    width: chunks[2].width.saturating_sub(2),
+                    height: chunks[2].height.saturating_sub(2),
                 };
 
                 let mut popup_text = Text::default();
-                for (i, cmd) in matches.iter().enumerate() {
-                    let style = if i == sel {
-                        Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Cyan)
+                if has_more_up {
+                    popup_text.push_line(Line::from(Span::styled(
+                        "  \u{2191} more...",
+                        Style::default().fg(t.subtle),
+                    )));
+                }
+                for (i, cmd) in visible.iter().enumerate() {
+                    let abs_idx = scroll + i;
+                    let style = if abs_idx == sel {
+                        Style::default().fg(t.surface_bg).bg(t.accent)
                     } else {
-                        Style::default().fg(Color::White)
+                        Style::default().fg(t.surface_fg)
                     };
                     popup_text.push_line(Line::from(vec![
                         Span::styled(
-                            if i == sel { "▸ " } else { "  " },
+                            if abs_idx == sel { "\u{25b8} " } else { "  " },
                             style,
                         ),
                         Span::styled(
@@ -192,14 +244,20 @@ impl Widget for &App {
                         ),
                     ]));
                 }
+                if has_more_down {
+                    popup_text.push_line(Line::from(Span::styled(
+                        "  \u{2193} more...",
+                        Style::default().fg(t.subtle),
+                    )));
+                }
 
                 let popup = Paragraph::new(popup_text)
                     .block(
                         Block::bordered()
                             .border_type(BorderType::Rounded)
-                            .border_style(Style::default().fg(Color::Cyan)),
+                            .border_style(Style::default().fg(t.accent)),
                     )
-                    .style(Style::default().bg(Color::Black));
+                    .style(Style::default().bg(t.surface_bg));
                 popup.render(popup_area, buf);
             }
         }
