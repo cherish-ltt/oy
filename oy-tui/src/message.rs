@@ -3,6 +3,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use std::time::Instant;
 use unicode_width::UnicodeWidthStr;
 
@@ -91,12 +92,19 @@ impl Message {
                         Self::add_content_lines(&mut lines, chat_message, &role_style);
                     }
                 } else {
-                    // Non-tool messages: show content normally
+                    // Non-tool messages: render as markdown
                     if let Some(content) = &chat_message.content {
-                        lines.push(Line::from(Span::styled(
-                            format!("[{:#?} - content] {}", chat_message.role, content),
-                            role_style,
-                        )));
+                        let prefix = format!("[{:#?}] ", chat_message.role);
+                        let md_lines = Self::render_markdown(content, role_style);
+                        for (i, line) in md_lines.into_iter().enumerate() {
+                            if i == 0 {
+                                let mut spans = vec![Span::styled(prefix.clone(), role_style)];
+                                spans.extend(line.spans);
+                                lines.push(Line::from(spans));
+                            } else {
+                                lines.push(line);
+                            }
+                        }
                     }
                 }
 
@@ -544,29 +552,157 @@ impl Message {
         2
     }
 
-    fn visual_default_count(&self, chat: &ChatMessage, width: usize) -> usize {
+    fn visual_default_count(&self, chat: &ChatMessage, _width: usize) -> usize {
         let mut count = 0usize;
         if let Some(r) = &chat.reasoning_content {
-            let line = format!("[{:#?} - thinking] {}", chat.role, r);
-            let w = UnicodeWidthStr::width(line.as_str());
-            count += 1.max((w + width - 1) / width);
+            count += Self::render_markdown(r, Style::default()).len();
         }
         if let Some(c) = &chat.content {
-            let line = format!("[{:#?} - content] {}", chat.role, c);
-            let w = UnicodeWidthStr::width(line.as_str());
-            count += 1.max((w + width - 1) / width);
+            count += Self::render_markdown(c, Style::default()).len();
         }
         if let Some(tools) = &chat.tool_calls {
-            for tool in tools {
-                let name_line = format!("  🔧 调用工具: {}", tool.function_name);
-                let w = UnicodeWidthStr::width(name_line.as_str());
-                count += 1.max((w + width - 1) / width);
-                let args_line = format!("     参数: {}", tool.arguments);
-                let w = UnicodeWidthStr::width(args_line.as_str());
-                count += 1.max((w + width - 1) / width);
+            for _tool in tools {
+                count += 2;
             }
         }
         count
+    }
+
+    /// Render Markdown text into styled ratatui lines.
+    fn render_markdown(text: &str, base_style: Style) -> Vec<Line<'static>> {
+        let mut lines: Vec<Vec<Span<'static>>> = Vec::new();
+        let mut current: Vec<Span<'static>> = Vec::new();
+        let mut style_stack: Vec<Style> = Vec::new();
+        let mut in_code_block = false;
+
+        fn current_style(base: Style, stack: &[Style]) -> Style {
+            let mut s = base;
+            for st in stack {
+                s = s.patch(*st);
+            }
+            s
+        }
+
+        fn flush(out: &mut Vec<Vec<Span<'static>>>, cur: &mut Vec<Span<'static>>) {
+            if !cur.is_empty() {
+                out.push(std::mem::take(cur));
+            }
+        }
+
+        for event in Parser::new(text) {
+            match event {
+                Event::Start(tag) => match tag {
+                    Tag::Paragraph => {}
+                    Tag::Strong => {
+                        style_stack.push(Style::default().add_modifier(Modifier::BOLD));
+                    }
+                    Tag::Emphasis => {
+                        style_stack.push(Style::default().add_modifier(Modifier::ITALIC));
+                    }
+                    Tag::Strikethrough => {
+                        style_stack.push(Style::default().add_modifier(Modifier::CROSSED_OUT));
+                    }
+                    Tag::CodeBlock(_) => {
+                        flush(&mut lines, &mut current);
+                        in_code_block = true;
+                    }
+                    Tag::Heading { level, .. } => {
+                        flush(&mut lines, &mut current);
+                        let prefix = "#".repeat(level as usize);
+                        current.push(Span::styled(
+                            format!("{} ", prefix),
+                            base_style
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ));
+                        style_stack.push(Style::default().add_modifier(Modifier::BOLD));
+                    }
+                    Tag::List(_) => {}
+                    Tag::Item => {
+                        flush(&mut lines, &mut current);
+                        current.push(Span::styled(
+                            "  \u{2022} ",
+                            base_style.fg(Color::DarkGray),
+                        ));
+                    }
+                    Tag::Link { .. } => {
+                        style_stack
+                            .push(Style::default().fg(Color::Blue).add_modifier(Modifier::UNDERLINED));
+                    }
+                    Tag::BlockQuote(_) => {
+                        flush(&mut lines, &mut current);
+                        current.push(Span::styled(
+                            "> ",
+                            base_style.fg(Color::DarkGray),
+                        ));
+                    }
+                    _ => {}
+                },
+                Event::End(tag) => match tag {
+                    TagEnd::Paragraph
+                    | TagEnd::Heading(_)
+                    | TagEnd::Item
+                    | TagEnd::CodeBlock => {
+                        flush(&mut lines, &mut current);
+                        if matches!(tag, TagEnd::CodeBlock) {
+                            in_code_block = false;
+                        }
+                    }
+                    TagEnd::Strong | TagEnd::Emphasis | TagEnd::Strikethrough => {
+                        style_stack.pop();
+                    }
+                    TagEnd::Link => {
+                        style_stack.pop();
+                    }
+                    _ => {}
+                },
+                Event::Text(text) => {
+                    if in_code_block {
+                        for (i, line) in text.lines().enumerate() {
+                            if i > 0 {
+                                flush(&mut lines, &mut current);
+                            }
+                            current.push(Span::styled(
+                                line.to_string(),
+                                base_style
+                                    .fg(Color::Cyan)
+                                    .bg(Color::Black),
+                            ));
+                        }
+                    } else {
+                        let style = current_style(base_style, &style_stack);
+                        current.push(Span::styled(text.to_string(), style));
+                    }
+                }
+                Event::Code(text) => {
+                    current.push(Span::styled(
+                        format!("`{}`", text),
+                        base_style
+                            .fg(Color::Cyan)
+                            .bg(Color::Black),
+                    ));
+                }
+                Event::SoftBreak | Event::HardBreak => {
+                    flush(&mut lines, &mut current);
+                }
+                Event::Html(html) => {
+                    current.push(Span::raw(html.to_string()));
+                }
+                Event::Rule => {
+                    flush(&mut lines, &mut current);
+                    current.push(Span::styled(
+                        "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+                        base_style.fg(Color::DarkGray),
+                    ));
+                    flush(&mut lines, &mut current);
+                }
+                _ => {}
+            }
+        }
+
+        flush(&mut lines, &mut current);
+
+        lines.into_iter().map(Line::from).collect()
     }
 }
 
