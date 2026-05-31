@@ -64,8 +64,16 @@ impl Widget for &App {
             if current > max_offset {
                 self.scroll_offset.set(max_offset);
             }
-        } else if self.scroll_offset.get() > 0 {
-            self.scroll_offset.set(0);
+            // 如果当前已经滚动到底部，重新启用自动滚动
+            if self.scroll_offset.get() >= max_offset {
+                self.auto_scroll.set(true);
+            }
+        } else {
+            if self.scroll_offset.get() > 0 {
+                self.scroll_offset.set(0);
+            }
+            // 内容不足一屏时，始终自动滚动到底部
+            self.auto_scroll.set(true);
         }
 
         // --- Input Area ---

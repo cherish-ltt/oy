@@ -40,6 +40,8 @@ pub struct App {
     pub input_width: Cell<u16>,
     /// 消息区域的垂直滚动偏移量（从顶部数行的数量）
     pub scroll_offset: Cell<u16>,
+    /// 是否自动滚动到底部（当用户手动向上翻页时为 false）
+    pub auto_scroll: Cell<bool>,
     /// 粘贴片段存储（占位符 -> 原始内容）
     pub paste_snippets: HashMap<String, String>,
     /// 粘贴计数器
@@ -89,6 +91,7 @@ impl App {
             cursor_y: Cell::new(0),
             input_width: Cell::new(0),
             scroll_offset: Cell::new(0),
+            auto_scroll: Cell::new(true),
             paste_snippets: HashMap::new(),
             paste_counter: 0,
             events,
@@ -122,6 +125,8 @@ impl App {
                         MouseEventKind::ScrollUp => {
                             self.scroll_offset
                                 .set(self.scroll_offset.get().saturating_sub(3));
+                            // 用户手动向上翻页（看旧消息），禁用自动滚动到底部
+                            self.auto_scroll.set(false);
                         }
                         _ => {}
                     },
@@ -130,13 +135,30 @@ impl App {
                 Event::App(app_event) => match app_event {
                     AppEvent::Quit => self.quit(),
                     AppEvent::ChatMessage(chat_message) => {
-                        self.messages.push_back(AgentMessages(chat_message))
+                        self.messages.push_back(AgentMessages(chat_message));
+                        if self.auto_scroll.get() {
+                            self.scroll_offset.set(u16::MAX);
+                        }
                     }
-                    AppEvent::AgentError(e) => self
-                        .messages
-                        .push_back(UiMessages(format!("errors: {}", e))),
-                    AppEvent::Pause => self.messages.push_back(AgentStatus(Status::Pause)),
-                    AppEvent::Running => self.messages.push_back(AgentStatus(Status::Running)),
+                    AppEvent::AgentError(e) => {
+                        self.messages
+                            .push_back(UiMessages(format!("errors: {}", e)));
+                        if self.auto_scroll.get() {
+                            self.scroll_offset.set(u16::MAX);
+                        }
+                    }
+                    AppEvent::Pause => {
+                        self.messages.push_back(AgentStatus(Status::Pause));
+                        if self.auto_scroll.get() {
+                            self.scroll_offset.set(u16::MAX);
+                        }
+                    }
+                    AppEvent::Running => {
+                        self.messages.push_back(AgentStatus(Status::Running));
+                        if self.auto_scroll.get() {
+                            self.scroll_offset.set(u16::MAX);
+                        }
+                    }
                 },
             }
         }
