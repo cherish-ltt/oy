@@ -6,9 +6,10 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 /// Maximum lines to show for a read tool result (when collapsed)
-const MAX_READ_LINES: usize = 200;
+const MAX_READ_LINES: usize = 5;
 /// Maximum lines to show for a bash tool result (when collapsed) — shows the *last* N lines
 const MAX_BASH_LINES: usize = 5;
+const MAX_EDIT_LINES: usize = 5;
 
 #[derive(Debug)]
 pub enum Message {
@@ -60,7 +61,7 @@ impl Message {
                                 Self::add_bash_lines(&mut lines, chat_message, *expanded, &role_style);
                             }
                             "Edit" => {
-                                Self::add_edit_lines(&mut lines, chat_message, &role_style);
+                                Self::add_edit_lines(&mut lines, chat_message, *expanded, &role_style);
                             }
                             "Write" => {
                                 Self::add_write_lines(&mut lines, chat_message, &role_style);
@@ -181,10 +182,11 @@ impl Message {
         }
     }
 
-    /// Edit: show old text (red) → new text (green), plus file path
+    /// Edit: show old text (red) → new text (green), with line truncation
     fn add_edit_lines(
         lines: &mut Vec<Line<'static>>,
         msg: &ChatMessage,
+        expanded: bool,
         style: &Style,
     ) {
         // Try to extract old_text & new_text from arguments
@@ -208,30 +210,47 @@ impl Message {
 
         // Use the result content (success/error message) as a header
         if let Some(result) = &msg.content {
-            // Try to produce a compact one-liner if the result is a success message
-            if result.starts_with("Successfully replaced") || result.starts_with("No changes made") {
-                // Show file path on its own row
-                lines.push(Line::from(Span::styled(
-                    format!("[Tool - Edit] {}", result),
-                    *style,
-                )));
-            } else {
-                lines.push(Line::from(Span::styled(
-                    format!("[Tool - Edit] {}", result),
-                    *style,
-                )));
-            }
+            lines.push(Line::from(Span::styled(
+                format!("[Tool - Edit] {}", result),
+                *style,
+            )));
         }
 
-        // Show old → new diff
-        lines.push(Line::from(vec![
-            Span::styled("      - ", Style::default().fg(Color::DarkGray)),
-            Span::styled(old_text, Style::default().fg(Color::Red)),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("      + ", Style::default().fg(Color::DarkGray)),
-            Span::styled(new_text, Style::default().fg(Color::Green)),
-        ]));
+        // Show old → new diff with truncation
+        let old_lines: Vec<&str> = old_text.lines().collect();
+        let new_lines: Vec<&str> = new_text.lines().collect();
+        let old_total = old_lines.len();
+        let new_total = new_lines.len();
+
+        // Old text (red) — show first MAX_EDIT_LINES lines
+        let old_display_count = if expanded { old_total } else { old_total.min(MAX_EDIT_LINES) };
+        for line in &old_lines[..old_display_count] {
+            lines.push(Line::from(vec![
+                Span::styled("      - ", Style::default().fg(Color::DarkGray)),
+                Span::styled(line.to_string(), Style::default().fg(Color::Red)),
+            ]));
+        }
+        if !expanded && old_total > MAX_EDIT_LINES {
+            lines.push(Line::from(Span::styled(
+                format!("      ... ({} more lines, ctrl+o to expand) ", old_total - MAX_EDIT_LINES),
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            )));
+        }
+
+        // New text (green) — show first MAX_EDIT_LINES lines
+        let new_display_count = if expanded { new_total } else { new_total.min(MAX_EDIT_LINES) };
+        for line in &new_lines[..new_display_count] {
+            lines.push(Line::from(vec![
+                Span::styled("      + ", Style::default().fg(Color::DarkGray)),
+                Span::styled(line.to_string(), Style::default().fg(Color::Green)),
+            ]));
+        }
+        if !expanded && new_total > MAX_EDIT_LINES {
+            lines.push(Line::from(Span::styled(
+                format!("      ... ({} more lines, ctrl+o to expand) ", new_total - MAX_EDIT_LINES),
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            )));
+        }
     }
 
     /// Write: show file path and line count only
@@ -305,7 +324,7 @@ impl Message {
                         match fn_name.as_str() {
                             "Read" => self.visual_read_count(chat, *expanded, width),
                             "Bash" => self.visual_bash_count(chat, *expanded, width),
-                            "Edit" => self.visual_edit_count(chat, width),
+                            "Edit" => self.visual_edit_count(chat, *expanded, width),
                             "Write" => self.visual_write_count(chat, width),
                             _ => self.visual_default_count(chat, width),
                         }
@@ -346,14 +365,38 @@ impl Message {
         }
     }
 
-    fn visual_edit_count(&self, chat: &ChatMessage, width: usize) -> usize {
-        // result line + 2 diff lines
-        let mut count = 3usize;
-        if let Some(content) = &chat.content {
-            let w = UnicodeWidthStr::width(content.as_str());
-            count += 1.max((w + width - 1) / width) - 1; // the first line already counted
+    fn visual_edit_count(&self, chat: &ChatMessage, expanded: bool, _width: usize) -> usize {
+        let mut count = 0usize;
+
+        // result line
+        if chat.content.is_some() {
+            count += 1;
         }
-        count
+
+        // old text lines (with truncation)
+        if let Some(args) = &chat.tool_call_arguments {
+            if let Some(old) = args.get("old_text").and_then(|v| v.as_str()) {
+                let old_lines: Vec<&str> = old.lines().collect();
+                let old_total = old_lines.len();
+                if expanded || old_total <= MAX_EDIT_LINES {
+                    count += old_total;
+                } else {
+                    count += MAX_EDIT_LINES + 1; // +1 for the hint
+                }
+            }
+            // new text lines (with truncation)
+            if let Some(new) = args.get("new_text").and_then(|v| v.as_str()) {
+                let new_lines: Vec<&str> = new.lines().collect();
+                let new_total = new_lines.len();
+                if expanded || new_total <= MAX_EDIT_LINES {
+                    count += new_total;
+                } else {
+                    count += MAX_EDIT_LINES + 1; // +1 for the hint
+                }
+            }
+        }
+
+        count.max(1)
     }
 
     fn visual_write_count(&self, _chat: &ChatMessage, _width: usize) -> usize {
