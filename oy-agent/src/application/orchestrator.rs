@@ -18,9 +18,6 @@ pub struct Orchestrator {
     uuid: Uuid,
 }
 
-unsafe impl Send for Orchestrator {}
-unsafe impl Sync for Orchestrator {}
-
 impl Orchestrator {
     pub fn new(
         agent: impl Agent + 'static,
@@ -187,9 +184,8 @@ pub(crate) async fn start(
                                                     }
                                                     Err(e) => {
                                                         let err_msg = format!("{}", e);
-                                                        let _ = orchestrator
-                                                            .agent
-                                                            .push_message_back(
+                                                        let _ =
+                                                            orchestrator.agent.push_message_back(
                                                                 orchestrator.uuid,
                                                                 ChatMessage::tool(
                                                                     format!("Error: {}", err_msg),
@@ -200,9 +196,7 @@ pub(crate) async fn start(
                                                                             .clone(),
                                                                     ),
                                                                     Some(
-                                                                        tool_call
-                                                                            .arguments
-                                                                            .clone(),
+                                                                        tool_call.arguments.clone(),
                                                                     ),
                                                                 ),
                                                             );
@@ -214,25 +208,15 @@ pub(crate) async fn start(
                                             }
                                             Err(e) => {
                                                 let err_msg = format!("{}", e);
-                                                let _ = orchestrator
-                                                    .agent
-                                                    .push_message_back(
-                                                        orchestrator.uuid,
-                                                        ChatMessage::tool(
-                                                            format!("Error: {}", err_msg),
-                                                            tool_call.id.clone(),
-                                                            Some(
-                                                                tool_call
-                                                                    .function_name
-                                                                    .clone(),
-                                                            ),
-                                                            Some(
-                                                                tool_call
-                                                                    .arguments
-                                                                    .clone(),
-                                                            ),
-                                                        ),
-                                                    );
+                                                let _ = orchestrator.agent.push_message_back(
+                                                    orchestrator.uuid,
+                                                    ChatMessage::tool(
+                                                        format!("Error: {}", err_msg),
+                                                        tool_call.id.clone(),
+                                                        Some(tool_call.function_name.clone()),
+                                                        Some(tool_call.arguments.clone()),
+                                                    ),
+                                                );
                                                 let _ = response_tx
                                                     .send(OutputOrchestratorSignal::AgentError(e))
                                                     .await;
