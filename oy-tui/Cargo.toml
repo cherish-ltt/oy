@@ -2,6 +2,8 @@
 name = "oy-tui"
 version = "0.1.0"
 edition = "2024"
+description = "Terminal UI for oy"
+license = "MIT"
 
 [dependencies]
 oy-agent = { path = "../oy-agent" }

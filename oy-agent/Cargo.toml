@@ -2,6 +2,8 @@
 name = "oy-agent"
 version = "0.1.0"
 edition = "2024"
+description = "Agent orchestration for oy"
+license = "MIT"
 
 [dependencies]
 oy-ai = { path = "../oy-ai" }
