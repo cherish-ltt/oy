@@ -43,19 +43,22 @@ impl Widget for &App {
                     .border_type(BorderType::Rounded),
             )
             .scroll((self.scroll_offset.get(), 0))
+            .wrap(Wrap { trim: false })
             .style(Style::default().fg(Color::Black).bg(Color::White));
 
         // Render message area
         message_paragraph.render(chunks[0], buf);
 
-        // 根据实际内容高度计算并限制滚动偏移量
-        // 在渲染之后才能知道包裹线的数量，但我们会进行近似计算。
-        // 为了实现完美的夹紧效果，我们需要测量所显示的高度。更简单的办法是：保持原状不变。
-        // 用户自然会达到上限。或者，我们可以计算理论上的最大行数：
-        let total_lines = self.messages.len();
-        let visible_height = chunks[0].height.saturating_sub(2); // subtract borders
-        if total_lines > visible_height as usize {
-            let max_offset = (total_lines - visible_height as usize) as u16;
+        // 根据实际内容高度和换行后的视觉行数计算并限制滚动偏移量
+        let content_width = chunks[0].width.saturating_sub(2) as usize;
+        let total_visual_lines: usize = self
+            .messages
+            .iter()
+            .map(|msg| msg.visual_line_count(content_width))
+            .sum();
+        let visible_height = chunks[0].height.saturating_sub(2) as usize;
+        if total_visual_lines > visible_height {
+            let max_offset = (total_visual_lines - visible_height) as u16;
             let current = self.scroll_offset.get();
             if current > max_offset {
                 self.scroll_offset.set(max_offset);

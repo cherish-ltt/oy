@@ -3,6 +3,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };
+use unicode_width::UnicodeWidthStr;
 
 #[derive(Debug)]
 pub enum Message {
@@ -76,21 +77,44 @@ impl Message {
         }
     }
 
-    // 返回此消息占用的总行数（用于滚动计算）
-    // fn line_count(&self) -> usize {
-    //     // 简单实现：对于 UiMessages 固定 1 行
-    //     // 对于 AgentMessages，需要根据实际产生的行数计算
-    //     match self {
-    //         Message::UiMessages(_) => 1,
-    //         Message::AgentMessages(chat) => {
-    //             let mut count = 1;
-    //             if let Some(tool_calls) = &chat.tool_calls {
-    //                 count += tool_calls.len() * 2; // 每个工具占两行（名称+参数）
-    //             }
-    //             count
-    //         }
-    //     }
-    // }
+    /// 估算此消息在给定内容宽度下渲染后所占的视觉行数（含自动换行）
+    pub fn visual_line_count(&self, width: usize) -> usize {
+        if width == 0 {
+            return 1;
+        }
+        match self {
+            Message::UiMessages(text) => {
+                let line = format!("> {}", text);
+                let w = UnicodeWidthStr::width(line.as_str());
+                1.max((w + width - 1) / width)
+            }
+            Message::AgentMessages(chat) => {
+                let mut count = 0usize;
+                if let Some(ref r) = chat.reasoning_content {
+                    let line = format!("[{:#?} - thinking] {}", chat.role, r);
+                    let w = UnicodeWidthStr::width(line.as_str());
+                    count += 1.max((w + width - 1) / width);
+                }
+                if let Some(ref c) = chat.content {
+                    let line = format!("[{:#?} - content] {}", chat.role, c);
+                    let w = UnicodeWidthStr::width(line.as_str());
+                    count += 1.max((w + width - 1) / width);
+                }
+                if let Some(ref tools) = chat.tool_calls {
+                    for tool in tools {
+                        let name_line = format!("  🔧 调用工具: {}", tool.function_name);
+                        let w = UnicodeWidthStr::width(name_line.as_str());
+                        count += 1.max((w + width - 1) / width);
+                        let args_line = format!("     参数: {}", tool.arguments);
+                        let w = UnicodeWidthStr::width(args_line.as_str());
+                        count += 1.max((w + width - 1) / width);
+                    }
+                }
+                count
+            }
+            Message::AgentStatus(_) => 1,
+        }
+    }
 }
 
 #[derive(Debug)]

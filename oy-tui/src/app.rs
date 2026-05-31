@@ -8,7 +8,7 @@ use crate::{
         Status,
     },
 };
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use oy_agent::{
     agent::InputAgentSignal,
     application::orchestrator::start_agent_background,
@@ -114,6 +114,17 @@ impl App {
                     crossterm::event::Event::Paste(text) => {
                         self.handle_paste(&text);
                     }
+                    crossterm::event::Event::Mouse(mouse_event) => match mouse_event.kind {
+                        MouseEventKind::ScrollDown => {
+                            self.scroll_offset
+                                .set(self.scroll_offset.get().saturating_add(3));
+                        }
+                        MouseEventKind::ScrollUp => {
+                            self.scroll_offset
+                                .set(self.scroll_offset.get().saturating_sub(3));
+                        }
+                        _ => {}
+                    },
                     _ => {}
                 },
                 Event::App(app_event) => match app_event {
