@@ -121,10 +121,10 @@ async fn test_orchestrator_unknown_tool() {
     let main_agent = MainAgent::new_with_max_iterations(Some(10));
     let mut orchestrator = Orchestrator::new(main_agent, provider, registry);
 
+    // Unknown tool error is captured as a tool message and the loop continues.
+    // With no more mock responses, the provider returns an error.
     let err = orchestrator.execute("Do something").await.unwrap_err();
-    assert!(matches!(err, AgentError::ToolExecutionError(_)));
-    let msg = format!("{}", err);
-    assert!(msg.contains("Unknown tool"));
+    assert!(matches!(err, AgentError::AiError(_)));
 }
 
 #[tokio::test]

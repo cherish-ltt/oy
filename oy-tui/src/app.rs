@@ -324,6 +324,10 @@ impl App {
                         .request_sender
                         .send(InputAgentSignal::UserPrompt(input))
                         .await;
+                } else {
+                    self.messages.push_back(UiMessages(
+                        "Agent not initialized. Please use /model to configure your API key and model first.".to_string()
+                    ));
                 }
             }
             KeyCode::Backspace if self.cursor_pos > 0 && !self.delete_paste_placeholder() => {

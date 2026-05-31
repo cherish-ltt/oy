@@ -687,7 +687,7 @@ impl Message {
                             }
                             current.push(Span::styled(
                                 line.to_string(),
-                                base_style.fg(Color::Cyan).bg(Color::Black),
+                                base_style.fg(theme.code_fg).bg(theme.code_bg),
                             ));
                         }
                     } else {

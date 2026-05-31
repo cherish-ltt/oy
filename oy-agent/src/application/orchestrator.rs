@@ -69,20 +69,19 @@ impl Orchestrator {
             }
 
             for tool_call in response.tool_calls.unwrap() {
-                let tool = self
-                    .tool_registry
-                    .get(&tool_call.function_name)
-                    .ok_or_else(|| {
-                        AgentError::ToolExecutionError(format!(
-                            "Unknown tool: {}",
-                            tool_call.function_name
-                        ))
-                    })?;
-                let result = tool.execute(tool_call.arguments.clone())?;
+                let tool_result = match self.tool_registry.get(&tool_call.function_name) {
+                    Some(t) => match t.execute(tool_call.arguments.clone()) {
+                        Ok(r) => r,
+                        Err(e) => format!("Error: {}", e),
+                    },
+                    None => {
+                        format!("Error: Unknown tool: {}", tool_call.function_name)
+                    }
+                };
                 let _ = self.agent.push_message_back(
                     self.uuid,
                     ChatMessage::tool(
-                        result,
+                        tool_result,
                         tool_call.id,
                         Some(tool_call.function_name),
                         Some(tool_call.arguments),
@@ -187,6 +186,26 @@ pub(crate) async fn start(
                                                         .await;
                                                     }
                                                     Err(e) => {
+                                                        let err_msg = format!("{}", e);
+                                                        let _ = orchestrator
+                                                            .agent
+                                                            .push_message_back(
+                                                                orchestrator.uuid,
+                                                                ChatMessage::tool(
+                                                                    format!("Error: {}", err_msg),
+                                                                    tool_call.id.clone(),
+                                                                    Some(
+                                                                        tool_call
+                                                                            .function_name
+                                                                            .clone(),
+                                                                    ),
+                                                                    Some(
+                                                                        tool_call
+                                                                            .arguments
+                                                                            .clone(),
+                                                                    ),
+                                                                ),
+                                                            );
                                                         let _ = response_tx
                                                         .send(OutputOrchestratorSignal::AgentError(e))
                                                         .await;
@@ -194,6 +213,26 @@ pub(crate) async fn start(
                                                 }
                                             }
                                             Err(e) => {
+                                                let err_msg = format!("{}", e);
+                                                let _ = orchestrator
+                                                    .agent
+                                                    .push_message_back(
+                                                        orchestrator.uuid,
+                                                        ChatMessage::tool(
+                                                            format!("Error: {}", err_msg),
+                                                            tool_call.id.clone(),
+                                                            Some(
+                                                                tool_call
+                                                                    .function_name
+                                                                    .clone(),
+                                                            ),
+                                                            Some(
+                                                                tool_call
+                                                                    .arguments
+                                                                    .clone(),
+                                                            ),
+                                                        ),
+                                                    );
                                                 let _ = response_tx
                                                     .send(OutputOrchestratorSignal::AgentError(e))
                                                     .await;
