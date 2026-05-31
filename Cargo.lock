@@ -1634,9 +1634,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "color-eyre",
  "dirs",
  "oy-agent",
  "oy-ai",
+ "oy-tui",
  "serde",
  "tokio",
  "toml",

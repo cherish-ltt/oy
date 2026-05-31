@@ -3,12 +3,18 @@ name = "oy-cli"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "oy"
+path = "src/main.rs"
+
 [dependencies]
 oy-agent = { path = "../oy-agent" }
 oy-ai = { path = "../oy-ai" }
+oy-tui = { path = "../oy-tui" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 dirs = "6"
 anyhow = "1"
+color-eyre = "0.6.3"
