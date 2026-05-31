@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use oy_agent::infrastructure::agents::main_agent::MainAgent;
 use oy_agent::infrastructure::tools::ToolRegistry;
+use oy_agent::infrastructure::tools::bash::BashTool;
 use oy_agent::infrastructure::tools::read::ReadTool;
 use oy_agent::{AgentError, Orchestrator};
 use oy_ai::{AiProvider, ChatMessage, ToolCall};
@@ -103,4 +104,57 @@ async fn test_orchestrator_max_iterations() {
 
     let err = orchestrator.execute("Loop").await.unwrap_err();
     assert!(matches!(err, AgentError::MaxIterationsReached));
+}
+
+#[tokio::test]
+async fn test_orchestrator_unknown_tool() {
+    let provider = MockProvider::new(vec![
+        ChatMessage::assistant(
+            None,
+            None,
+            Some(vec![ToolCall {
+                id: "call_1".into(),
+                function_name: "FakeTool".into(),
+                arguments: serde_json::json!({}),
+            }]),
+        ),
+    ]);
+    let registry = ToolRegistry::new();
+    let main_agent = MainAgent::new_with_max_iterations(Some(10));
+    let mut orchestrator = Orchestrator::new(main_agent, provider, registry);
+
+    let err = orchestrator.execute("Do something").await.unwrap_err();
+    assert!(matches!(err, AgentError::ToolExecutionError(_)));
+    let msg = format!("{}", err);
+    assert!(msg.contains("Unknown tool"));
+}
+
+#[tokio::test]
+async fn test_orchestrator_multiple_tools_in_one_turn() {
+    let provider = MockProvider::new(vec![
+        ChatMessage::assistant(
+            None,
+            None,
+            Some(vec![
+                ToolCall {
+                    id: "call_1".into(),
+                    function_name: "Bash".into(),
+                    arguments: serde_json::json!({"command": "echo a"}),
+                },
+                ToolCall {
+                    id: "call_2".into(),
+                    function_name: "Bash".into(),
+                    arguments: serde_json::json!({"command": "echo b"}),
+                },
+            ]),
+        ),
+        ChatMessage::assistant(Some("done".into()), None, None),
+    ]);
+    let mut registry = ToolRegistry::new();
+    registry.register(BashTool);
+    let main_agent = MainAgent::new_with_max_iterations(Some(10));
+    let mut orchestrator = Orchestrator::new(main_agent, provider, registry);
+
+    let result = orchestrator.execute("Run two commands").await.unwrap();
+    assert_eq!(result, "done");
 }

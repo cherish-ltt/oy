@@ -10,7 +10,7 @@ pub enum Role {
     Tool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ToolCall {
     pub id: String,
     #[serde(rename = "function_name")]
@@ -157,6 +157,39 @@ mod tests {
         assert_eq!(msg.content, Some("hello".to_string()));
         assert!(msg.tool_calls.is_none());
         assert!(msg.tool_call_id.is_none());
+        assert!(msg.function_name.is_none());
+        assert!(msg.tool_call_arguments.is_none());
+    }
+
+    #[test]
+    fn test_chat_message_system_creation() {
+        let msg = ChatMessage::system("You are a helpful assistant.");
+        assert_eq!(msg.role, Role::System);
+        assert_eq!(msg.content.as_deref(), Some("You are a helpful assistant."));
+        assert!(msg.reasoning_content.is_none());
+    }
+
+    #[test]
+    fn test_chat_message_assistant_with_all_fields() {
+        let msg = ChatMessage::assistant(
+            Some("Hello".into()),
+            Some("Let me think...".into()),
+            Some(vec![ToolCall {
+                id: "call_1".into(),
+                function_name: "Read".into(),
+                arguments: json!({"file_path": "/tmp/x.txt"}),
+            }]),
+        );
+        assert_eq!(msg.role, Role::Assistant);
+        assert_eq!(msg.content.as_deref(), Some("Hello"));
+        assert_eq!(msg.reasoning_content.as_deref(), Some("Let me think..."));
+        assert_eq!(msg.tool_calls.as_ref().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_chat_message_assistant_no_tool_calls() {
+        let msg = ChatMessage::assistant(Some("Hi".into()), None, None);
+        assert_eq!(msg.tool_calls, None);
     }
 
     #[test]
@@ -165,6 +198,23 @@ mod tests {
         let json = msg.to_json_value();
         assert_eq!(json["role"], "user");
         assert_eq!(json["content"], "hello");
+        // verify tool_call_id not present when None
+        assert!(json.get("tool_call_id").is_none());
+    }
+
+    #[test]
+    fn test_to_json_value_with_reasoning() {
+        let msg = ChatMessage::assistant(Some("answer".into()), Some("thinking...".into()), None);
+        let json = msg.to_json_value();
+        assert_eq!(json["reasoning_content"], "thinking...");
+    }
+
+    #[test]
+    fn test_to_json_value_with_tool_call_id() {
+        let msg = ChatMessage::tool("result", "call_99".to_string(), Some("Read".into()), None);
+        let json = msg.to_json_value();
+        assert_eq!(json["tool_call_id"], "call_99");
+        assert!(json.get("content").is_some());
     }
 
     #[test]
@@ -181,10 +231,25 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0]["id"], "call_123");
         assert_eq!(calls[0]["function"]["name"], "Read");
+        // arguments must be a JSON string per OpenAI protocol
         assert_eq!(
             calls[0]["function"]["arguments"],
             "{\"file_path\":\"/tmp/test.txt\"}"
         );
+    }
+
+    #[test]
+    fn test_to_json_value_reasoning_not_present() {
+        let msg = ChatMessage::user("no reasoning");
+        let json = msg.to_json_value();
+        assert!(json.get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn test_to_json_value_tool_calls_not_present() {
+        let msg = ChatMessage::user("no tool calls");
+        let json = msg.to_json_value();
+        assert!(json.get("tool_calls").is_none());
     }
 
     #[test]
@@ -195,5 +260,59 @@ mod tests {
         assert_eq!(msg.tool_call_id, Some("call_456".to_string()));
         assert_eq!(msg.function_name, None);
         assert_eq!(msg.tool_call_arguments, None);
+    }
+
+    #[test]
+    fn test_chat_message_tool_with_args() {
+        let msg = ChatMessage::tool(
+            "Replaced 2 blocks",
+            "call_789".to_string(),
+            Some("Edit".into()),
+            Some(json!({"old_text": "foo", "new_text": "bar"})),
+        );
+        assert_eq!(msg.role, Role::Tool);
+        assert_eq!(msg.function_name.as_deref(), Some("Edit"));
+        assert_eq!(
+            msg.tool_call_arguments.as_ref().and_then(|v| v.get("old_text")),
+            Some(&json!("foo"))
+        );
+    }
+
+    #[test]
+    fn test_serde_roundtrip_user() {
+        let original = ChatMessage::user("hello");
+        let json_str = serde_json::to_string(&original).unwrap();
+        let deserialized: ChatMessage = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(original.role, deserialized.role);
+        assert_eq!(original.content, deserialized.content);
+    }
+
+    #[test]
+    fn test_serde_roundtrip_with_tool_calls() {
+        let original = ChatMessage::assistant(
+            None,
+            None,
+            Some(vec![ToolCall {
+                id: "call_x".into(),
+                function_name: "Bash".into(),
+                arguments: json!({"command": "ls"}),
+            }]),
+        );
+        let json_str = serde_json::to_string(&original).unwrap();
+        let deserialized: ChatMessage = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(deserialized.tool_calls.as_ref().unwrap().len(), 1);
+        assert_eq!(deserialized.tool_calls.as_ref().unwrap()[0].function_name, "Bash");
+    }
+
+    #[test]
+    fn test_tool_call_creation() {
+        let tc = ToolCall {
+            id: "call_1".into(),
+            function_name: "Read".into(),
+            arguments: json!({"file_path": "/tmp/x.txt"}),
+        };
+        assert_eq!(tc.id, "call_1");
+        assert_eq!(tc.function_name, "Read");
+        assert_eq!(tc.arguments["file_path"], "/tmp/x.txt");
     }
 }

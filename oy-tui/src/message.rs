@@ -706,3 +706,98 @@ pub enum Status {
     Pause,
     Running,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::LIGHT_THEME;
+
+    #[test]
+    fn test_message_bg_ui_messages() {
+        let msg = Message::UiMessages("test".into());
+        assert_eq!(msg.message_bg(&LIGHT_THEME), LIGHT_THEME.surface_bg);
+    }
+
+    #[test]
+    fn test_message_bg_agent_status() {
+        let msg = Message::AgentStatus(Status::Pause);
+        assert_eq!(msg.message_bg(&LIGHT_THEME), LIGHT_THEME.surface_bg);
+    }
+
+    #[test]
+    fn test_message_bg_user() {
+        let chat = ChatMessage::user("hello");
+        let msg = Message::AgentMessages(chat, false);
+        assert_eq!(msg.message_bg(&LIGHT_THEME), LIGHT_THEME.user_bg);
+    }
+
+    #[test]
+    fn test_message_bg_assistant() {
+        let chat = ChatMessage::assistant(Some("hi".into()), None, None);
+        let msg = Message::AgentMessages(chat, false);
+        assert_eq!(msg.message_bg(&LIGHT_THEME), LIGHT_THEME.assistant_bg);
+    }
+
+    #[test]
+    fn test_message_bg_tool() {
+        let chat = ChatMessage::tool("result", "id".into(), Some("Read".into()), None);
+        let msg = Message::AgentMessages(chat, false);
+        assert_eq!(msg.message_bg(&LIGHT_THEME), LIGHT_THEME.tool_bg);
+    }
+
+    #[test]
+    fn test_message_bg_system() {
+        let chat = ChatMessage::system("prompt");
+        let msg = Message::AgentMessages(chat, false);
+        assert_eq!(msg.message_bg(&LIGHT_THEME), LIGHT_THEME.surface_bg);
+    }
+
+    #[test]
+    fn test_message_bg_tool_call_message() {
+        let state = ToolCallState {
+            function_name: "Read".into(),
+            tool_call_id: "id".into(),
+            result: None,
+            start_time: Instant::now(),
+            end_time: None,
+            expanded: false,
+        };
+        let msg = Message::ToolCallMessage(state);
+        assert_eq!(msg.message_bg(&LIGHT_THEME), LIGHT_THEME.tool_bg);
+    }
+
+    #[test]
+    fn test_visual_line_count_ui_message() {
+        let msg = Message::UiMessages("hello".into());
+        assert_eq!(msg.visual_line_count(80, &LIGHT_THEME), 1);
+    }
+
+    #[test]
+    fn test_visual_line_count_agent_status() {
+        let msg = Message::AgentStatus(Status::Running);
+        assert_eq!(msg.visual_line_count(80, &LIGHT_THEME), 1);
+    }
+
+    #[test]
+    fn test_visual_line_count_user_message() {
+        let chat = ChatMessage::user("hello");
+        let msg = Message::AgentMessages(chat, false);
+        let count = msg.visual_line_count(80, &LIGHT_THEME);
+        assert!(count >= 1);
+    }
+
+    #[test]
+    fn test_tool_call_state_debug() {
+        let state = ToolCallState {
+            function_name: "Bash".into(),
+            tool_call_id: "c1".into(),
+            result: None,
+            start_time: Instant::now(),
+            end_time: None,
+            expanded: true,
+        };
+        let debug = format!("{:?}", state);
+        assert!(debug.contains("Bash"));
+        assert!(debug.contains("c1"));
+    }
+}

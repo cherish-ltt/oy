@@ -64,6 +64,20 @@ impl GlobalTomlConfig {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_default() {
+        let config = GlobalTomlConfig::default();
+        assert!(config.api_key.is_none());
+        assert!(config.base_url.is_none());
+        assert!(config.model.is_none());
+        assert!(config.theme.is_none());
+    }
+}
+
 pub fn build_provider_config(config: &GlobalTomlConfig) -> AiConfig {
     let api_key = config
         .api_key

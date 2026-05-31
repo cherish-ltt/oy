@@ -75,3 +75,81 @@ pub fn theme_items() -> Vec<CommandItem> {
         },
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_registry_new_has_two_commands() {
+        let reg = CommandRegistry::new();
+        assert_eq!(reg.commands.len(), 2);
+    }
+
+    #[test]
+    fn test_search_empty_input() {
+        let reg = CommandRegistry::new();
+        let result = reg.search("");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_search_slash_returns_all() {
+        let reg = CommandRegistry::new();
+        let result = reg.search("/");
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_search_model_prefix() {
+        let reg = CommandRegistry::new();
+        let result = reg.search("/mo");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "/model");
+    }
+
+    #[test]
+    fn test_search_settings_prefix() {
+        let reg = CommandRegistry::new();
+        let result = reg.search("/se");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "/settings");
+    }
+
+    #[test]
+    fn test_search_no_match() {
+        let reg = CommandRegistry::new();
+        let result = reg.search("/xyz");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_commands_sorted_alphabetically() {
+        let reg = CommandRegistry::new();
+        assert_eq!(reg.commands[0].name, "/model");
+        assert_eq!(reg.commands[1].name, "/settings");
+    }
+
+    #[test]
+    fn test_model_has_no_children() {
+        let reg = CommandRegistry::new();
+        let model = &reg.commands[0];
+        assert!(model.children.is_empty());
+    }
+
+    #[test]
+    fn test_settings_has_children() {
+        let reg = CommandRegistry::new();
+        let settings = &reg.commands[1];
+        assert_eq!(settings.children.len(), 1);
+        assert_eq!(settings.children[0].name, "/theme");
+    }
+
+    #[test]
+    fn test_theme_items() {
+        let items = theme_items();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].id, CommandId::ThemeLight);
+        assert_eq!(items[1].id, CommandId::ThemeDark);
+    }
+}

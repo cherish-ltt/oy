@@ -101,3 +101,74 @@ impl Agent for MainAgent {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn new_agent() -> MainAgent {
+        MainAgent::new_with_max_iterations(Some(10))
+    }
+
+    #[test]
+    fn test_max_iterations() {
+        let agent = new_agent();
+        assert_eq!(agent.max_iterations(), 10);
+    }
+
+    #[test]
+    fn test_default_max_iterations() {
+        let agent = MainAgent::new_with_max_iterations(None);
+        assert_eq!(agent.max_iterations(), u32::MAX);
+    }
+
+    #[test]
+    fn test_initial_messages_empty() {
+        let mut agent = new_agent();
+        assert!(agent.messages().is_empty());
+    }
+
+    #[test]
+    fn test_push_message() {
+        let mut agent = new_agent();
+        let uuid = Uuid::now_v7();
+        let msg = ChatMessage::user("hello");
+        // push_message_back may fail due to filesystem; the message is still stored
+        let _ = agent.push_message_back(uuid, msg);
+        assert_eq!(agent.messages().len(), 1);
+    }
+
+    #[test]
+    fn test_push_multiple_messages() {
+        let mut agent = new_agent();
+        let uuid = Uuid::now_v7();
+        let _ = agent.push_message_back(uuid, ChatMessage::system("prompt"));
+        let _ = agent.push_message_back(uuid, ChatMessage::user("hi"));
+        assert_eq!(agent.messages().len(), 2);
+    }
+
+    #[test]
+    fn test_clear_messages() {
+        let mut agent = new_agent();
+        let uuid = Uuid::now_v7();
+        let _ = agent.push_message_back(uuid, ChatMessage::user("hello"));
+        agent.clear_messages();
+        assert!(agent.messages().is_empty());
+    }
+
+    #[test]
+    fn test_system_prompt_contains_tools_placeholder() {
+        let agent = new_agent();
+        let prompt = agent.get_system_prompt("Read, Write, Bash, Edit");
+        assert!(prompt.contains("Read, Write, Bash, Edit"));
+        assert!(prompt.contains("current-dir"));
+        assert!(prompt.contains("current-Utc-time"));
+    }
+
+    #[test]
+    fn test_system_prompt_empty_tools() {
+        let agent = new_agent();
+        let prompt = agent.get_system_prompt("");
+        assert!(prompt.contains("## Available Tools"));
+    }
+}

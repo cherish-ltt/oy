@@ -96,3 +96,57 @@ pub static LIGHT_THEME: Theme = Theme {
     info_fg: Color::Blue,
     link_fg: Color::Blue,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dark_theme_name() {
+        assert_eq!(DARK_THEME.name, "dark");
+    }
+
+    #[test]
+    fn test_light_theme_name() {
+        assert_eq!(LIGHT_THEME.name, "light");
+    }
+
+    #[test]
+    fn test_themes_have_different_surface_bg() {
+        assert_ne!(DARK_THEME.surface_bg, LIGHT_THEME.surface_bg);
+    }
+
+    #[test]
+    fn test_dark_has_user_bg() {
+        // Just verify the field is not the default (Black)
+        assert_ne!(DARK_THEME.user_bg, Color::Reset);
+    }
+
+    #[test]
+    fn test_light_has_user_bg() {
+        assert_ne!(LIGHT_THEME.user_bg, Color::Reset);
+    }
+
+    #[test]
+    fn test_theme_fields_non_default() {
+        for theme in [&DARK_THEME, &LIGHT_THEME] {
+            assert!(theme.name.len() > 0);
+            assert_ne!(theme.accent, Color::Reset);
+            assert_ne!(theme.subtle, Color::Reset);
+            assert_ne!(theme.success, Color::Reset);
+            assert_ne!(theme.error, Color::Reset);
+            assert_ne!(theme.code_fg, Color::Reset);
+            assert_ne!(theme.code_bg, Color::Reset);
+        }
+    }
+
+    #[test]
+    fn test_dark_surface_fg_is_white() {
+        assert_eq!(DARK_THEME.surface_fg, Color::White);
+    }
+
+    #[test]
+    fn test_light_surface_fg_is_black() {
+        assert_eq!(LIGHT_THEME.surface_fg, Color::Black);
+    }
+}
