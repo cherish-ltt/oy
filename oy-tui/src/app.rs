@@ -289,10 +289,10 @@ impl App {
                 if ch.is_ascii_whitespace() && ch != '\n' {
                     // Check if this whitespace would cause overflow on its own
                     if col + pending_ws + w > width as u16 {
-                        // Whitespace at line end: start new line, drop trailing ws
+                        // Whitespace at line end: drop it entirely, start new line empty
                         row += 1;
                         pending_ws = 0;
-                        col = w;
+                        col = 0;
                     } else {
                         pending_ws += w;
                     }
@@ -340,17 +340,10 @@ impl App {
 
             if ch.is_ascii_whitespace() && ch != '\n' {
                 if col + pending_ws + w > width as u16 {
-                    // whitespace at line end: drop it, move to next line
+                    // whitespace at line end: drop it entirely, start new line empty
                     pending_ws = 0;
                     row += 1;
-                    col = w;
-                    if row == target_row {
-                        if target_col < w {
-                            best = i;
-                        } else {
-                            best = i + ch.len_utf8();
-                        }
-                    }
+                    col = 0;
                 } else {
                     // Update best for target_row tracking (whitespace accumulates, not committed yet)
                     // best tracks the last committed position
@@ -410,10 +403,10 @@ impl App {
                 let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
                 if ch.is_ascii_whitespace() && ch != '\n' {
                     if col + pending_ws + w > width as u16 {
-                        // Whitespace at line end: drop, new line
+                        // Whitespace at line end: drop entirely, new line empty
                         pending_ws = 0;
                         lines += 1;
-                        col = w;
+                        col = 0;
                     } else {
                         pending_ws += w;
                     }
@@ -576,7 +569,7 @@ pub(crate) fn visual_cursor_pos(input: &str, cursor_pos: usize, width: usize) ->
                 if col + pending_ws + w > width as u16 {
                     row += 1;
                     pending_ws = 0;
-                    col = w;
+                    col = 0;
                 } else {
                     pending_ws += w;
                 }
