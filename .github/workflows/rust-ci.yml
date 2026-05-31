@@ -17,10 +17,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 安装指定版本（1.95）的工具链，并附带 rustfmt 和 clippy 组件
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.95"
           components: rustfmt, clippy
+
+      # 可选：确认当前工具链（调试用）
+      - name: Show rustup info
+        run: rustup show
 
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2

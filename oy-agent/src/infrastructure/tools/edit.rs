@@ -131,6 +131,11 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn test_edit_tool_name() {
+        assert_eq!(EditTool.name(), "Edit");
+    }
+
+    #[test]
     fn test_edit_tool_safe_path_rejection() {
         let tool = EditTool;
         let result = tool
@@ -140,7 +145,6 @@ mod tests {
                 "new_text": "admin"
             }))
             .unwrap();
-
         assert!(result.contains("not allowed for security reasons"));
     }
 
@@ -154,7 +158,57 @@ mod tests {
                 "new_text": "bar"
             }))
             .unwrap();
-
         assert!(result.contains("File not found"));
+    }
+
+    #[test]
+    fn test_edit_tool_missing_args() {
+        let result = EditTool.execute(json!({}));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_edit_tool_schema() {
+        let schema = EditTool.schema();
+        assert!(schema["properties"]["file_path"].is_object());
+        assert!(schema["properties"]["old_text"].is_object());
+        assert!(schema["properties"]["new_text"].is_object());
+    }
+
+    #[test]
+    fn test_edit_tool_success() {
+        let tmp = std::env::temp_dir().join("oy_edit_test.txt");
+        std::fs::write(&tmp, "hello world").unwrap();
+        let result = EditTool
+            .execute(json!({
+                "file_path": tmp.to_string_lossy(),
+                "old_text": "hello",
+                "new_text": "hi"
+            }))
+            .unwrap();
+        assert!(result.contains("Successfully replaced"));
+        let content = std::fs::read_to_string(&tmp).unwrap();
+        assert_eq!(content, "hi world");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_edit_tool_no_changes() {
+        let tmp = std::env::temp_dir().join("oy_edit_nochange.txt");
+        std::fs::write(&tmp, "hello world").unwrap();
+        let result = EditTool
+            .execute(json!({
+                "file_path": tmp.to_string_lossy(),
+                "old_text": "nonexistent",
+                "new_text": "anything"
+            }))
+            .unwrap();
+        assert!(result.contains("No changes made"));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_edit_tool_system_prompt() {
+        assert!(!EditTool.get_system_prompt().is_empty());
     }
 }

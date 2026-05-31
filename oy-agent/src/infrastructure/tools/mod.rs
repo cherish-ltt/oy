@@ -58,3 +58,84 @@ impl ToolRegistry {
         result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infrastructure::tools::{
+        bash::BashTool, edit::EditTool, read::ReadTool, write::WriteTool,
+    };
+
+    fn sample_registry() -> ToolRegistry {
+        let mut r = ToolRegistry::new();
+        r.register(ReadTool);
+        r.register(WriteTool);
+        r.register(BashTool);
+        r.register(EditTool);
+        r
+    }
+
+    #[test]
+    fn test_registry_new_is_empty() {
+        let r = ToolRegistry::new();
+        assert!(r.get("Read").is_none());
+    }
+
+    #[test]
+    fn test_register_and_get() {
+        let mut r = ToolRegistry::new();
+        r.register(ReadTool);
+        let tool = r.get("Read");
+        assert!(tool.is_some());
+        assert_eq!(tool.unwrap().name(), "Read");
+    }
+
+    #[test]
+    fn test_get_nonexistent() {
+        let r = sample_registry();
+        assert!(r.get("Nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_register_overwrites() {
+        let mut r = ToolRegistry::new();
+        r.register(ReadTool);
+        r.register(ReadTool); // same name, overwrites
+        assert!(r.get("Read").is_some());
+    }
+
+    #[test]
+    fn test_get_schemas_count() {
+        let r = sample_registry();
+        let schemas = r.get_schemas();
+        assert_eq!(schemas.len(), 4);
+    }
+
+    #[test]
+    fn test_schema_structure() {
+        let r = sample_registry();
+        let schemas = r.get_schemas();
+        for s in &schemas {
+            assert_eq!(s["type"], "function");
+            assert!(s["function"]["name"].as_str().unwrap().len() > 0);
+            assert!(s["function"]["description"].as_str().unwrap().len() > 0);
+            assert!(s["function"]["parameters"].is_object());
+        }
+    }
+
+    #[test]
+    fn test_system_prompt_contains_tool_names() {
+        let r = sample_registry();
+        let prompt = r.get_tools_system_prompt();
+        assert!(prompt.contains("read"));
+        assert!(prompt.contains("write"));
+        assert!(prompt.contains("bash"));
+        assert!(prompt.contains("edit"));
+    }
+
+    #[test]
+    fn test_default_trait() {
+        let r = ToolRegistry::default();
+        assert!(r.get("Read").is_none());
+    }
+}

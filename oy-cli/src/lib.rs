@@ -14,8 +14,9 @@ use serde::Deserialize;
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 pub struct CliArgs {
+    /// Prompt to send to the agent (if omitted, launches the TUI)
     #[arg(short = 'p', long)]
-    pub prompt: String,
+    pub prompt: Option<String>,
 
     #[arg(short = 'm', long)]
     pub model: Option<String>,
@@ -93,8 +94,17 @@ pub fn register_default_tools(registry: &mut ToolRegistry) {
     registry.register(BashTool);
 }
 
-/// Run the agent with the given CLI arguments.
+/// Run the agent with the given CLI arguments, or launch the TUI if no prompt is given.
 pub async fn run(args: CliArgs) -> Result<(), anyhow::Error> {
+    // No prompt → launch TUI
+    if args.prompt.is_none() {
+        oy_tui::run_tui()
+            .await
+            .map_err(|e| anyhow::Error::msg(format!("{}", e)))?;
+        return Ok(());
+    }
+
+    let prompt = args.prompt.as_ref().unwrap();
     let cli_config = CliConfig::load();
     let ai_config = build_provider_config(&cli_config, &args);
 
@@ -110,7 +120,8 @@ pub async fn run(args: CliArgs) -> Result<(), anyhow::Error> {
 
     let main_agent = MainAgent::new_with_max_iterations(None);
     let mut orchestrator = Orchestrator::new(main_agent, provider, registry);
-    let result = orchestrator.execute(&args.prompt).await?;
+    orchestrator.init();
+    let result = orchestrator.execute(prompt).await?;
     println!("{}", result);
     Ok(())
 }

@@ -50,6 +50,16 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn test_read_tool_name() {
+        assert_eq!(ReadTool.name(), "Read");
+    }
+
+    #[test]
+    fn test_read_tool_description() {
+        assert!(!ReadTool.description().is_empty());
+    }
+
+    #[test]
     fn test_read_tool_nonexistent_file() {
         let tool = ReadTool;
         let result = tool
@@ -68,5 +78,28 @@ mod tests {
         let schema = tool.schema();
         assert!(schema["properties"]["file_path"].is_object());
         assert_eq!(schema["required"][0], "file_path");
+    }
+
+    #[test]
+    fn test_read_tool_missing_file_path() {
+        let tool = ReadTool;
+        let result = tool.execute(json!({}));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_tool_system_prompt_non_empty() {
+        assert!(!ReadTool.get_system_prompt().is_empty());
+    }
+
+    #[test]
+    fn test_read_tool_success() {
+        let tmp = std::env::temp_dir().join("oy_read_test.txt");
+        std::fs::write(&tmp, "hello world").unwrap();
+        let result = ReadTool
+            .execute(json!({"file_path": tmp.to_string_lossy()}))
+            .unwrap();
+        assert_eq!(result, "hello world");
+        let _ = std::fs::remove_file(&tmp);
     }
 }

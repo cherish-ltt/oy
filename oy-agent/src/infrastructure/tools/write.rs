@@ -57,6 +57,11 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn test_write_tool_name() {
+        assert_eq!(WriteTool.name(), "Write");
+    }
+
+    #[test]
     fn test_write_tool_success() {
         let tmp_dir = std::env::temp_dir();
         let file_path = tmp_dir.join("oy_test_write.txt");
@@ -74,8 +79,48 @@ mod tests {
             "Expected success message, got: {}",
             result
         );
-
-        // Clean up
+        // verify content
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(content, "test content");
         let _ = std::fs::remove_file(&file_path);
+    }
+
+    #[test]
+    fn test_write_tool_missing_file_path() {
+        let result = WriteTool.execute(json!({"content": "hi"}));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_write_tool_missing_content() {
+        let result = WriteTool.execute(json!({"file_path": "/tmp/x.txt"}));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_write_tool_schema() {
+        let schema = WriteTool.schema();
+        assert!(schema["properties"]["file_path"].is_object());
+        assert!(schema["properties"]["content"].is_object());
+    }
+
+    #[test]
+    fn test_write_tool_system_prompt() {
+        assert!(!WriteTool.get_system_prompt().is_empty());
+    }
+
+    #[test]
+    fn test_write_tool_flat_path() {
+        let tmp = std::env::temp_dir().join("oy_test_write_flat.txt");
+        let path_str = tmp.to_string_lossy().to_string();
+        let result = WriteTool
+            .execute(json!({
+                "file_path": path_str,
+                "content": "flat"
+            }))
+            .unwrap();
+        assert!(result.contains("Successfully wrote"));
+        assert!(tmp.exists());
+        let _ = std::fs::remove_file(&tmp);
     }
 }

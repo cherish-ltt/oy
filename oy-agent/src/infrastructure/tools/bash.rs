@@ -80,6 +80,11 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn test_bash_tool_name() {
+        assert_eq!(BashTool.name(), "Bash");
+    }
+
+    #[test]
     fn test_bash_tool_echo() {
         let tool = BashTool;
         let result = tool.execute(json!({"command": "echo hello"})).unwrap();
@@ -123,5 +128,32 @@ mod tests {
             "Expected rejection, got: {}",
             result
         );
+    }
+
+    #[test]
+    fn test_bash_tool_missing_command() {
+        let result = BashTool.execute(json!({}));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_bash_tool_pipe() {
+        let result = BashTool
+            .execute(json!({"command": "echo hello | wc -c"}))
+            .unwrap();
+        let trimmed = result.trim();
+        assert_eq!(trimmed, "6");
+    }
+
+    #[test]
+    fn test_bash_tool_schema() {
+        let schema = BashTool.schema();
+        assert!(schema["properties"]["command"].is_object());
+        assert_eq!(schema["required"][0], "command");
+    }
+
+    #[test]
+    fn test_bash_tool_system_prompt() {
+        assert!(!BashTool.get_system_prompt().is_empty());
     }
 }

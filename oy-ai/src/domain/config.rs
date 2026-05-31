@@ -32,12 +32,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ai_config_default_model() {
+    fn test_ai_config_defaults() {
         let config = AiConfig::default();
         assert_eq!(config.model, "deepseek-v4-flash");
         assert_eq!(
             config.base_url,
             "https://opencode.ai/zen/go/v1/chat/completions"
         );
+    }
+
+    #[test]
+    fn test_ai_config_new() {
+        let config = AiConfig::new(
+            "https://example.com/api".into(),
+            "sk-test-key".into(),
+            "gpt-4".into(),
+        );
+        assert_eq!(config.base_url, "https://example.com/api");
+        assert_eq!(config.api_key, "sk-test-key");
+        assert_eq!(config.model, "gpt-4");
+    }
+
+    #[test]
+    fn test_ai_config_debug() {
+        let config = AiConfig::new("http://localhost".into(), "key123".into(), "m".into());
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("http://localhost"));
+        assert!(debug_str.contains("key123"));
+        assert!(debug_str.contains("m"));
     }
 }
