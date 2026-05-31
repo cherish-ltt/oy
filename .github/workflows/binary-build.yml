@@ -28,8 +28,31 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            RAW_TAG="${{ github.event.inputs.tag_name }}"
+            # Remove leading/trailing whitespace and newlines
+            CLEAN_TAG=$(echo "$RAW_TAG" | xargs)
+          else
+            CLEAN_TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          if [[ -z "$CLEAN_TAG" ]]; then
+            echo "❌ Error: tag name is empty"
+            exit 1
+          fi
+          echo "Using release tag: $CLEAN_TAG"
+          echo "tag=$CLEAN_TAG" >> $GITHUB_OUTPUT
+
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Checkout specific tag (for manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git fetch --tags
+          git checkout tags/${{ steps.tag.outputs.tag }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -61,9 +84,12 @@ jobs:
           esac
           cp "target/release/oy${EXT}" "oy-${PLATFORM}${EXT}"
 
-      - name: Upload to Release
+      - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.tag }}
           files: oy-*
+          prerelease: ${{ github.event.inputs.prerelease || false }}
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
