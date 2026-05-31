@@ -169,7 +169,12 @@ impl App {
         match key_event.code {
             KeyCode::Esc | KeyCode::Char('q') => self.events.send(AppEvent::Quit),
             KeyCode::Char('c' | 'C') if key_event.modifiers == KeyModifiers::CONTROL => {
-                self.events.send(AppEvent::Quit)
+                if self.input.is_empty() {
+                    self.events.send(AppEvent::Quit)
+                } else {
+                    self.input.clear();
+                    self.cursor_pos = 0;
+                }
             }
             KeyCode::Enter if !self.input.is_empty() => {
                 self.expand_paste_snippets();
