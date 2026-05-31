@@ -5,7 +5,7 @@ use crate::{
     event::{AppEvent, Event, EventHandler},
     load_config::{GlobalTomlConfig, build_provider_config, register_default_tools},
     message::{
-        Message::{self, AgentMessages, AgentStatus, ToolCallMessage, UiMessages},
+        Message::{self, AgentMessages, ToolCallMessage, UiMessages},
         Status, ToolCallState,
     },
     theme::{Theme, DARK_THEME, LIGHT_THEME},
@@ -82,6 +82,10 @@ pub struct App {
     pub input_title: String,
     /// 当前主题
     pub theme: &'static Theme,
+    /// Agent 运行状态（running / pause）
+    pub agent_status: Cell<Status>,
+    /// 帧计数器（用于 spinner 动画）
+    pub tick_counter: Cell<u64>,
 }
 
 impl App {
@@ -143,6 +147,8 @@ impl App {
             app_mode: AppMode::Normal,
             input_title: String::new(),
             theme,
+            agent_status: Cell::new(Status::Pause),
+            tick_counter: Cell::new(0),
         }
     }
 
@@ -191,16 +197,10 @@ impl App {
                         }
                     }
                     AppEvent::Pause => {
-                        self.messages.push_back(AgentStatus(Status::Pause));
-                        if self.auto_scroll.get() {
-                            self.scroll_offset.set(u16::MAX);
-                        }
+                        self.agent_status.set(Status::Pause);
                     }
                     AppEvent::Running => {
-                        self.messages.push_back(AgentStatus(Status::Running));
-                        if self.auto_scroll.get() {
-                            self.scroll_offset.set(u16::MAX);
-                        }
+                        self.agent_status.set(Status::Running);
                     }
                 },
             }
@@ -1073,7 +1073,7 @@ impl App {
     }
 
     pub fn tick(&self) {
-        // Can be used for periodic updates (e.g., polling)
+        self.tick_counter.set(self.tick_counter.get() + 1);
     }
 
     pub fn quit(&mut self) {

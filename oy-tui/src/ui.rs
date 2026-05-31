@@ -11,6 +11,7 @@ use ratatui::{
 use crate::{
     app::{App, AppMode, visual_cursor_pos},
     command::CommandInfo,
+    message::Status,
 };
 
 impl Widget for &App {
@@ -188,8 +189,18 @@ impl Widget for &App {
         input_paragraph.render(chunks[1], buf);
 
         // ── Status Area ──
+        const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let spinner_char = match self.agent_status.get() {
+            Status::Running => {
+                let idx = (self.tick_counter.get() as usize / 2) % SPINNER.len();
+                SPINNER[idx]
+            }
+            Status::Pause => "•",
+        };
+
         let mut status_text = format!(
-            " <Current Agent> (Cycle with shift+tab)\n Messages: {} | ↑/↓/←/→ move cursor | Enter send | Ctrl+O expand | Ctrl+C/Esc/q quit",
+            " <Current Agent> {} (Cycle with shift+tab)\n Messages: {} | ↑/↓/←/→ move cursor | Enter send | Ctrl+O expand | Ctrl+C/Esc/q quit",
+            spinner_char,
             self.messages.len()
         );
 
