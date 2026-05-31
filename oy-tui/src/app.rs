@@ -267,6 +267,24 @@ impl App {
     }
 
     pub async fn handle_key_events(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
+        // Ctrl+O: toggle expand/collapse — works in ALL modes
+        if key_event.code == KeyCode::Char('o') && key_event.modifiers == KeyModifiers::CONTROL {
+            for msg in self.messages.iter_mut().rev() {
+                match msg {
+                    Message::AgentMessages(_, expanded) => {
+                        *expanded = !*expanded;
+                        break;
+                    }
+                    Message::ToolCallMessage(state) => {
+                        state.expanded = !state.expanded;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            return Ok(());
+        }
+
         match self.app_mode {
             AppMode::Normal => self.handle_key_normal(key_event).await,
             AppMode::CommandSelector {
@@ -367,21 +385,7 @@ impl App {
             KeyCode::Insert if key_event.modifiers == KeyModifiers::SHIFT => {
                 self.paste_from_clipboard();
             }
-            KeyCode::Char('o') if key_event.modifiers == KeyModifiers::CONTROL => {
-                for msg in self.messages.iter_mut().rev() {
-                    match msg {
-                        Message::AgentMessages(_, expanded) => {
-                            *expanded = !*expanded;
-                            break;
-                        }
-                        Message::ToolCallMessage(state) => {
-                            state.expanded = !state.expanded;
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            // Ctrl+O is handled at top-level handle_key_events; do not re-handle here.
             KeyCode::Char(c) => {
                 self.input.insert(self.cursor_pos, c);
                 self.cursor_pos += c.len_utf8();

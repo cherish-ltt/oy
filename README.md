@@ -195,4 +195,4 @@ cargo test --workspace
 
 ## 许可证
 
-MIT
+AGPL
