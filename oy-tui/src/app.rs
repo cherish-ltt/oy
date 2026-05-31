@@ -580,10 +580,9 @@ impl App {
         }
         let mut row = 0u16;
         let mut col = 0u16;
-        let mut pending_ws = 0u16; // trailing whitespace not yet committed
+        let mut pending_ws = 0u16;
         for (i, ch) in self.input.char_indices() {
             if i >= self.cursor_pos {
-                // commit pending whitespace before breaking
                 col += pending_ws;
                 break;
             }
@@ -594,9 +593,7 @@ impl App {
             } else {
                 let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
                 if ch.is_ascii_whitespace() && ch != '\n' {
-                    // Check if this whitespace would cause overflow on its own
                     if col + pending_ws + w > width as u16 {
-                        // Whitespace at line end: drop it entirely, start new line empty
                         row += 1;
                         pending_ws = 0;
                         col = 0;
@@ -604,9 +601,7 @@ impl App {
                         pending_ws += w;
                     }
                 } else {
-                    // Non-whitespace: check if word fits with preceding whitespace
                     if col + pending_ws + w > width as u16 {
-                        // Doesn't fit: wrap, drop trailing whitespace
                         row += 1;
                         col = w;
                     } else {
@@ -615,6 +610,11 @@ impl App {
                     pending_ws = 0;
                 }
             }
+        }
+        col += pending_ws;
+        if col >= width as u16 {
+            row += 1;
+            col = 0;
         }
         (row, col)
     }
@@ -1118,6 +1118,13 @@ pub(crate) fn visual_cursor_pos(input: &str, cursor_pos: usize, width: usize) ->
                 pending_ws = 0;
             }
         }
+    }
+    // Commit any trailing pending whitespace (cursor after spaces at end)
+    col += pending_ws;
+    // Clamp to prevent cursor going beyond terminal width (causes visual glitch)
+    if col >= width as u16 {
+        row += 1;
+        col = 0;
     }
     (row, col)
 }
