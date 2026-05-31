@@ -32,14 +32,14 @@ oy (oy -p "prompt" 直接执行) ────
 | :--- | :--- | :--- |
 | [`oy-ai`](./oy-ai/) | 核心 | AI 提供者 trait、值对象（ChatMessage、ToolCall）、OpenRouter 实现 |
 | [`oy-agent`](./oy-agent/) | 领域 | Agent 实体、Tool trait、编排器循环、工具实现（Read/Write/Edit/Bash）、会话持久化 |
-| [`oy-cli`](./oy-cli/) | 基础设施 | CLI 参数解析（clap）、二进制入口 `oy` |
+| [`oy-code-cli`](./oy-code-cli/) | 基础设施 | CLI 参数解析（clap）、二进制入口 `oy` |
 | [`oy-tui`](./oy-tui/) | 基础设施 | 基于 ratatui 的 TUI shell，markdown 渲染、命令系统、主题切换 |
 
 ### 依赖方向
 
-- `oy-cli` → `oy-agent` → `oy-ai`
+- `oy-code-cli` → `oy-agent` → `oy-ai`
 - `oy-tui` → `oy-agent` → `oy-ai`
-- `oy-cli` → `oy-tui`（无 prompt 时启动 TUI）
+- `oy-code-cli` → `oy-tui`（无 prompt 时启动 TUI）
 
 ## 快速开始
 
@@ -67,17 +67,27 @@ export OPENROUTER_BASE_URL="https://openrouter.ai/api/v1"
 export OPENROUTER_MODEL="anthropic/claude-haiku-4.5"
 ```
 
-### 构建与运行
+### 安装与运行
+
+```bash
+# 从 crates.io 安装
+cargo install oy-code-cli
+
+# 启动 TUI（默认）
+oy
+
+# 或直接使用 CLI 模式
+oy -p "当前目录下有哪些文件？"
+```
+
+### 本地开发
 
 ```bash
 # 构建
 cargo build --workspace
 
 # 启动 TUI
-cargo run -p oy-cli
-
-# 或直接使用 CLI 模式
-cargo run -p oy-cli -- -p "当前目录下有哪些文件？"
+cargo run -p oy-code-cli
 
 # 测试
 cargo test --workspace
@@ -164,7 +174,7 @@ oy/
 │       ├── domain/ (Agent trait, Tool trait, ToolRegistry, AgentError)
 │       ├── application/ (Orchestrator 主循环)
 │       └── infrastructure/ (ReadTool, WriteTool, EditTool, BashTool, 持久化)
-├── oy-cli/                        # CLI 二进制 `oy`
+├── oy-code-cli/                   # CLI 二进制 `oy`
 │   └── src/ (CliArgs, run())
 └── oy-tui/                        # TUI 二进制
     └── src/

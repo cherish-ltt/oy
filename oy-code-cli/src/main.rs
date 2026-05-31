@@ -1,5 +1,5 @@
 use clap::Parser;
-use oy_cli::{CliArgs, run};
+use oy_code_cli::{CliArgs, run};
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {

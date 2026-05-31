@@ -11,7 +11,7 @@ mod theme;
 use crate::app::App;
 use crossterm::execute;
 
-/// Shared TUI entry point — callable from oy-cli.
+/// Shared TUI entry point — callable from oy-code-cli.
 pub async fn run_tui() -> color_eyre::Result<()> {
     color_eyre::install()?;
     execute!(
