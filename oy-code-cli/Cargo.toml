@@ -4,6 +4,7 @@ version = "0.1.1"
 edition = "2024"
 description = "CLI entry point for oy"
 license = "MIT"
+repository = "https://github.com/cherish-ltt/oy"
 
 [[bin]]
 name = "oy"
