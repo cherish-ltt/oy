@@ -30,10 +30,10 @@ jobs:
     steps:
       - name: Determine release tag
         id: tag
+        shell: bash          # 关键：强制使用 bash
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             RAW_TAG="${{ github.event.inputs.tag_name }}"
-            # Remove leading/trailing whitespace and newlines
             CLEAN_TAG=$(echo "$RAW_TAG" | xargs)
           else
             CLEAN_TAG="${GITHUB_REF#refs/tags/}"
@@ -50,6 +50,7 @@ jobs:
 
       - name: Checkout specific tag (for manual dispatch)
         if: github.event_name == 'workflow_dispatch'
+        shell: bash          # 强制使用 bash
         run: |
           git fetch --tags
           git checkout tags/${{ steps.tag.outputs.tag }}
