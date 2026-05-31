@@ -67,12 +67,33 @@ export OPENROUTER_BASE_URL="https://openrouter.ai/api/v1"
 export OPENROUTER_MODEL="anthropic/claude-haiku-4.5"
 ```
 
-### 安装与运行
+### 安装
+
+> **支持平台：** macOS (arm64)、Linux (x86_64, Ubuntu latest, GNU)、Windows (x86_64)
+
+通过 **bun**（推荐）快速安装：
 
 ```bash
-# 从 crates.io 安装
-cargo install oy-code-cli
+bun install -g @ghyper9023/oy --registry https://registry.npmjs.org/
+```
 
+通过 **npm** 安装：
+
+```bash
+npm install -g @ghyper9023/oy
+```
+
+或通过 **cargo** 从源码编译（推荐，享受最新特性）：
+
+```bash
+cargo install oy-code-cli
+```
+
+> 💡 推荐排序：**bun > cargo 自编译 > npm**。bun 安装速度最快；cargo 自编译可获得当前架构最佳优化。
+
+### 运行
+
+```bash
 # 启动 TUI（默认）
 oy
 
