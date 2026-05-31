@@ -40,13 +40,10 @@ impl Message {
     pub fn to_lines(&self, theme: &Theme) -> Vec<Line<'_>> {
         match self {
             Message::UiMessages(text) => {
-                vec![
-                    Line::from(Span::styled(
-                        format!("> {}", text),
-                        Style::default().fg(theme.info_fg).bold(),
-                    )),
-                    Line::from(Span::raw("")),
-                ]
+                vec![Line::from(Span::styled(
+                    format!("> {}", text),
+                    Style::default().fg(theme.info_fg).bold(),
+                ))]
             }
             Message::AgentMessages(chat_message, expanded) => {
                 let role_style = match chat_message.role {
@@ -120,7 +117,6 @@ impl Message {
                     }
                 }
 
-                lines.push(Line::from(Span::raw("")));
                 lines
             }
             Message::ToolCallMessage(state) => {
@@ -208,24 +204,17 @@ impl Message {
                     }
                 }
 
-                lines.push(Line::from(Span::raw("")));
                 lines
             }
             Message::AgentStatus(status) => match status {
-                Status::Pause => vec![
-                    Line::from(Span::styled(
-                        "> pause",
-                        Style::default().fg(theme.subtle).bold(),
-                    )),
-                    Line::from(Span::raw("")),
-                ],
-                Status::Running => vec![
-                    Line::from(Span::styled(
-                        "> running",
-                        Style::default().fg(theme.success).bold(),
-                    )),
-                    Line::from(Span::raw("")),
-                ],
+                Status::Pause => vec![Line::from(Span::styled(
+                    "> pause",
+                    Style::default().fg(theme.subtle).bold(),
+                ))],
+                Status::Running => vec![Line::from(Span::styled(
+                    "> running",
+                    Style::default().fg(theme.success).bold(),
+                ))],
             },
         }
     }

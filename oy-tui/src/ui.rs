@@ -38,13 +38,15 @@ impl Widget for &App {
         let content_width = chunks[0].width.saturating_sub(2) as usize;
         let visible_height = (chunks[0].height.saturating_sub(2)) as usize;
 
-        // Compute per-message heights
+        // Compute per-message heights (content only, no trailing blanks)
         let msg_heights: Vec<usize> = self
             .messages
             .iter()
             .map(|msg| msg.visual_line_count(content_width, t))
             .collect();
-        let total_visual: usize = msg_heights.iter().sum();
+        // Add 1 spacer line between messages
+        let spacer_count = self.messages.len().saturating_sub(1);
+        let total_visual: usize = msg_heights.iter().sum::<usize>() + spacer_count;
 
         // Clamp scroll offset
         if total_visual > visible_height {
@@ -63,16 +65,22 @@ impl Widget for &App {
         }
 
         // Determine starting message and line offset from scroll
+        // (spacers are counted as 1 line each in the scroll space)
         let mut scroll_rem = self.scroll_offset.get() as usize;
-        let mut msg_idx = 0;
+        let mut msg_idx = 0usize;
         let mut line_offset = 0usize;
         for (i, &h) in msg_heights.iter().enumerate() {
-            if scroll_rem < h {
+            let entry_height = h + if i < msg_heights.len() - 1 { 1 } else { 0 };
+            if scroll_rem < entry_height {
                 msg_idx = i;
-                line_offset = scroll_rem;
+                if scroll_rem < h {
+                    line_offset = scroll_rem;
+                } else {
+                    line_offset = 0;
+                }
                 break;
             }
-            scroll_rem -= h;
+            scroll_rem -= entry_height;
         }
 
         // Render visible messages as individual paragraphs
@@ -112,6 +120,23 @@ impl Widget for &App {
 
             used_lines += render_lines;
             line_offset = 0;
+
+            // Add spacer line (with surface_bg) between messages
+            if i + 1 < self.messages.len() && used_lines < visible_height {
+                let spacer_y = chunks[0].y + 1 + used_lines as u16;
+                let spacer_area = Rect {
+                    x: inner_x,
+                    y: spacer_y,
+                    width: inner_w,
+                    height: 1,
+                };
+                // Spacer row with surface_bg (text must be non-empty to fill the row)
+                let spacer_text = Text::from(Line::from(Span::raw(" ")));
+                let spacer = Paragraph::new(spacer_text)
+                    .style(Style::default().fg(t.surface_bg).bg(t.surface_bg));
+                spacer.render(spacer_area, buf);
+                used_lines += 1;
+            }
         }
 
         // Draw the outer border on top
@@ -170,7 +195,7 @@ impl Widget for &App {
 
         if let Some(main_agent) = &self.main_agent {
             status_text =
-                status_text.replace("<Current Agent>", &format!("<🖥 {}>", &main_agent.name));
+                status_text.replace("<Current Agent>", &format!("<{}>", &main_agent.name));
         }
         let status_paragraph = Paragraph::new(status_text)
             .alignment(Alignment::Left)
