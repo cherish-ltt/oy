@@ -62,16 +62,20 @@ pub fn load_session(path: &Path) -> Result<Box<dyn Agent>, AgentError> {
 mod tests {
     use super::*;
 
+    fn test_dir(name: &str) -> String {
+        format!("_oy_test_{}", name)
+    }
+
     #[test]
     fn test_save_session_returns_path() {
+        let dir = test_dir("returns_path");
         let uuid = Uuid::now_v7();
         let msgs: Vec<&ChatMessage> = vec![];
-        let result = save_session(uuid, msgs, "_oy_test_sessions");
+        let result = save_session(uuid, msgs, &dir);
         assert!(result.is_ok());
         let path = result.unwrap();
         assert!(path.contains(&uuid.to_string()));
         assert!(path.ends_with(".json"));
-        // cleanup
         if let Some(p) = Path::new(&path).parent() {
             let _ = std::fs::remove_dir_all(p);
         }
@@ -79,20 +83,19 @@ mod tests {
 
     #[test]
     fn test_save_and_load_roundtrip() {
+        let dir = test_dir("roundtrip");
         let uuid = Uuid::now_v7();
         let msg = ChatMessage::user("hello from test");
         let msgs: Vec<&ChatMessage> = vec![&msg];
-        let save_result = save_session(uuid, msgs, "_oy_test_sessions");
+        let save_result = save_session(uuid, msgs, &dir);
         assert!(save_result.is_ok());
         let path_str = save_result.unwrap();
         let path = Path::new(&path_str);
         assert!(path.exists());
 
         let loaded = load_session(path);
-        // load_session recreates MainAgent which calls save_session (side effect)
         assert!(loaded.is_ok());
 
-        // cleanup
         if let Some(p) = path.parent() {
             let _ = std::fs::remove_dir_all(p);
         }
@@ -107,11 +110,10 @@ mod tests {
 
     #[test]
     fn test_save_session_invalid_dir() {
+        let dir = test_dir("invalid");
         let uuid = Uuid::now_v7();
         let msgs = vec![];
-        // Use an invalid path that will cause a write error (e.g. path too long or permission denied)
-        // A simpler approach: just verify empty message list works
-        let result = save_session(uuid, msgs, "_oy_test_empty");
+        let result = save_session(uuid, msgs, &dir);
         assert!(result.is_ok());
         if let Ok(p) = &result {
             if let Some(parent) = Path::new(p).parent() {
