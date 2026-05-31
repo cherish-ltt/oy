@@ -3,6 +3,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };
+use std::time::Instant;
 use unicode_width::UnicodeWidthStr;
 
 /// Maximum lines to show for a read tool result (when collapsed)
@@ -12,9 +13,20 @@ const MAX_BASH_LINES: usize = 5;
 const MAX_EDIT_LINES: usize = 5;
 
 #[derive(Debug)]
+pub struct ToolCallState {
+    pub function_name: String,
+    pub tool_call_id: String,
+    pub result: Option<ChatMessage>,
+    pub start_time: Instant,
+    pub end_time: Option<Instant>,
+    pub expanded: bool,
+}
+
+#[derive(Debug)]
 pub enum Message {
     UiMessages(String),
     AgentMessages(ChatMessage, bool), // bool = expanded
+    ToolCallMessage(ToolCallState),
     AgentStatus(Status),
 }
 
@@ -25,10 +37,13 @@ impl Message {
     pub fn to_lines(&self) -> Vec<Line<'_>> {
         match self {
             Message::UiMessages(text) => {
-                vec![Line::from(Span::styled(
-                    format!("> {}", text),
-                    Style::default().fg(Color::Blue).bold(),
-                ))]
+                vec![
+                    Line::from(Span::styled(
+                        format!("> {}", text),
+                        Style::default().fg(Color::Blue).bold(),
+                    )),
+                    Line::from(Span::raw("")),
+                ]
             }
             Message::AgentMessages(chat_message, expanded) => {
                 let role_style = match chat_message.role {
@@ -99,17 +114,113 @@ impl Message {
                     }
                 }
 
+                lines.push(Line::from(Span::raw("")));
+                lines
+            }
+            Message::ToolCallMessage(state) => {
+                let mut lines = Vec::new();
+                let duration = if let Some(end) = state.end_time {
+                    end.duration_since(state.start_time).as_secs_f64()
+                } else {
+                    state.start_time.elapsed().as_secs_f64()
+                };
+
+                let icon = if state.result.is_some() { "✓" } else { "·" };
+
+                lines.push(Line::from(vec![
+                    Span::styled("🔧 ", Style::default().fg(Color::Cyan)),
+                    Span::styled(
+                        format!("工具调用 {} ", icon),
+                        Style::default().fg(Color::Cyan),
+                    ),
+                    Span::styled(
+                        &state.function_name,
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!(" ({:.1}s)", duration),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]));
+
+                // Result content (when available)
+                if let Some(result) = &state.result {
+                    if let Some(content) = &result.content {
+                        let all_lines: Vec<&str> = content.lines().collect();
+                        let total = all_lines.len();
+
+                        match state.function_name.as_str() {
+                            "Read" => {
+                                let display = if state.expanded || total <= MAX_READ_LINES {
+                                    total
+                                } else {
+                                    MAX_READ_LINES
+                                };
+                                for line in &all_lines[..display] {
+                                    lines.push(Line::from(Span::styled(
+                                        format!("  {}", line),
+                                        Style::default().fg(Color::Magenta),
+                                    )));
+                                }
+                                if !state.expanded && total > MAX_READ_LINES {
+                                    lines.push(Line::from(Span::styled(
+                                        format!("  ... ({} more lines, ctrl+o to expand) ", total - MAX_READ_LINES),
+                                        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                                    )));
+                                }
+                            }
+                            "Bash" => {
+                                if !state.expanded && total > MAX_BASH_LINES {
+                                    let hidden = total - MAX_BASH_LINES;
+                                    lines.push(Line::from(Span::styled(
+                                        format!("  ... ({} earlier lines, ctrl+o to expand) ", hidden),
+                                        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                                    )));
+                                    for line in &all_lines[total - MAX_BASH_LINES..] {
+                                        lines.push(Line::from(Span::styled(
+                                            format!("  {}", line),
+                                            Style::default().fg(Color::Magenta),
+                                        )));
+                                    }
+                                } else {
+                                    for line in &all_lines {
+                                        lines.push(Line::from(Span::styled(
+                                            format!("  {}", line),
+                                            Style::default().fg(Color::Magenta),
+                                        )));
+                                    }
+                                }
+                            }
+                            _ => {
+                                for line in &all_lines {
+                                    lines.push(Line::from(Span::styled(
+                                        format!("  {}", line),
+                                        Style::default().fg(Color::Magenta),
+                                    )));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                lines.push(Line::from(Span::raw("")));
                 lines
             }
             Message::AgentStatus(status) => match status {
-                Status::Pause => vec![Line::from(Span::styled(
-                    "> pause",
-                    Style::default().fg(Color::Gray).bold(),
-                ))],
-                Status::Running => vec![Line::from(Span::styled(
-                    "> running",
-                    Style::default().fg(Color::Green).bold(),
-                ))],
+                Status::Pause => vec![
+                    Line::from(Span::styled(
+                        "> pause",
+                        Style::default().fg(Color::Gray).bold(),
+                    )),
+                    Line::from(Span::raw("")),
+                ],
+                Status::Running => vec![
+                    Line::from(Span::styled(
+                        "> running",
+                        Style::default().fg(Color::Green).bold(),
+                    )),
+                    Line::from(Span::raw("")),
+                ],
             },
         }
     }
@@ -334,6 +445,35 @@ impl Message {
                 } else {
                     self.visual_default_count(chat, width)
                 }
+            }
+            Message::ToolCallMessage(state) => {
+                let mut count = 1; // header line
+                if let Some(result) = &state.result {
+                    if let Some(content) = &result.content {
+                        let all_lines: Vec<&str> = content.lines().collect();
+                        let total = all_lines.len();
+                        match state.function_name.as_str() {
+                            "Read" => {
+                                if state.expanded || total <= MAX_READ_LINES {
+                                    count += total;
+                                } else {
+                                    count += MAX_READ_LINES + 1;
+                                }
+                            }
+                            "Bash" => {
+                                if state.expanded || total <= MAX_BASH_LINES {
+                                    count += total;
+                                } else {
+                                    count += 1 + MAX_BASH_LINES;
+                                }
+                            }
+                            _ => {
+                                count += total;
+                            }
+                        }
+                    }
+                }
+                count.max(1)
             }
             Message::AgentStatus(_) => 1,
         }

@@ -4,8 +4,8 @@ use crate::{
     event::{AppEvent, Event, EventHandler},
     load_config::{GlobalTomlConfig, build_provider_config, register_default_tools},
     message::{
-        Message::{self, AgentMessages, AgentStatus, UiMessages},
-        Status,
+        Message::{self, AgentMessages, AgentStatus, ToolCallMessage, UiMessages},
+        Status, ToolCallState,
     },
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
@@ -19,6 +19,7 @@ use ratatui::DefaultTerminal;
 use std::{
     cell::Cell,
     collections::{HashMap, VecDeque},
+    time::Instant,
 };
 
 /// Application state
@@ -135,10 +136,7 @@ impl App {
                 Event::App(app_event) => match app_event {
                     AppEvent::Quit => self.quit(),
                     AppEvent::ChatMessage(chat_message) => {
-                        self.messages.push_back(AgentMessages(chat_message, false)); // start collapsed
-                        if self.auto_scroll.get() {
-                            self.scroll_offset.set(u16::MAX);
-                        }
+                        self.handle_chat_message(chat_message).await;
                     }
                     AppEvent::AgentError(e) => {
                         self.messages
@@ -163,6 +161,64 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    async fn handle_chat_message(&mut self, chat_message: oy_agent::oy_ai::ChatMessage) {
+        use oy_agent::oy_ai::Role;
+
+        // Assistant message with tool calls: split into content + ToolCallMessage
+        if chat_message.role == Role::Assistant {
+            if let Some(tool_calls) = &chat_message.tool_calls {
+                if !tool_calls.is_empty() {
+                    // Push assistant content (thinking/reasoning) without tool calls
+                    let mut content_msg = chat_message.clone();
+                    content_msg.tool_calls = None;
+                    if content_msg.content.is_some() || content_msg.reasoning_content.is_some() {
+                        self.messages.push_back(AgentMessages(content_msg, false));
+                    }
+                    // Push a ToolCallMessage for each tool call
+                    for tc in tool_calls {
+                        self.messages.push_back(ToolCallMessage(ToolCallState {
+                            function_name: tc.function_name.clone(),
+                            tool_call_id: tc.id.clone(),
+                            result: None,
+                            start_time: Instant::now(),
+                            end_time: None,
+                            expanded: false,
+                        }));
+                    }
+                    if self.auto_scroll.get() {
+                        self.scroll_offset.set(u16::MAX);
+                    }
+                    return;
+                }
+            }
+        }
+
+        // Tool result: find matching ToolCallMessage by tool_call_id
+        if chat_message.role == Role::Tool {
+            if let Some(call_id) = &chat_message.tool_call_id {
+                for msg in self.messages.iter_mut().rev() {
+                    if let ToolCallMessage(state) = msg {
+                        if state.result.is_none() && state.tool_call_id == *call_id {
+                            state.result = Some(chat_message);
+                            state.end_time = Some(Instant::now());
+                            break;
+                        }
+                    }
+                }
+                if self.auto_scroll.get() {
+                    self.scroll_offset.set(u16::MAX);
+                }
+                return;
+            }
+        }
+
+        // Regular message (no tool calls / no tool result): push as-is
+        self.messages.push_back(AgentMessages(chat_message, false));
+        if self.auto_scroll.get() {
+            self.scroll_offset.set(u16::MAX);
+        }
     }
 
     pub async fn handle_key_events(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
@@ -242,11 +298,18 @@ impl App {
                 self.paste_from_clipboard();
             }
             KeyCode::Char('o') if key_event.modifiers == KeyModifiers::CONTROL => {
-                // Toggle the last AgentMessages (tool result) expanded state
+                // Toggle the last tool message (AgentMessages or ToolCallMessage) expanded state
                 for msg in self.messages.iter_mut().rev() {
-                    if let Message::AgentMessages(_, expanded) = msg {
-                        *expanded = !*expanded;
-                        break;
+                    match msg {
+                        Message::AgentMessages(_, expanded) => {
+                            *expanded = !*expanded;
+                            break;
+                        }
+                        Message::ToolCallMessage(state) => {
+                            state.expanded = !state.expanded;
+                            break;
+                        }
+                        _ => {}
                     }
                 }
             }
