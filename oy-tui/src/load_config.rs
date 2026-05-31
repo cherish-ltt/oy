@@ -16,6 +16,7 @@ pub struct GlobalTomlConfig {
     pub api_key: Option<String>,
     pub base_url: Option<String>,
     pub model: Option<String>,
+    pub theme: Option<String>,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -52,6 +53,9 @@ impl GlobalTomlConfig {
         }
         if self.model.is_some() {
             existing.model = self.model.clone();
+        }
+        if self.theme.is_some() {
+            existing.theme = self.theme.clone();
         }
         let toml_string =
             toml::to_string(&existing).map_err(|e| format!("Failed to serialize config: {}", e))?;

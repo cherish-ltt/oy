@@ -114,6 +114,16 @@ impl App {
 
         let command_registry = CommandRegistry::new();
 
+        // Read theme from config, default to light
+        let theme: &'static Theme = global_toml_config
+            .as_ref()
+            .and_then(|c| c.theme.as_deref())
+            .map(|t| match t {
+                "dark" => &DARK_THEME,
+                _ => &LIGHT_THEME,
+            })
+            .unwrap_or(&LIGHT_THEME);
+
         Self {
             running: true,
             messages,
@@ -132,7 +142,7 @@ impl App {
             command_registry,
             app_mode: AppMode::Normal,
             input_title: String::new(),
-            theme: &DARK_THEME,
+            theme,
         }
     }
 
@@ -950,6 +960,16 @@ impl App {
             "light" => &LIGHT_THEME,
             _ => &DARK_THEME,
         };
+
+        // Persist to config
+        let config = GlobalTomlConfig {
+            base_url: None,
+            api_key: None,
+            model: None,
+            theme: Some(name.to_string()),
+        };
+        let _ = config.save();
+
         self.messages
             .push_back(UiMessages(format!("Switched to {} theme", self.theme.name)));
         if self.auto_scroll.get() {
@@ -964,6 +984,7 @@ impl App {
             base_url: Some(base_url.clone()),
             api_key: Some(api_key.clone()),
             model: Some(model.clone()),
+            theme: None,
         };
         if let Err(e) = config.save() {
             self.messages
