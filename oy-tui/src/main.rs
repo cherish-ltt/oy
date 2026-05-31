@@ -3,6 +3,7 @@ use crossterm::execute;
 
 mod agent;
 pub mod app;
+mod command;
 pub mod event;
 mod load_config;
 mod message;

@@ -103,6 +103,10 @@ pub(crate) async fn start(
             let _ = response_tx.send(OutputOrchestratorSignal::Pause).await;
             if let Some(request) = request_rx.recv().await {
                 match request {
+                    InputOrchestratorSignal::ExtractContext { tx } => {
+                        let msgs = orchestrator.agent.messages().to_vec();
+                        let _ = tx.send(msgs);
+                    }
                     InputOrchestratorSignal::Prompt(prompt) => {
                         let _ = response_tx.send(OutputOrchestratorSignal::Running).await;
 
@@ -209,6 +213,57 @@ pub(crate) async fn start(
     (request_tx, response_rx, join_handle)
 }
 
+/// Common background loop shared by both start_agent_background and start_agent_background_with_context.
+async fn agent_background_loop(
+    mut signal_rx: mpsc::Receiver<InputAgentSignal>,
+    prompt_sender: mpsc::Sender<InputOrchestratorSignal>,
+    mut response_receiver: mpsc::Receiver<OutputOrchestratorSignal>,
+    external_signal_tx: mpsc::Sender<OutputAgentSignal>,
+) {
+    loop {
+        tokio::select! {
+            signal = signal_rx.recv()=> {
+                match signal {
+                    Some(signal) => {
+                        match signal {
+                            InputAgentSignal::Quit => break,
+                            InputAgentSignal::UserPrompt(prompt) => {
+                                let _ = prompt_sender.send(InputOrchestratorSignal::Prompt(prompt)).await;
+                            },
+                            InputAgentSignal::Pause => {},
+                            InputAgentSignal::ExtractContext { tx } => {
+                                let _ = prompt_sender.send(InputOrchestratorSignal::ExtractContext { tx }).await;
+                            },
+                        }
+                    },
+                    None => continue,
+                }
+            },
+            orchestrator_signal = response_receiver.recv()=>{
+                match orchestrator_signal {
+                    Some(orchestrator_signal) => {
+                        match orchestrator_signal {
+                            OutputOrchestratorSignal::Pause => {
+                                let _ = external_signal_tx.send(OutputAgentSignal::Pause).await;
+                            },
+                            OutputOrchestratorSignal::Running => {
+                                let _ = external_signal_tx.send(OutputAgentSignal::Running).await;
+                            },
+                            OutputOrchestratorSignal::ChatMessage(chat_message) => {
+                                let _ = external_signal_tx.send(OutputAgentSignal::ChatMessage(chat_message)).await;
+                            },
+                            OutputOrchestratorSignal::AgentError(agent_error) => {
+                                let _ = external_signal_tx.send(OutputAgentSignal::AgentError(agent_error)).await;
+                            },
+                        }
+                    },
+                    None => continue,
+                }
+            },
+        }
+    }
+}
+
 pub async fn start_agent_background(
     agent: impl Agent + 'static,
     provider: impl AiProvider + 'static,
@@ -218,52 +273,38 @@ pub async fn start_agent_background(
     mpsc::Receiver<OutputAgentSignal>,
     JoinHandle<()>,
 ) {
-    let (signal_tx, mut signal_rx) = channel::<InputAgentSignal>(CHANNEL_SIZE);
+    let (signal_tx, signal_rx) = channel::<InputAgentSignal>(CHANNEL_SIZE);
     let (external_signal_tx, external_signal_rx) = channel::<OutputAgentSignal>(CHANNEL_SIZE);
     let join_handle = tokio::spawn(async move {
         let mut orchestrator = Orchestrator::new(agent, provider, tool_registry);
         orchestrator.init();
-        let (prompt_sender, mut response_receiver, _join_handle) = start(orchestrator).await;
+        let (prompt_sender, response_receiver, _join_handle) = start(orchestrator).await;
+        agent_background_loop(signal_rx, prompt_sender, response_receiver, external_signal_tx).await;
+    });
 
-        loop {
-            tokio::select! {
-                signal = signal_rx.recv()=> {
-                    match signal {
-                        Some(signal) => {
-                            match signal {
-                                InputAgentSignal::Quit => break,
-                                InputAgentSignal::UserPrompt(prompt) => {
-                                    let _ = prompt_sender.send(InputOrchestratorSignal::Prompt(prompt)).await;
-                                },
-                                InputAgentSignal::Pause => {},
-                            }
-                        },
-                        None => continue,
-                    }
-                },
-                orchestrator_signal = response_receiver.recv()=>{
-                    match orchestrator_signal {
-                        Some(orchestrator_signal) => {
-                            match orchestrator_signal {
-                                OutputOrchestratorSignal::Pause => {
-                                    let _ = external_signal_tx.send(OutputAgentSignal::Pause).await;
-                                },
-                                OutputOrchestratorSignal::Running => {
-                                    let _ = external_signal_tx.send(OutputAgentSignal::Running).await;
-                                },
-                                OutputOrchestratorSignal::ChatMessage(chat_message) => {
-                                    let _ = external_signal_tx.send(OutputAgentSignal::ChatMessage(chat_message)).await;
-                                },
-                                OutputOrchestratorSignal::AgentError(agent_error) => {
-                                    let _ = external_signal_tx.send(OutputAgentSignal::AgentError(agent_error)).await;
-                                },
-                            }
-                        },
-                        None => continue,
-                    }
-                },
-            }
+    (signal_tx, external_signal_rx, join_handle)
+}
+
+pub async fn start_agent_background_with_context(
+    agent: impl Agent + 'static,
+    provider: impl AiProvider + 'static,
+    tool_registry: ToolRegistry,
+    existing_messages: Vec<ChatMessage>,
+) -> (
+    mpsc::Sender<InputAgentSignal>,
+    mpsc::Receiver<OutputAgentSignal>,
+    JoinHandle<()>,
+) {
+    let (signal_tx, signal_rx) = channel::<InputAgentSignal>(CHANNEL_SIZE);
+    let (external_signal_tx, external_signal_rx) = channel::<OutputAgentSignal>(CHANNEL_SIZE);
+    let join_handle = tokio::spawn(async move {
+        let mut orchestrator = Orchestrator::new(agent, provider, tool_registry);
+        // Inject existing messages instead of calling init()
+        for msg in existing_messages {
+            let _ = orchestrator.agent.push_message_back(orchestrator.uuid, msg);
         }
+        let (prompt_sender, response_receiver, _join_handle) = start(orchestrator).await;
+        agent_background_loop(signal_rx, prompt_sender, response_receiver, external_signal_tx).await;
     });
 
     (signal_tx, external_signal_rx, join_handle)

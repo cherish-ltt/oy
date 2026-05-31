@@ -1,4 +1,6 @@
 use std::env;
+use std::fs;
+use std::path::PathBuf;
 
 use oy_agent::{
     infrastructure::tools::{
@@ -6,28 +8,55 @@ use oy_agent::{
     },
     oy_ai::AiConfig,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Configuration loaded from ~/.oy-ai-agent/config.toml
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 pub struct GlobalTomlConfig {
     pub api_key: Option<String>,
     pub base_url: Option<String>,
     pub model: Option<String>,
 }
 
+fn config_path() -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    Some(home.join(".oy-ai-agent").join("config.toml"))
+}
+
 impl GlobalTomlConfig {
     /// Load config from ~/.oy-ai-agent/config.toml, returning defaults for missing fields.
     pub fn load() -> Option<Self> {
-        let home = dirs::home_dir()?;
-        let config_path = home.join(".oy-ai-agent").join("config.toml");
+        let config_path = config_path()?;
         if !config_path.exists() {
             return None;
         }
-        match std::fs::read_to_string(&config_path) {
+        match fs::read_to_string(&config_path) {
             Ok(content) => toml::from_str(&content).unwrap_or(None),
             Err(_) => None,
         }
+    }
+
+    /// Save config to ~/.oy-ai-agent/config.toml, merging with existing values.
+    pub fn save(&self) -> Result<(), String> {
+        let path = config_path().ok_or("Cannot determine home directory")?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create config dir: {}", e))?;
+        }
+        // Read existing config and merge
+        let mut existing = Self::load().unwrap_or_default();
+        if self.api_key.is_some() {
+            existing.api_key = self.api_key.clone();
+        }
+        if self.base_url.is_some() {
+            existing.base_url = self.base_url.clone();
+        }
+        if self.model.is_some() {
+            existing.model = self.model.clone();
+        }
+        let toml_string =
+            toml::to_string(&existing).map_err(|e| format!("Failed to serialize config: {}", e))?;
+        fs::write(&path, toml_string).map_err(|e| format!("Failed to write config: {}", e))?;
+        Ok(())
     }
 }
 

@@ -1,5 +1,5 @@
-use oy_agent::agent::{InputAgentSignal, OutputAgentSignal};
-use tokio::{sync::mpsc, task::JoinHandle};
+use oy_agent::{agent::{InputAgentSignal, OutputAgentSignal}, oy_ai::ChatMessage};
+use tokio::{sync::{mpsc, oneshot}, task::JoinHandle};
 
 #[derive(Debug)]
 pub(crate) struct AgentManager {
@@ -10,6 +10,16 @@ pub(crate) struct AgentManager {
 }
 
 impl AgentManager {
+    /// Send ExtractContext signal and await the messages.
+    pub async fn extract_messages(&self) -> Vec<ChatMessage> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self
+            .request_sender
+            .send(InputAgentSignal::ExtractContext { tx })
+            .await;
+        rx.await.unwrap_or_default()
+    }
+
     pub fn new(
         name: String,
         handle: JoinHandle<()>,

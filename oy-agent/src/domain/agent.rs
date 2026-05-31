@@ -1,4 +1,5 @@
 use oy_ai::ChatMessage;
+use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use crate::AgentError;
@@ -18,6 +19,7 @@ pub enum InputAgentSignal {
     Quit,
     UserPrompt(String),
     Pause,
+    ExtractContext { tx: oneshot::Sender<Vec<ChatMessage>> },
 }
 
 pub enum OutputAgentSignal {
@@ -29,6 +31,7 @@ pub enum OutputAgentSignal {
 
 pub(crate) enum InputOrchestratorSignal {
     Prompt(String),
+    ExtractContext { tx: oneshot::Sender<Vec<ChatMessage>> },
 }
 
 pub(crate) enum OutputOrchestratorSignal {

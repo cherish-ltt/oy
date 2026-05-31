@@ -1,6 +1,7 @@
 // app.rs
 use crate::{
     agent::AgentManager,
+    command::CommandRegistry,
     event::{AppEvent, Event, EventHandler},
     load_config::{GlobalTomlConfig, build_provider_config, register_default_tools},
     message::{
@@ -11,7 +12,9 @@ use crate::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use oy_agent::{
     agent::InputAgentSignal,
-    application::orchestrator::start_agent_background,
+    application::orchestrator::{
+        start_agent_background, start_agent_background_with_context,
+    },
     infrastructure::{agents::main_agent::MainAgent, tools::ToolRegistry},
     oy_ai::OpenCodeGoProvider,
 };
@@ -21,6 +24,13 @@ use std::{
     collections::{HashMap, VecDeque},
     time::Instant,
 };
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AppMode {
+    Normal,
+    CommandSelector { selected: usize },
+    ModelForm { step: usize, values: [String; 3] },
+}
 
 /// Application state
 #[derive(Debug)]
@@ -53,6 +63,12 @@ pub struct App {
     pub global_toml_config: Option<GlobalTomlConfig>,
     /// main-agent
     pub main_agent: Option<AgentManager>,
+    /// 命令注册器
+    pub command_registry: CommandRegistry,
+    /// 当前界面模式
+    pub app_mode: AppMode,
+    /// Input 框标题（form 模式下用）
+    pub input_title: String,
 }
 
 impl App {
@@ -83,6 +99,8 @@ impl App {
             EventHandler::new()
         };
 
+        let command_registry = CommandRegistry::new();
+
         Self {
             running: true,
             messages,
@@ -98,6 +116,9 @@ impl App {
             events,
             global_toml_config,
             main_agent,
+            command_registry,
+            app_mode: AppMode::Normal,
+            input_title: String::new(),
         }
     }
 
@@ -222,6 +243,18 @@ impl App {
     }
 
     pub async fn handle_key_events(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
+        match self.app_mode {
+            AppMode::Normal => self.handle_key_normal(key_event).await,
+            AppMode::CommandSelector { selected } => {
+                self.handle_key_command_selector(key_event, selected).await
+            }
+            AppMode::ModelForm { .. } => {
+                self.handle_key_model_form(key_event).await
+            }
+        }
+    }
+
+    async fn handle_key_normal(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
         match key_event.code {
             KeyCode::Esc | KeyCode::Char('q') => self.events.send(AppEvent::Quit),
             KeyCode::Char('c' | 'C') if key_event.modifiers == KeyModifiers::CONTROL => {
@@ -230,20 +263,26 @@ impl App {
                 } else {
                     self.input.clear();
                     self.cursor_pos = 0;
+                    // If input started with "/", exit command mode
+                    self.app_mode = AppMode::Normal;
                 }
             }
             KeyCode::Enter if !self.input.is_empty() => {
                 self.expand_paste_snippets();
-                if let Some(main_agent) = &self.main_agent {
-                    let _ = main_agent
-                        .request_sender
-                        .send(InputAgentSignal::UserPrompt(self.input.clone()))
-                        .await;
-                }
-                self.input.clear();
+                let input = std::mem::take(&mut self.input);
                 self.cursor_pos = 0;
                 self.paste_counter = 0;
                 self.scroll_offset.set(u16::MAX);
+
+                // Check for slash commands
+                if input.starts_with('/') {
+                    self.execute_command(&input).await;
+                } else if let Some(main_agent) = &self.main_agent {
+                    let _ = main_agent
+                        .request_sender
+                        .send(InputAgentSignal::UserPrompt(input))
+                        .await;
+                }
             }
             KeyCode::Backspace if self.cursor_pos > 0 && !self.delete_paste_placeholder() => {
                 let len = self.input[..self.cursor_pos]
@@ -254,6 +293,10 @@ impl App {
                 self.input
                     .replace_range(self.cursor_pos - len..self.cursor_pos, "");
                 self.cursor_pos -= len;
+                // If input becomes empty after "/", go back to Normal
+                if self.input.is_empty() {
+                    self.app_mode = AppMode::Normal;
+                }
             }
             KeyCode::Left if self.cursor_pos > 0 => {
                 let len = self.input[..self.cursor_pos]
@@ -298,7 +341,6 @@ impl App {
                 self.paste_from_clipboard();
             }
             KeyCode::Char('o') if key_event.modifiers == KeyModifiers::CONTROL => {
-                // Toggle the last tool message (AgentMessages or ToolCallMessage) expanded state
                 for msg in self.messages.iter_mut().rev() {
                     match msg {
                         Message::AgentMessages(_, expanded) => {
@@ -316,6 +358,157 @@ impl App {
             KeyCode::Char(c) => {
                 self.input.insert(self.cursor_pos, c);
                 self.cursor_pos += c.len_utf8();
+                // Enter command mode when input starts with "/"
+                if self.input == "/" || (self.input.starts_with('/') && self.input.len() > 1) {
+                    self.app_mode = AppMode::CommandSelector { selected: 0 };
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn handle_key_command_selector(
+        &mut self,
+        key_event: KeyEvent,
+        selected: usize,
+    ) -> color_eyre::Result<()> {
+        let matches = self.command_registry.search(&self.input);
+        let max_idx = matches.len().saturating_sub(1);
+
+        match key_event.code {
+            KeyCode::Up => {
+                let new_sel = if selected == 0 { max_idx } else { selected - 1 };
+                self.app_mode = AppMode::CommandSelector { selected: new_sel };
+            }
+            KeyCode::Down => {
+                let new_sel = if selected >= max_idx { 0 } else { selected + 1 };
+                self.app_mode = AppMode::CommandSelector { selected: new_sel };
+            }
+            KeyCode::Enter => {
+                if !matches.is_empty() {
+                    let cmd = matches[selected.min(max_idx)].name;
+                    let input = std::mem::take(&mut self.input);
+                    self.cursor_pos = 0;
+                    // If user typed the full command or selected from menu, execute it
+                    if input == cmd || input.starts_with(cmd) {
+                        self.execute_command(cmd).await;
+                    } else {
+                        // Replace input with full command name
+                        self.input = cmd.to_string();
+                        self.cursor_pos = self.input.len();
+                        self.execute_command(cmd).await;
+                    }
+                }
+            }
+            KeyCode::Esc => {
+                self.app_mode = AppMode::Normal;
+                self.input.clear();
+                self.cursor_pos = 0;
+            }
+            KeyCode::Char(c) => {
+                self.input.insert(self.cursor_pos, c);
+                self.cursor_pos += c.len_utf8();
+                // Re-filter; if no matches, fall back to normal
+                let new_matches = self.command_registry.search(&self.input);
+                if new_matches.is_empty() {
+                    self.app_mode = AppMode::Normal;
+                } else {
+                    self.app_mode = AppMode::CommandSelector { selected: 0 };
+                }
+            }
+            KeyCode::Backspace if self.cursor_pos > 0 => {
+                let len = self.input[..self.cursor_pos]
+                    .chars()
+                    .last()
+                    .map(|c| c.len_utf8())
+                    .unwrap_or(0);
+                self.input
+                    .replace_range(self.cursor_pos - len..self.cursor_pos, "");
+                self.cursor_pos -= len;
+                if self.input.is_empty() {
+                    self.app_mode = AppMode::Normal;
+                } else {
+                    let new_matches = self.command_registry.search(&self.input);
+                    if new_matches.is_empty() {
+                        self.app_mode = AppMode::Normal;
+                    } else {
+                        self.app_mode = AppMode::CommandSelector { selected: 0 };
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn handle_key_model_form(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
+        // Clone the current mode to extract values, then mutate
+        let snapshot = match &self.app_mode {
+            AppMode::ModelForm { step, values } => (*step, values.clone()),
+            _ => return Ok(()),
+        };
+        let (step, mut values) = snapshot;
+
+        match key_event.code {
+            KeyCode::Esc => {
+                self.app_mode = AppMode::Normal;
+                self.input.clear();
+                self.cursor_pos = 0;
+                self.input_title.clear();
+            }
+            KeyCode::Enter if !self.input.is_empty() => {
+                values[step] = std::mem::take(&mut self.input);
+                self.cursor_pos = 0;
+                if step == 2 {
+                    let [url, key, model] =
+                        std::mem::take(&mut values);
+                    self.execute_model_command(url, key, model).await;
+                    self.app_mode = AppMode::Normal;
+                    self.input_title.clear();
+                } else {
+                    let new_step = step + 1;
+                    self.app_mode = AppMode::ModelForm {
+                        step: new_step,
+                        values,
+                    };
+                    self.input_title = match new_step {
+                        1 => "API Key:",
+                        2 => "Model:",
+                        _ => unreachable!(),
+                    }
+                    .to_string();
+                }
+            }
+            KeyCode::Char(c) => {
+                self.input.insert(self.cursor_pos, c);
+                self.cursor_pos += c.len_utf8();
+            }
+            KeyCode::Backspace if self.cursor_pos > 0 => {
+                let len = self.input[..self.cursor_pos]
+                    .chars()
+                    .last()
+                    .map(|c| c.len_utf8())
+                    .unwrap_or(0);
+                self.input
+                    .replace_range(self.cursor_pos - len..self.cursor_pos, "");
+                self.cursor_pos -= len;
+            }
+            KeyCode::Left if self.cursor_pos > 0 => {
+                let len = self.input[..self.cursor_pos]
+                    .chars()
+                    .last()
+                    .map(|c| c.len_utf8())
+                    .unwrap_or(0);
+                self.cursor_pos -= len;
+            }
+            KeyCode::Right if self.cursor_pos < self.input.len() => {
+                let len = self.input[self.cursor_pos..]
+                    .chars()
+                    .next()
+                    .map(|c| c.len_utf8())
+                    .unwrap_or(0);
+                self.cursor_pos += len;
             }
             _ => {}
         }
@@ -573,6 +766,85 @@ impl App {
             }
         }
         false
+    }
+
+    /// Execute a slash command (called after input is already taken from self.input).
+    async fn execute_command(&mut self, input: &str) {
+        let trimmed = input.trim();
+        if trimmed == "/model" || trimmed.starts_with("/model ") {
+            self.input_title = "API Base URL:".to_string();
+            self.app_mode = AppMode::ModelForm {
+                step: 0,
+                values: [String::new(), String::new(), String::new()],
+            };
+        } else {
+            self.messages
+                .push_back(UiMessages(format!("Unknown command: {}", trimmed)));
+            if self.auto_scroll.get() {
+                self.scroll_offset.set(u16::MAX);
+            }
+        }
+    }
+
+    /// Execute /model with collected values: save config and restart agent.
+    async fn execute_model_command(&mut self, base_url: String, api_key: String, model: String) {
+        // 1. Save config
+        let config = GlobalTomlConfig {
+            base_url: Some(base_url.clone()),
+            api_key: Some(api_key.clone()),
+            model: Some(model.clone()),
+        };
+        if let Err(e) = config.save() {
+            self.messages
+                .push_back(UiMessages(format!("Failed to save config: {}", e)));
+            if self.auto_scroll.get() {
+                self.scroll_offset.set(u16::MAX);
+            }
+            return;
+        }
+        self.global_toml_config = Some(config);
+
+        // 2. Extract messages from old agent
+        let old_messages = if let Some(ref agent) = self.main_agent {
+            agent.extract_messages().await
+        } else {
+            vec![]
+        };
+
+        // 3. Build new provider + registry
+        let global_config = self.global_toml_config.as_ref().unwrap();
+        let ai_config = build_provider_config(global_config);
+        let provider = OpenCodeGoProvider::new(ai_config);
+        let mut registry = ToolRegistry::new();
+        register_default_tools(&mut registry);
+        let main_agent = MainAgent::new_with_max_iterations(None);
+
+        // 4. Start new agent with old context
+        let (request_sender, response_receiver, join_handle) =
+            start_agent_background_with_context(main_agent, provider, registry, old_messages).await;
+
+        let mut new_agent = AgentManager::new(
+            "MainAgent".to_owned(),
+            join_handle,
+            request_sender,
+            response_receiver,
+        );
+
+        // 5. Replace event handler
+        let new_events = if let Some(response_receiver) = new_agent.response_receiver.take() {
+            EventHandler::new_with_receiver(response_receiver)
+        } else {
+            EventHandler::new()
+        };
+
+        self.main_agent = Some(new_agent);
+        self.events = new_events;
+
+        self.messages
+            .push_back(UiMessages(format!("Switched to model: {}", model)));
+        if self.auto_scroll.get() {
+            self.scroll_offset.set(u16::MAX);
+        }
     }
 
     fn expand_paste_snippets(&mut self) {

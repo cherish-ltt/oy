@@ -5,11 +5,13 @@ use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Style},
-    text::Text,
+    text::{Line, Span, Text},
     widgets::{Block, BorderType, Paragraph, Widget, Wrap},
 };
 
-use crate::app::{App, visual_cursor_pos};
+use crate::{
+    app::{App, AppMode, visual_cursor_pos},
+};
 
 impl Widget for &App {
     fn render(self, area: Rect, buf: &mut Buffer) {
@@ -76,7 +78,7 @@ impl Widget for &App {
             self.auto_scroll.set(true);
         }
 
-        // --- Input Area ---
+        // --- Input Area (with dynamic title) ---
         let input_display = self.input.to_string();
         let input_text_width = chunks[1].width.saturating_sub(2) as usize;
 
@@ -98,10 +100,16 @@ impl Widget for &App {
             .set(chunks[1].y + 1 + cursor_visual_row - input_scroll);
         self.input_width.set(chunks[1].width.saturating_sub(2));
 
+        let input_title = if matches!(self.app_mode, AppMode::ModelForm { .. }) && !self.input_title.is_empty() {
+            self.input_title.clone()
+        } else {
+            "Input".to_string()
+        };
+
         let input_paragraph = Paragraph::new(input_display)
             .block(
                 Block::bordered()
-                    .title("Input")
+                    .title(input_title)
                     .title_alignment(Alignment::Left)
                     .border_type(BorderType::Double)
                     .border_style(Style::default().fg(Color::Blue)),
@@ -150,5 +158,50 @@ impl Widget for &App {
             .style(Style::default().fg(Color::DarkGray).bg(Color::White));
 
         status_paragraph.render(chunks[2], buf);
+
+        // --- Command Selector Popup (rendered last, on top) ---
+        if let AppMode::CommandSelector { selected } = &self.app_mode {
+            let matches = self.command_registry.search(&self.input);
+            if !matches.is_empty() {
+                let sel = *selected;
+                let popup_height = matches.len() as u16 + 2;
+                let popup_area = Rect {
+                    x: chunks[1].x + 1,
+                    y: chunks[1].y + chunks[1].height,
+                    width: chunks[1].width.saturating_sub(2),
+                    height: popup_height.min(10),
+                };
+
+                let mut popup_text = Text::default();
+                for (i, cmd) in matches.iter().enumerate() {
+                    let style = if i == sel {
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Cyan)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    popup_text.push_line(Line::from(vec![
+                        Span::styled(
+                            if i == sel { "▸ " } else { "  " },
+                            style,
+                        ),
+                        Span::styled(
+                            format!("{}  - {}", cmd.name, cmd.description),
+                            style,
+                        ),
+                    ]));
+                }
+
+                let popup = Paragraph::new(popup_text)
+                    .block(
+                        Block::bordered()
+                            .border_type(BorderType::Rounded)
+                            .border_style(Style::default().fg(Color::Cyan)),
+                    )
+                    .style(Style::default().bg(Color::Black));
+                popup.render(popup_area, buf);
+            }
+        }
     }
 }
