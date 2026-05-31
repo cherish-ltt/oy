@@ -85,6 +85,8 @@ impl AiProvider for OpenCodeGoProvider {
             reasoning_content,
             tool_calls,
             tool_call_id: None,
+            function_name: None,
+            tool_call_arguments: None,
         })
     }
 }

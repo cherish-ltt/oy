@@ -81,7 +81,7 @@ impl Orchestrator {
                 let result = tool.execute(tool_call.arguments.clone())?;
                 let _ = self
                     .agent
-                    .push_message_back(self.uuid, ChatMessage::tool(result, tool_call.id));
+                    .push_message_back(self.uuid, ChatMessage::tool(result, tool_call.id, Some(tool_call.function_name), Some(tool_call.arguments)));
             }
         }
 
@@ -160,11 +160,13 @@ pub(crate) async fn start(
                                                                 ChatMessage::tool(
                                                                     result.clone(),
                                                                     tool_call.id.clone(),
+                                                                    Some(tool_call.function_name.clone()),
+                                                                    Some(tool_call.arguments.clone()),
                                                                 ),
                                                             );
                                                         let _ = response_tx
                                                         .send(OutputOrchestratorSignal::ChatMessage(
-                                                            ChatMessage::tool(result, tool_call.id),
+                                                            ChatMessage::tool(result, tool_call.id, Some(tool_call.function_name), Some(tool_call.arguments)),
                                                         ))
                                                         .await;
                                                     }

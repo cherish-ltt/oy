@@ -27,6 +27,14 @@ pub struct ChatMessage {
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// The name of the tool that produced this message (for Tool role messages).
+    /// Used by the TUI to format display per tool type.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub function_name: Option<String>,
+    /// The arguments passed to the tool (for Tool role messages).
+    /// Used by the TUI to show contextual information (e.g., old/new text for Edit).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_arguments: Option<Value>,
 }
 
 impl ChatMessage {
@@ -37,6 +45,8 @@ impl ChatMessage {
             reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
+            function_name: None,
+            tool_call_arguments: None,
         }
     }
 
@@ -47,6 +57,8 @@ impl ChatMessage {
             reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
+            function_name: None,
+            tool_call_arguments: None,
         }
     }
 
@@ -61,16 +73,20 @@ impl ChatMessage {
             reasoning_content,
             tool_calls,
             tool_call_id: None,
+            function_name: None,
+            tool_call_arguments: None,
         }
     }
 
-    pub fn tool(content: impl Into<String>, tool_call_id: String) -> Self {
+    pub fn tool(content: impl Into<String>, tool_call_id: String, function_name: Option<String>, tool_call_arguments: Option<Value>) -> Self {
         Self {
             role: Role::Tool,
             content: Some(content.into()),
             reasoning_content: None,
             tool_calls: None,
             tool_call_id: Some(tool_call_id),
+            function_name,
+            tool_call_arguments,
         }
     }
 
@@ -124,6 +140,8 @@ impl ChatMessage {
             reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
+            function_name: None,
+            tool_call_arguments: None,
         }
     }
 }
@@ -171,9 +189,11 @@ mod tests {
 
     #[test]
     fn test_chat_message_tool_creation() {
-        let msg = ChatMessage::tool("file contents", "call_456".to_string());
+        let msg = ChatMessage::tool("file contents", "call_456".to_string(), None, None);
         assert_eq!(msg.role, Role::Tool);
         assert_eq!(msg.content, Some("file contents".to_string()));
         assert_eq!(msg.tool_call_id, Some("call_456".to_string()));
+        assert_eq!(msg.function_name, None);
+        assert_eq!(msg.tool_call_arguments, None);
     }
 }

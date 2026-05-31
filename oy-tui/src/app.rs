@@ -135,7 +135,7 @@ impl App {
                 Event::App(app_event) => match app_event {
                     AppEvent::Quit => self.quit(),
                     AppEvent::ChatMessage(chat_message) => {
-                        self.messages.push_back(AgentMessages(chat_message));
+                        self.messages.push_back(AgentMessages(chat_message, false)); // start collapsed
                         if self.auto_scroll.get() {
                             self.scroll_offset.set(u16::MAX);
                         }
@@ -240,6 +240,15 @@ impl App {
             }
             KeyCode::Insert if key_event.modifiers == KeyModifiers::SHIFT => {
                 self.paste_from_clipboard();
+            }
+            KeyCode::Char('o') if key_event.modifiers == KeyModifiers::CONTROL => {
+                // Toggle the last AgentMessages (tool result) expanded state
+                for msg in self.messages.iter_mut().rev() {
+                    if let Message::AgentMessages(_, expanded) = msg {
+                        *expanded = !*expanded;
+                        break;
+                    }
+                }
             }
             KeyCode::Char(c) => {
                 self.input.insert(self.cursor_pos, c);

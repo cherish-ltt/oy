@@ -114,7 +114,7 @@ impl Widget for &App {
 
         // --- Status Area (information) ---
         let mut status_text = format!(
-            " <Current Agent> (Cycle with shift+tab)\n Messages: {} | ↑/↓/←/→ move cursor | Enter send | Ctrl+C/Esc/q quit",
+            " <Current Agent> (Cycle with shift+tab)\n Messages: {} | ↑/↓/←/→ move cursor | Enter send | Ctrl+O expand | Ctrl+C/Esc/q quit",
             self.messages.len()
         );
 

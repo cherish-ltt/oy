@@ -2,7 +2,7 @@
 use color_eyre::eyre::OptionExt;
 use crossterm::event::Event as CrosstermEvent;
 use futures::{FutureExt, StreamExt};
-use oy_agent::{AgentError, agent::OutputAgentSignal, oy_ai::ChatMessage};
+use oy_agent::{agent::OutputAgentSignal, oy_ai::ChatMessage};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
