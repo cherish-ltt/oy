@@ -419,6 +419,20 @@ impl Message {
 
     /// Estimate the number of visual lines this message occupies
     /// at the given content width (for scroll computation).
+    /// Background color for this message type (fills full line width).
+    pub fn message_bg(&self, theme: &Theme) -> Color {
+        match self {
+            Message::UiMessages(_) | Message::AgentStatus(_) => theme.surface_bg,
+            Message::AgentMessages(chat, _) => match chat.role {
+                Role::User => theme.user_bg,
+                Role::Assistant => theme.assistant_bg,
+                Role::Tool => theme.tool_bg,
+                Role::System => theme.surface_bg,
+            },
+            Message::ToolCallMessage(_) => theme.tool_bg,
+        }
+    }
+
     pub fn visual_line_count(&self, width: usize, _theme: &Theme) -> usize {
         if width == 0 {
             return 1;

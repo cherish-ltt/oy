@@ -34,38 +34,22 @@ impl Widget for &App {
         ])
         .split(area);
 
-        // ── Message Area ──
-        let mut text = Text::default();
-        for msg in &self.messages {
-            let lines = msg.to_lines(t);
-            text.extend(lines);
-        }
-
-        let message_paragraph = Paragraph::new(text)
-            .block(
-                Block::bordered()
-                    .title("Chat History")
-                    .title_alignment(Alignment::Center)
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(t.border)),
-            )
-            .scroll((self.scroll_offset.get(), 0))
-            .wrap(Wrap { trim: false })
-            .style(Style::default().fg(t.surface_fg).bg(t.surface_bg));
-
-        message_paragraph.render(chunks[0], buf);
-
+        // ── Message Area (per-message paragraphs with full-line backgrounds) ──
         let content_width = chunks[0].width.saturating_sub(2) as usize;
-        let total_visual_lines: usize = self
+        let visible_height = (chunks[0].height.saturating_sub(2)) as usize;
+
+        // Compute per-message heights
+        let msg_heights: Vec<usize> = self
             .messages
             .iter()
             .map(|msg| msg.visual_line_count(content_width, t))
-            .sum();
-        let visible_height = chunks[0].height.saturating_sub(2) as usize;
-        if total_visual_lines > visible_height {
-            let max_offset = (total_visual_lines - visible_height) as u16;
-            let current = self.scroll_offset.get();
-            if current > max_offset {
+            .collect();
+        let total_visual: usize = msg_heights.iter().sum();
+
+        // Clamp scroll offset
+        if total_visual > visible_height {
+            let max_offset = (total_visual - visible_height) as u16;
+            if self.scroll_offset.get() > max_offset {
                 self.scroll_offset.set(max_offset);
             }
             if self.scroll_offset.get() >= max_offset {
@@ -77,6 +61,66 @@ impl Widget for &App {
             }
             self.auto_scroll.set(true);
         }
+
+        // Determine starting message and line offset from scroll
+        let mut scroll_rem = self.scroll_offset.get() as usize;
+        let mut msg_idx = 0;
+        let mut line_offset = 0usize;
+        for (i, &h) in msg_heights.iter().enumerate() {
+            if scroll_rem < h {
+                msg_idx = i;
+                line_offset = scroll_rem;
+                break;
+            }
+            scroll_rem -= h;
+        }
+
+        // Render visible messages as individual paragraphs
+        let inner_x = chunks[0].x + 1;
+        let inner_w = content_width as u16;
+        let mut used_lines = 0usize;
+
+        for i in msg_idx..self.messages.len() {
+            if used_lines >= visible_height {
+                break;
+            }
+            let h = msg_heights[i];
+            let available = visible_height - used_lines;
+            let remaining = h.saturating_sub(line_offset);
+            let render_lines = remaining.min(available);
+            if render_lines == 0 {
+                break;
+            }
+
+            let msg_area = Rect {
+                x: inner_x,
+                y: chunks[0].y + 1 + used_lines as u16,
+                width: inner_w,
+                height: render_lines as u16,
+            };
+
+            let lines = self.messages[i].to_lines(t);
+            let mut text = Text::default();
+            text.extend(lines);
+
+            let bg = self.messages[i].message_bg(t);
+            Paragraph::new(text)
+                .scroll((line_offset as u16, 0))
+                .wrap(Wrap { trim: false })
+                .style(Style::default().bg(bg))
+                .render(msg_area, buf);
+
+            used_lines += render_lines;
+            line_offset = 0;
+        }
+
+        // Draw the outer border on top
+        let border_block = Block::bordered()
+            .title("Chat History")
+            .title_alignment(Alignment::Center)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(t.border));
+        border_block.render(chunks[0], buf);
 
         // ── Input Area ──
         let input_display = self.input.to_string();

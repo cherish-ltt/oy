@@ -7,12 +7,18 @@ pub struct Theme {
     pub surface_bg: Color,
     /// Default foreground on surface
     pub surface_fg: Color,
-    /// User message color
+    /// User message foreground
     pub user_fg: Color,
-    /// Assistant message color
+    /// User message background (fills full line)
+    pub user_bg: Color,
+    /// Assistant message foreground
     pub assistant_fg: Color,
-    /// Tool message color
+    /// Assistant message background (fills full line)
+    pub assistant_bg: Color,
+    /// Tool message foreground
     pub tool_fg: Color,
+    /// Tool message background (fills full line)
+    pub tool_bg: Color,
     /// Borders, frames
     pub border: Color,
     /// Input box border
@@ -46,8 +52,11 @@ pub static DARK_THEME: Theme = Theme {
     surface_bg: Color::Black,
     surface_fg: Color::White,
     user_fg: Color::LightBlue,
+    user_bg: Color::Rgb(25, 30, 50),
     assistant_fg: Color::LightGreen,
+    assistant_bg: Color::Rgb(20, 30, 20),
     tool_fg: Color::LightMagenta,
+    tool_bg: Color::Rgb(40, 20, 40),
     border: Color::DarkGray,
     input_border: Color::Blue,
     accent: Color::Cyan,
@@ -68,8 +77,11 @@ pub static LIGHT_THEME: Theme = Theme {
     surface_bg: Color::White,
     surface_fg: Color::Black,
     user_fg: Color::Blue,
+    user_bg: Color::Rgb(235, 240, 255),
     assistant_fg: Color::Green,
+    assistant_bg: Color::Rgb(235, 255, 235),
     tool_fg: Color::Magenta,
+    tool_bg: Color::Rgb(255, 235, 255),
     border: Color::DarkGray,
     input_border: Color::Blue,
     accent: Color::Cyan,
