@@ -13,8 +13,8 @@ use crate::app::{App, visual_cursor_pos};
 
 impl Widget for &App {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // 根据输入内容行数动态调整 input 区域高度（2～6 行文本，加边框）
-        let input_text_width = area.width.saturating_sub(4) as usize;
+        // 根据输入内容行数动态调整 input 区域高度（2～7 行文本，加边框）
+        let input_text_width = area.width.saturating_sub(2) as usize;
         let visual_lines = self.total_visual_lines(input_text_width.max(1));
         let input_text_height = visual_lines.clamp(2, 7);
         let input_height = input_text_height + 2; // +2 for borders

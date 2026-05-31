@@ -273,20 +273,39 @@ impl App {
         }
         let mut row = 0u16;
         let mut col = 0u16;
+        let mut pending_ws = 0u16; // trailing whitespace not yet committed
         for (i, ch) in self.input.char_indices() {
             if i >= self.cursor_pos {
+                // commit pending whitespace before breaking
+                col += pending_ws;
                 break;
             }
             if ch == '\n' {
+                pending_ws = 0;
                 row += 1;
                 col = 0;
             } else {
                 let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
-                if col + w > width as u16 {
-                    col = w;
-                    row += 1;
+                if ch.is_ascii_whitespace() && ch != '\n' {
+                    // Check if this whitespace would cause overflow on its own
+                    if col + pending_ws + w > width as u16 {
+                        // Whitespace at line end: start new line, drop trailing ws
+                        row += 1;
+                        pending_ws = 0;
+                        col = w;
+                    } else {
+                        pending_ws += w;
+                    }
                 } else {
-                    col += w;
+                    // Non-whitespace: check if word fits with preceding whitespace
+                    if col + pending_ws + w > width as u16 {
+                        // Doesn't fit: wrap, drop trailing whitespace
+                        row += 1;
+                        col = w;
+                    } else {
+                        col += pending_ws + w;
+                    }
+                    pending_ws = 0;
                 }
             }
         }
@@ -299,6 +318,7 @@ impl App {
         }
         let mut row = 0u16;
         let mut col = 0u16;
+        let mut pending_ws = 0u16;
         let mut best = 0usize;
 
         for (i, ch) in self.input.char_indices() {
@@ -310,6 +330,7 @@ impl App {
                 if row == target_row {
                     break;
                 }
+                pending_ws = 0;
                 row += 1;
                 col = 0;
                 continue;
@@ -317,26 +338,52 @@ impl App {
 
             let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
 
-            if row == target_row {
-                if col == target_col || (target_col > col && target_col < col + w) {
-                    return i;
+            if ch.is_ascii_whitespace() && ch != '\n' {
+                if col + pending_ws + w > width as u16 {
+                    // whitespace at line end: drop it, move to next line
+                    pending_ws = 0;
+                    row += 1;
+                    col = w;
+                    if row == target_row {
+                        if target_col < w {
+                            best = i;
+                        } else {
+                            best = i + ch.len_utf8();
+                        }
+                    }
+                } else {
+                    // Update best for target_row tracking (whitespace accumulates, not committed yet)
+                    // best tracks the last committed position
+                    pending_ws += w;
                 }
-                best = i + ch.len_utf8();
+                continue;
             }
 
-            if col + w > width as u16 {
-                col = w;
+            // Non-whitespace
+            if col + pending_ws + w > width as u16 {
+                // Doesn't fit: wrap, drop trailing whitespace
                 row += 1;
+                if row > target_row {
+                    break;
+                }
+                col = w;
+                pending_ws = 0;
                 if row == target_row {
-                    // Character wraps to target_row, starts at visual column 0
-                    if target_col < w {
-                        best = i; // Snap to start of character (beginning of line or inside char)
+                    if target_col == 0 || target_col < w {
+                        best = i;
                     } else {
-                        best = i + ch.len_utf8(); // Past the character
+                        best = i + ch.len_utf8();
                     }
                 }
             } else {
-                col += w;
+                col += pending_ws + w;
+                pending_ws = 0;
+                if row == target_row {
+                    if col == target_col || (target_col > col - w && target_col < col) {
+                        return i;
+                    }
+                    best = i + ch.len_utf8();
+                }
             }
         }
 
@@ -353,17 +400,32 @@ impl App {
         }
         let mut lines = 1u16;
         let mut col = 0u16;
+        let mut pending_ws = 0u16;
         for ch in self.input.chars() {
             if ch == '\n' {
+                pending_ws = 0;
                 lines += 1;
                 col = 0;
             } else {
                 let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
-                if col + w > width as u16 {
-                    col = w;
-                    lines += 1;
+                if ch.is_ascii_whitespace() && ch != '\n' {
+                    if col + pending_ws + w > width as u16 {
+                        // Whitespace at line end: drop, new line
+                        pending_ws = 0;
+                        lines += 1;
+                        col = w;
+                    } else {
+                        pending_ws += w;
+                    }
                 } else {
-                    col += w;
+                    if col + pending_ws + w > width as u16 {
+                        // Word wraps: drop trailing whitespace
+                        lines += 1;
+                        col = w;
+                    } else {
+                        col += pending_ws + w;
+                    }
+                    pending_ws = 0;
                 }
             }
         }
@@ -498,20 +560,34 @@ pub(crate) fn visual_cursor_pos(input: &str, cursor_pos: usize, width: usize) ->
     }
     let mut row = 0u16;
     let mut col = 0u16;
+    let mut pending_ws = 0u16;
     for (i, ch) in input.char_indices() {
         if i >= cursor_pos {
+            col += pending_ws;
             break;
         }
         if ch == '\n' {
+            pending_ws = 0;
             row += 1;
             col = 0;
         } else {
             let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
-            if col + w > width as u16 {
-                col = w;
-                row += 1;
+            if ch.is_ascii_whitespace() && ch != '\n' {
+                if col + pending_ws + w > width as u16 {
+                    row += 1;
+                    pending_ws = 0;
+                    col = w;
+                } else {
+                    pending_ws += w;
+                }
             } else {
-                col += w;
+                if col + pending_ws + w > width as u16 {
+                    row += 1;
+                    col = w;
+                } else {
+                    col += pending_ws + w;
+                }
+                pending_ws = 0;
             }
         }
     }
