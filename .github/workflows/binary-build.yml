@@ -19,6 +19,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build oy-code-cli (${{ matrix.os }})
@@ -30,7 +33,7 @@ jobs:
     steps:
       - name: Determine release tag
         id: tag
-        shell: bash          # 关键：强制使用 bash
+        shell: bash
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             RAW_TAG="${{ github.event.inputs.tag_name }}"
@@ -50,7 +53,7 @@ jobs:
 
       - name: Checkout specific tag (for manual dispatch)
         if: github.event_name == 'workflow_dispatch'
-        shell: bash          # 强制使用 bash
+        shell: bash
         run: |
           git fetch --tags
           git checkout tags/${{ steps.tag.outputs.tag }}
