@@ -275,8 +275,8 @@ impl App {
             if ch == '\n' {
                 row += 1;
                 col = 0;
-            } else if let Some(w) = unicode_width::UnicodeWidthChar::width(ch) {
-                let w = w as u16;
+            } else {
+                let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
                 if col + w > width as u16 {
                     col = w;
                     row += 1;
@@ -310,10 +310,7 @@ impl App {
                 continue;
             }
 
-            let w = match unicode_width::UnicodeWidthChar::width(ch) {
-                Some(w) => w as u16,
-                None => continue,
-            };
+            let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
 
             if row == target_row {
                 if col == target_col || (target_col > col && target_col < col + w) {
@@ -326,7 +323,12 @@ impl App {
                 col = w;
                 row += 1;
                 if row == target_row {
-                    best = i + ch.len_utf8();
+                    // Character wraps to target_row, starts at visual column 0
+                    if target_col < w {
+                        best = i; // Snap to start of character (beginning of line or inside char)
+                    } else {
+                        best = i + ch.len_utf8(); // Past the character
+                    }
                 }
             } else {
                 col += w;
@@ -350,8 +352,8 @@ impl App {
             if ch == '\n' {
                 lines += 1;
                 col = 0;
-            } else if let Some(w) = unicode_width::UnicodeWidthChar::width(ch) {
-                let w = w as u16;
+            } else {
+                let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
                 if col + w > width as u16 {
                     col = w;
                     lines += 1;
@@ -412,26 +414,29 @@ impl App {
         if self.cursor_pos == 0 {
             return false;
         }
-        let search_start = self.cursor_pos.saturating_sub(256);
-        let head = &self.input[search_start..self.cursor_pos];
 
-        if !head.ends_with(']') {
+        // Only check the last ~256 bytes before cursor to avoid scanning entire input
+        let search_from = self.cursor_pos.saturating_sub(256);
+        let before = &self.input[..self.cursor_pos];
+
+        if !before.ends_with(']') {
             return false;
         }
 
-        if let Some(rel) = head.rfind("[paste #") {
-            let start = search_start + rel;
-            let placeholder = &self.input[start..self.cursor_pos];
+        if let Some(rel) = before.rfind("[paste #") {
+            if rel >= search_from {
+                let placeholder = &self.input[rel..self.cursor_pos];
 
-            if placeholder.len() > 14 && placeholder.ends_with(" lines]") {
-                let inner = &placeholder[1..placeholder.len() - 1];
-                let parts: Vec<&str> = inner.splitn(3, ' ').collect();
-                if parts.len() == 3 && parts[0] == "paste" {
-                    let id = parts[1].to_string();
-                    self.input.replace_range(start..self.cursor_pos, "");
-                    self.cursor_pos = start;
-                    self.paste_snippets.remove(&id);
-                    return true;
+                if placeholder.len() > 14 && placeholder.ends_with(" lines]") {
+                    let inner = &placeholder[1..placeholder.len() - 1];
+                    let parts: Vec<&str> = inner.splitn(3, ' ').collect();
+                    if parts.len() == 3 && parts[0] == "paste" {
+                        let id = parts[1].to_string();
+                        self.input.replace_range(rel..self.cursor_pos, "");
+                        self.cursor_pos = rel;
+                        self.paste_snippets.remove(&id);
+                        return true;
+                    }
                 }
             }
         }
@@ -495,8 +500,8 @@ pub(crate) fn visual_cursor_pos(input: &str, cursor_pos: usize, width: usize) ->
         if ch == '\n' {
             row += 1;
             col = 0;
-        } else if let Some(w) = unicode_width::UnicodeWidthChar::width(ch) {
-            let w = w as u16;
+        } else {
+            let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
             if col + w > width as u16 {
                 col = w;
                 row += 1;
