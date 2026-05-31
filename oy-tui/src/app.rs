@@ -92,7 +92,7 @@ pub struct App {
 impl App {
     pub async fn new() -> Self {
         let mut messages = VecDeque::new();
-        messages.push_back(Message::UiMessages("OY v0.0.1".to_string()));
+        messages.push_back(Message::UiMessages("OY v0.1.2".to_string()));
         messages.push_back(Message::UiMessages(
             "Type a message and press Enter to send.\nThen communicate with the LLM to achieve your goal".to_string(),
         ));
