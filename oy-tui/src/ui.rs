@@ -40,7 +40,8 @@ impl Widget for &App {
                 Block::bordered()
                     .title("Chat History")
                     .title_alignment(Alignment::Center)
-                    .border_type(BorderType::Rounded),
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::DarkGray)),
             )
             .scroll((self.scroll_offset.get(), 0))
             .wrap(Wrap { trim: false })
@@ -94,11 +95,12 @@ impl Widget for &App {
                 Block::bordered()
                     .title("Input")
                     .title_alignment(Alignment::Left)
-                    .border_type(BorderType::Double),
+                    .border_type(BorderType::Double)
+                    .border_style(Style::default().fg(Color::Blue)),
             )
             .wrap(Wrap { trim: false })
             .scroll((input_scroll, 0))
-            .style(Style::default().fg(Color::Cyan).bg(Color::White));
+            .style(Style::default().fg(Color::Black).bg(Color::White));
 
         input_paragraph.render(chunks[1], buf);
 
@@ -114,7 +116,7 @@ impl Widget for &App {
         }
         let status_paragraph = Paragraph::new(status_text)
             .alignment(Alignment::Left)
-            .style(Style::default().fg(Color::Black).bg(Color::White));
+            .style(Style::default().fg(Color::DarkGray).bg(Color::White));
 
         status_paragraph.render(chunks[2], buf);
 
@@ -137,7 +139,7 @@ impl Widget for &App {
         }
         let status_paragraph = Paragraph::new(status_text)
             .alignment(Alignment::Right)
-            .style(Style::default().fg(Color::Black).bg(Color::White));
+            .style(Style::default().fg(Color::DarkGray).bg(Color::White));
 
         status_paragraph.render(chunks[2], buf);
     }

@@ -18,14 +18,14 @@ impl Message {
             Message::UiMessages(text) => {
                 vec![Line::from(Span::styled(
                     format!("> {}", text),
-                    Style::default().fg(Color::Black).bold(),
+                    Style::default().fg(Color::Blue).bold(),
                 ))]
             }
             Message::AgentMessages(chat_message) => {
                 let role_style = match chat_message.role {
-                    Role::User => Style::default().fg(Color::Cyan).bg(Color::DarkGray),
-                    Role::Assistant => Style::default().fg(Color::DarkGray),
-                    Role::Tool => Style::default().fg(Color::Yellow).bg(Color::DarkGray),
+                    Role::User => Style::default().fg(Color::Blue),
+                    Role::Assistant => Style::default().fg(Color::Green),
+                    Role::Tool => Style::default().fg(Color::Magenta),
                     Role::System => return Vec::new(),
                 };
                 let mut lines = Vec::new();
@@ -48,16 +48,16 @@ impl Message {
                     )));
                 }
 
-                // 如果是工具调用，可以额外显示详细信息（带深色背景）
+                // 如果是工具调用，可以额外显示详细信息
                 if let Some(tool_calls) = &chat_message.tool_calls {
                     for tool in tool_calls {
                         lines.push(Line::from(Span::styled(
                             format!("  🔧 调用工具: {}", tool.function_name),
-                            Style::default().fg(Color::White).bg(Color::DarkGray),
+                            Style::default().fg(Color::Cyan),
                         )));
                         lines.push(Line::from(Span::styled(
                             format!("     参数: {}", tool.arguments),
-                            Style::default().fg(Color::Gray).bg(Color::DarkGray),
+                            Style::default().fg(Color::DarkGray),
                         )));
                     }
                 }
@@ -67,11 +67,11 @@ impl Message {
             Message::AgentStatus(status) => match status {
                 Status::Pause => vec![Line::from(Span::styled(
                     format!("> pause"),
-                    Style::default().fg(Color::Black).bold(),
+                    Style::default().fg(Color::Gray).bold(),
                 ))],
                 Status::Running => vec![Line::from(Span::styled(
                     format!("> running"),
-                    Style::default().fg(Color::Black).bold(),
+                    Style::default().fg(Color::Green).bold(),
                 ))],
             },
         }
