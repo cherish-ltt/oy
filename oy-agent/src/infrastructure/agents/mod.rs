@@ -75,7 +75,7 @@ impl AgentLoop {
                 },
                 crate::agent::AgentState::Thinking => result = self.thinking().await,
                 crate::agent::AgentState::Acting => result = self.acting().await,
-                crate::agent::AgentState::ToolCall => result = self.tall_call().await,
+                crate::agent::AgentState::ToolCall => result = self.tool_call().await,
                 crate::agent::AgentState::Observing => result = self.observing().await,
             }
 
@@ -219,7 +219,7 @@ impl AgentLoop {
         Ok(AgentEvent::TaskCompleted)
     }
 
-    async fn tall_call(&mut self) -> Result<AgentEvent, AgentError> {
+    async fn tool_call(&mut self) -> Result<AgentEvent, AgentError> {
         if let Some(mut tasks) = self.tool_tasks.take() {
             while let Some(res) = tasks.next().await {
                 match res {
