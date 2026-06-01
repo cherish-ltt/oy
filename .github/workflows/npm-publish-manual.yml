@@ -12,6 +12,9 @@ on:
         required: false
         default: 'latest'
         type: string
+  push:
+    tags:
+      - 'v*'
 
 env:
   CARGO_TERM_COLOR: always
@@ -76,7 +79,7 @@ jobs:
             "license": "MIT",
             "repository": {
               "type": "git",
-              "url": "git+https://github.com/cherish-ltt/oy.git"
+              "url": "git+https://github.com/cherish-ltt/oy"
             },
             "homepage": "https://github.com/cherish-ltt/oy#readme",
             "bugs": {
