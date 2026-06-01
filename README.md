@@ -23,30 +23,28 @@
 ## 架构
 
 ```
-oy (CLI 入口, 默认启动 TUI)  ────
-                               ├──► oy-agent (编排) ──► oy-ai (AI 提供者抽象)
-oy (oy -p "prompt" 直接执行) ────
+oy (CLI 入口, 默认启动 TUI) ──► oy-agent (编排) ──► oy-ai (AI 提供者抽象)
 ```
 
 | Crate | 层 | 描述 |
 | :--- | :--- | :--- |
-| [`oy-ai`](./oy-ai/) | 核心 | AI 提供者 trait、值对象（ChatMessage、ToolCall）、OpenCode-GO 实现 |
+| [`oy-ai`](./oy-ai/) | 核心 | AI 提供者 trait、值对象（ChatMessage、ToolCall）、Opencode-go 实现 |
 | [`oy-agent`](./oy-agent/) | 领域 | Agent 实体、Tool trait、编排器循环、工具实现（Read/Write/Edit/Bash）、会话持久化 |
 | [`oy-code-cli`](./oy-code-cli/) | 基础设施 | CLI 参数解析（clap）、二进制入口 `oy` |
 | [`oy-tui`](./oy-tui/) | 基础设施 | 基于 ratatui 的 TUI shell，markdown 渲染、命令系统、主题切换 |
 
 ### 依赖方向
 
-- `oy-code-cli` → `oy-agent` → `oy-ai`
+- `oy-code-cli` → `oy-tui`→ `oy-agent` → `oy-ai`
 - `oy-tui` → `oy-agent` → `oy-ai`
-- `oy-code-cli` → `oy-tui`（无 prompt 时启动 TUI）
+- `oy-code-cli` → `oy-tui`（无参数时默认启动 TUI）
 
 ## 快速开始
 
 ### 前置条件
 
 - Rust 1.95+（`rust-toolchain.toml` 自动配置）
-- 一个 OpenAI 或兼容的 API 密钥
+- 一个 Opencode-go 或兼容 OpenAI 的 API 密钥
 
 ### 配置
 
@@ -58,7 +56,7 @@ base_url = "https://opencode.ai/zen/go/v1"
 model = "deepseek-v4-pro"
 theme = "light"          # "light" 或 "dark"
 reasoning_effort = "xhigh"
-context_capacity = 1048576
+context_capacity = 256000
 ...other
 ```
 
@@ -91,9 +89,6 @@ cargo install oy-code-cli
 ```bash
 # 启动 TUI（默认）
 oy
-
-# 或直接使用 CLI 模式
-oy -p "当前目录下有哪些文件？"
 ```
 
 ### 本地开发
@@ -118,7 +113,7 @@ cargo test --workspace
 | 命令 | 功能 |
 |------|------|
 | `/model` | 三步表单设置 API Base URL / API Key / Model，保存 config，重启 agent 且保留会话消息 |
-| `/settings` → `/theme` | 切换 light / dark 主题，持久化到 config.toml |
+| `/settings` → `二级菜单` | 切换 light / dark 主题，thinking等级，model配置等 |
 
 快捷键：`↑`/`↓` 导航选择器，`Enter` 确认，`Esc` 取消，`Ctrl+O` 展开/折叠工具结果。
 
@@ -208,19 +203,12 @@ oy/
 ## 测试
 
 ```
-cargo test --workspace     # 116 个测试
+cargo test --workspace     # 80% 覆盖率
 ```
-
-| 测试套件 | 位置 | 测试数 |
-|---------|------|--------|
-| oy-ai 单元 | `oy-ai/src/domain/` | 23 |
-| oy-agent 单元 + 工具 | `oy-agent/src/` | 58 |
-| oy-agent 集成 | `oy-agent/tests/` | 5 |
-| oy-tui 单元 | `oy-tui/src/` | 30 |
 
 ## 会话持久化
 
-对话历史自动保存到 `~/.oy-ai-agent/sessions/<项目路径>/<uuidv7>.json`。切换模型时（`/model` 命令），旧 agent 的上下文通过 `oneshot` channel 提取，注入到新 agent，确保会话不丢失。
+对话历史自动保存到 `~/.oy-ai-agent/sessions/<项目路径>/<uuidv7>.json`。
 
 ## 许可证
 
