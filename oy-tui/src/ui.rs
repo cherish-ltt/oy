@@ -1,5 +1,6 @@
 use std::env;
 
+use oy_agent::format_token_count;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Layout, Rect},
@@ -206,16 +207,49 @@ impl Widget for &App {
             Status::Pause => "•",
         };
 
-        let mut status_text = format!(
-            " <Current Agent> {} (Cycle with shift+tab)\n Messages: {} | ↑/↓/←/→ move cursor | Enter send | Ctrl+O expand | Ctrl+C/Esc/q quit",
+        // Build token stats string: [↑input ↓output]
+        let token_stats = {
+            let input = format_token_count(self.token_usage.input_tokens);
+            let output = format_token_count(self.token_usage.output_tokens);
+            format!(" [↑{} ↓{}]", input, output)
+        };
+
+        // Build context usage string: current_context/max_context (percentage)
+        let context_display = {
+            let total_used = self.token_usage.context_tokens;
+            let capacity = self
+                .global_toml_config
+                .as_ref()
+                .and_then(|c| c.context_capacity)
+                .unwrap_or(200_000);
+            let used_str = format_token_count(total_used);
+            let cap_str = if capacity >= 1_000_000 {
+                format!("{}M", capacity / 1_000_000)
+            } else {
+                format_token_count(capacity)
+            };
+            let pct = if capacity > 0 {
+                (total_used as f64 / capacity as f64 * 100.0).round() as u64
+            } else {
+                0
+            };
+            format!(" {}/{} ({}%)", used_str, cap_str, pct)
+        };
+
+        let mut agent_label = "<Current Agent>".to_string();
+        if let Some(main_agent) = &self.main_agent {
+            agent_label = format!("<{}>", &main_agent.name);
+        }
+
+        let status_text = format!(
+            " {}{}{} {} (Cycle with shift+tab)\n Messages: {} | ↑/↓/←/→ move cursor | Enter send | Ctrl+O expand | Ctrl+C/Esc/q quit",
+            agent_label,
+            token_stats,
+            context_display,
             spinner_char,
             self.messages.len()
         );
 
-        if let Some(main_agent) = &self.main_agent {
-            status_text =
-                status_text.replace("<Current Agent>", &format!("<{}>", &main_agent.name));
-        }
         let status_paragraph = Paragraph::new(status_text)
             .alignment(Alignment::Left)
             .style(Style::default().fg(t.status_fg).bg(t.status_bg));
@@ -227,9 +261,10 @@ impl Widget for &App {
             .to_string();
         if let Some(config) = &self.global_toml_config {
             if let Some(model_name) = &config.model {
+                let effort = config.reasoning_effort.as_deref().unwrap_or("high");
                 status_right = status_right.replace(
                     "Use the /model command to set up one model ",
-                    &format!("{} ", model_name),
+                    &format!("{} · {} ", model_name, effort),
                 );
             }
             if let Ok(path) = env::current_dir() {
@@ -248,29 +283,59 @@ impl Widget for &App {
         // ── SubMenu / Command Selector Popup ──
         // Render into chunks[2] (reserved popup area)
         if let AppMode::SubMenu {
-            title: _,
+            title,
             items,
             selected,
+            scroll_offset,
         } = &self.app_mode
             && !items.is_empty()
         {
             let sel = *selected;
+            let scroll = *scroll_offset;
+            let total = items.len();
+            let max_content_rows = (chunks[2].height.saturating_sub(2)) as usize;
+            let has_more_up = scroll > 0;
+            let has_more_down = scroll + max_content_rows < total;
+
+            // Account for "↑/↓ more..." indicator lines
+            let indicator_lines = (has_more_up as usize) + (has_more_down as usize);
+            let max_items = max_content_rows.saturating_sub(indicator_lines);
+            let visible: Vec<&(String, String)> =
+                items.iter().skip(scroll).take(max_items).collect();
+
+            // Recalculate has_more_down based on actual items taken
+            let has_more_down = scroll + visible.len() < total;
+
             let mut popup_text = Text::default();
-            for (i, (name, desc)) in items.iter().enumerate() {
-                let style = if i == sel {
+            if has_more_up {
+                popup_text.push_line(Line::from(Span::styled(
+                    "  \u{2191} more...",
+                    Style::default().fg(t.subtle),
+                )));
+            }
+            for (i, (name, desc)) in visible.iter().enumerate() {
+                let abs_idx = scroll + i;
+                let style = if abs_idx == sel {
                     Style::default().fg(t.surface_bg).bg(t.accent)
                 } else {
                     Style::default().fg(t.surface_fg)
                 };
                 popup_text.push_line(Line::from(vec![
-                    Span::styled(if i == sel { "\u{25b8} " } else { "  " }, style),
+                    Span::styled(if abs_idx == sel { "\u{25b8} " } else { "  " }, style),
                     Span::styled(format!("{}  - {}", name, desc), style),
                 ]));
             }
+            if has_more_down {
+                popup_text.push_line(Line::from(Span::styled(
+                    "  \u{2193} more...",
+                    Style::default().fg(t.subtle),
+                )));
+            }
+
             let popup = Paragraph::new(popup_text)
                 .block(
                     Block::bordered()
-                        .title("Settings")
+                        .title(title.as_str())
                         .title_alignment(Alignment::Left)
                         .border_type(BorderType::Rounded)
                         .border_style(Style::default().fg(t.accent)),
@@ -290,18 +355,18 @@ impl Widget for &App {
                 let sel = *selected;
                 let scroll = *scroll_offset;
                 let total = matches.len();
-                let max_rows = 5usize;
-                let visible: Vec<&&CommandInfo> =
-                    matches.iter().skip(scroll).take(max_rows).collect();
-                let has_more_down = scroll + max_rows < total;
+                let max_content_rows = (chunks[2].height.saturating_sub(2)) as usize;
                 let has_more_up = scroll > 0;
+                let has_more_down = scroll + max_content_rows < total;
 
-                let popup_area = Rect {
-                    x: chunks[2].x + 1,
-                    y: chunks[2].y + 1,
-                    width: chunks[2].width.saturating_sub(2),
-                    height: chunks[2].height.saturating_sub(2),
-                };
+                // Account for "↑/↓ more..." indicator lines
+                let indicator_lines = (has_more_up as usize) + (has_more_down as usize);
+                let max_items = max_content_rows.saturating_sub(indicator_lines);
+                let visible: Vec<&&CommandInfo> =
+                    matches.iter().skip(scroll).take(max_items).collect();
+
+                // Recalculate has_more_down based on actual items taken
+                let has_more_down = scroll + visible.len() < total;
 
                 let mut popup_text = Text::default();
                 if has_more_up {
@@ -332,11 +397,13 @@ impl Widget for &App {
                 let popup = Paragraph::new(popup_text)
                     .block(
                         Block::bordered()
+                            .title("Commands")
+                            .title_alignment(Alignment::Left)
                             .border_type(BorderType::Rounded)
                             .border_style(Style::default().fg(t.accent)),
                     )
                     .style(Style::default().bg(t.surface_bg));
-                popup.render(popup_area, buf);
+                popup.render(chunks[2], buf);
             }
         }
     }

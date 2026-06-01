@@ -1,7 +1,8 @@
 // app.rs
 use crate::{
     agent::AgentManager,
-    command::{CommandId, CommandRegistry, theme_items},
+    command::{CommandId, CommandRegistry, context_items, theme_items, thinking_items},
+    config::{VERSION, WELCOME_TIPS_VEC},
     event::{AppEvent, Event, EventHandler},
     load_config::{GlobalTomlConfig, build_provider_config, register_default_tools},
     message::{
@@ -12,19 +13,20 @@ use crate::{
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use oy_agent::{
-    agent::InputAgentSignal,
-    application::orchestrator::{start_agent_background, start_agent_background_with_context},
+    Orchestrator, TokenUsage,
+    agent::RequestAgent,
+    format_token_count,
     infrastructure::{agents::main_agent::MainAgent, tools::ToolRegistry},
     oy_ai::OpenCodeGoProvider,
 };
-const MAX_POPUP_ROWS: usize = 5;
-
 use ratatui::DefaultTerminal;
 use std::{
     cell::Cell,
     collections::{HashMap, VecDeque},
     time::Instant,
 };
+
+const MAX_POPUP_ROWS: usize = 4;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppMode {
@@ -37,10 +39,11 @@ pub enum AppMode {
         title: String,
         items: Vec<(String, String)>,
         selected: usize,
+        scroll_offset: usize,
     },
     ModelForm {
         step: usize,
-        values: [String; 3],
+        values: [String; 4],
     },
 }
 
@@ -87,18 +90,20 @@ pub struct App {
     pub agent_status: Cell<Status>,
     /// 帧计数器（用于 spinner 动画）
     pub tick_counter: Cell<u64>,
+    /// 累计token使用量
+    pub token_usage: TokenUsage,
 }
 
 impl App {
     pub async fn new() -> Self {
         let mut messages = VecDeque::new();
-        messages.push_back(Message::UiMessages("OY v0.1.2".to_string()));
-        messages.push_back(Message::UiMessages(
-            "Type a message and press Enter to send.\nThen communicate with the LLM to achieve your goal".to_string(),
-        ));
-        messages.push_back(Message::UiMessages(
-            "Use ↑/↓/←/→ to move cursor, Enter to send, Ctrl+C/Esc/q to quit.".to_string(),
-        ));
+        WELCOME_TIPS_VEC.iter().for_each(|tip| {
+            if tip.eq(&"OY") {
+                messages.push_back(Message::UiMessages(format!("{} {}", tip, VERSION)));
+            } else {
+                messages.push_back(Message::UiMessages(tip.to_string()));
+            }
+        });
 
         let global_toml_config = GlobalTomlConfig::load();
 
@@ -150,6 +155,7 @@ impl App {
             theme,
             agent_status: Cell::new(Status::Pause),
             tick_counter: Cell::new(0),
+            token_usage: TokenUsage::new(),
         }
     }
 
@@ -189,6 +195,9 @@ impl App {
                     AppEvent::Quit => self.quit(),
                     AppEvent::ChatMessage(chat_message) => {
                         self.handle_chat_message(chat_message).await;
+                    }
+                    AppEvent::TokenUsage(token_usage) => {
+                        self.token_usage = token_usage;
                     }
                     AppEvent::AgentError(e) => {
                         self.messages
@@ -322,7 +331,7 @@ impl App {
                 } else if let Some(main_agent) = &self.main_agent {
                     let _ = main_agent
                         .request_sender
-                        .send(InputAgentSignal::UserPrompt(input))
+                        .send(RequestAgent::Prompt(input))
                         .await;
                 } else {
                     self.messages.push_back(UiMessages(
@@ -507,9 +516,41 @@ impl App {
             KeyCode::Enter if !self.input.is_empty() => {
                 values[step] = std::mem::take(&mut self.input);
                 self.cursor_pos = 0;
-                if step == 2 {
-                    let [url, key, model] = std::mem::take(&mut values);
-                    self.execute_model_command(url, key, model).await;
+
+                // Determine if this is a single-field form by checking input_title
+                let is_single = matches!(
+                    self.input_title.as_str(),
+                    "API Base URL:" | "API Key:" | "Model:" | "Custom Context Capacity (tokens):"
+                ) && step == 0;
+
+                if is_single {
+                    // Single-field: save the specific setting
+                    let val = values[0].clone();
+                    match self.input_title.as_str() {
+                        "API Base URL:" => self.switch_single_setting("base_url", &val).await,
+                        "API Key:" => self.switch_single_setting("api_key", &val).await,
+                        "Model:" => self.switch_single_setting("model", &val).await,
+                        "Custom Context Capacity (tokens):" => {
+                            if let Ok(n) = val.trim().parse::<u64>() {
+                                self.switch_context_capacity(n).await;
+                            } else {
+                                self.messages.push_back(UiMessages(format!(
+                                    "Invalid context capacity: {}",
+                                    val
+                                )));
+                                if self.auto_scroll.get() {
+                                    self.scroll_offset.set(u16::MAX);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    self.app_mode = AppMode::Normal;
+                    self.input_title.clear();
+                } else if step == 3 {
+                    // Full 4-field form complete
+                    let [url, key, model, ctx] = std::mem::take(&mut values);
+                    self.execute_model_command(url, key, model, ctx).await;
                     self.app_mode = AppMode::Normal;
                     self.input_title.clear();
                 } else {
@@ -519,11 +560,11 @@ impl App {
                         values,
                     };
                     self.input_title = match new_step {
-                        1 => "API Key:",
-                        2 => "Model:",
+                        1 => "API Key:".to_string(),
+                        2 => "Model:".to_string(),
+                        3 => "Context Capacity (tokens, e.g. 200000):".to_string(),
                         _ => unreachable!(),
-                    }
-                    .to_string();
+                    };
                 }
             }
             KeyCode::Char(c) => {
@@ -822,6 +863,7 @@ impl App {
                 title,
                 items,
                 selected,
+                ..
             } => (title.clone(), items.clone(), *selected),
             _ => return Ok(()),
         };
@@ -831,18 +873,22 @@ impl App {
         match key_event.code {
             KeyCode::Up => {
                 let new_sel = if selected == 0 { max_idx } else { selected - 1 };
+                let new_scroll = Self::adjust_scroll(new_sel, items.len(), MAX_POPUP_ROWS);
                 self.app_mode = AppMode::SubMenu {
                     title,
                     items,
                     selected: new_sel,
+                    scroll_offset: new_scroll,
                 };
             }
             KeyCode::Down => {
                 let new_sel = if selected >= max_idx { 0 } else { selected + 1 };
+                let new_scroll = Self::adjust_scroll(new_sel, items.len(), MAX_POPUP_ROWS);
                 self.app_mode = AppMode::SubMenu {
                     title,
                     items,
                     selected: new_sel,
+                    scroll_offset: new_scroll,
                 };
             }
             KeyCode::Enter if !items.is_empty() => {
@@ -863,8 +909,7 @@ impl App {
         match parent_title {
             "/settings" if item_name == "/theme" => {
                 // Open theme submenu
-                let theme_items = theme_items();
-                let items: Vec<(String, String)> = theme_items
+                let items: Vec<(String, String)> = theme_items()
                     .iter()
                     .map(|c| (c.name.to_string(), c.description.to_string()))
                     .collect();
@@ -872,12 +917,41 @@ impl App {
                     title: format!("{} {}", parent_title, item_name),
                     items,
                     selected: 0,
+                    scroll_offset: 0,
+                };
+            }
+            "/settings" if item_name == "/thinking" => {
+                // Open thinking effort submenu
+                let items: Vec<(String, String)> = thinking_items()
+                    .iter()
+                    .map(|c| (c.name.to_string(), c.description.to_string()))
+                    .collect();
+                self.app_mode = AppMode::SubMenu {
+                    title: format!("{} {}", parent_title, item_name),
+                    items,
+                    selected: 0,
+                    scroll_offset: 0,
+                };
+            }
+            "/settings" if item_name == "/context" => {
+                // Open context capacity submenu
+                let items: Vec<(String, String)> = context_items()
+                    .iter()
+                    .map(|c| (c.name.to_string(), c.description.to_string()))
+                    .collect();
+                self.app_mode = AppMode::SubMenu {
+                    title: format!("{} {}", parent_title, item_name),
+                    items,
+                    selected: 0,
+                    scroll_offset: 0,
                 };
             }
             _ => {
-                // Check if item has a CommandId
+                // Collect all known leaf items
                 let matched_id = theme_items()
                     .iter()
+                    .chain(thinking_items().iter())
+                    .chain(context_items().iter())
                     .chain(
                         self.command_registry
                             .commands
@@ -890,6 +964,84 @@ impl App {
                 match matched_id {
                     Some(CommandId::ThemeLight) => self.switch_theme("light"),
                     Some(CommandId::ThemeDark) => self.switch_theme("dark"),
+                    Some(CommandId::SetBaseUrl) => {
+                        self.input_title = "API Base URL:".to_string();
+                        self.app_mode = AppMode::ModelForm {
+                            step: 0,
+                            values: [String::new(), String::new(), String::new(), String::new()],
+                        };
+                    }
+                    Some(CommandId::SetApiKey) => {
+                        self.input_title = "API Key:".to_string();
+                        self.app_mode = AppMode::ModelForm {
+                            step: 0,
+                            values: [String::new(), String::new(), String::new(), String::new()],
+                        };
+                    }
+                    Some(CommandId::SetModel) => {
+                        self.input_title = "Model:".to_string();
+                        self.app_mode = AppMode::ModelForm {
+                            step: 0,
+                            values: [String::new(), String::new(), String::new(), String::new()],
+                        };
+                    }
+                    Some(id)
+                        if matches!(
+                            id,
+                            CommandId::ThinkingNone
+                                | CommandId::ThinkingLow
+                                | CommandId::ThinkingMedium
+                                | CommandId::ThinkingHigh
+                                | CommandId::ThinkingXhigh
+                        ) =>
+                    {
+                        let effort = match id {
+                            CommandId::ThinkingNone => "none",
+                            CommandId::ThinkingLow => "low",
+                            CommandId::ThinkingMedium => "medium",
+                            CommandId::ThinkingHigh => "high",
+                            CommandId::ThinkingXhigh => "xhigh",
+                            _ => unreachable!(),
+                        };
+                        self.switch_reasoning_effort(effort).await;
+                    }
+                    Some(id)
+                        if matches!(
+                            id,
+                            CommandId::ContextSize32k
+                                | CommandId::ContextSize64k
+                                | CommandId::ContextSize128k
+                                | CommandId::ContextSize200k
+                                | CommandId::ContextSize512k
+                                | CommandId::ContextSize1M
+                                | CommandId::ContextSizeCustom
+                        ) =>
+                    {
+                        let capacity = match id {
+                            CommandId::ContextSize32k => 32_768,
+                            CommandId::ContextSize64k => 65_536,
+                            CommandId::ContextSize128k => 131_072,
+                            CommandId::ContextSize200k => 200_000,
+                            CommandId::ContextSize512k => 524_288,
+                            CommandId::ContextSize1M => 1_048_576,
+                            CommandId::ContextSizeCustom => 0, // will open form
+                            _ => unreachable!(),
+                        };
+                        if id == CommandId::ContextSizeCustom {
+                            self.input_title = "Custom Context Capacity (tokens):".to_string();
+                            self.app_mode = AppMode::ModelForm {
+                                step: 0,
+                                values: [
+                                    String::new(),
+                                    String::new(),
+                                    String::new(),
+                                    String::new(),
+                                ],
+                            };
+                        } else {
+                            self.switch_context_capacity(capacity).await;
+                        }
+                    }
                     _ => {
                         self.messages
                             .push_back(UiMessages(format!("Unknown submenu item: {}", item_name)));
@@ -922,6 +1074,7 @@ impl App {
                 title,
                 items,
                 selected: 0,
+                scroll_offset: 0,
             };
             return;
         }
@@ -930,7 +1083,7 @@ impl App {
             self.input_title = "API Base URL:".to_string();
             self.app_mode = AppMode::ModelForm {
                 step: 0,
-                values: [String::new(), String::new(), String::new()],
+                values: [String::new(), String::new(), String::new(), String::new()],
             };
         } else {
             self.messages
@@ -953,6 +1106,8 @@ impl App {
             api_key: None,
             model: None,
             theme: Some(name.to_string()),
+            reasoning_effort: None,
+            context_capacity: None,
         };
         let _ = config.save();
 
@@ -963,14 +1118,174 @@ impl App {
         }
     }
 
+    /// Switch reasoning effort, save config, and restart agent with new provider.
+    async fn switch_reasoning_effort(&mut self, effort: &str) {
+        // Save config
+        let config = GlobalTomlConfig {
+            base_url: None,
+            api_key: None,
+            model: None,
+            theme: None,
+            reasoning_effort: Some(effort.to_string()),
+            context_capacity: None,
+        };
+        if let Err(e) = config.save() {
+            self.messages
+                .push_back(UiMessages(format!("Failed to save config: {}", e)));
+            if self.auto_scroll.get() {
+                self.scroll_offset.set(u16::MAX);
+            }
+            return;
+        }
+
+        // Update in-memory config
+        if let Some(ref mut global_config) = self.global_toml_config {
+            global_config.reasoning_effort = Some(effort.to_string());
+        }
+
+        // Build new provider with updated config
+        if let Some(ref global_config) = self.global_toml_config {
+            let ai_config = build_provider_config(global_config);
+            let provider = OpenCodeGoProvider::new(ai_config);
+            if let Some(agent_manager) = &self.main_agent {
+                let _ = agent_manager
+                    .request_sender
+                    .send(RequestAgent::SetProvider(Box::new(provider)))
+                    .await;
+            }
+        }
+
+        self.messages.push_back(UiMessages(format!(
+            "Switched reasoning effort to: {}",
+            effort
+        )));
+        if self.auto_scroll.get() {
+            self.scroll_offset.set(u16::MAX);
+        }
+    }
+
+    /// Switch context capacity, save config, and restart agent.
+    async fn switch_context_capacity(&mut self, capacity: u64) {
+        // Save config
+        let config = GlobalTomlConfig {
+            base_url: None,
+            api_key: None,
+            model: None,
+            theme: None,
+            reasoning_effort: None,
+            context_capacity: Some(capacity),
+        };
+        if let Err(e) = config.save() {
+            self.messages
+                .push_back(UiMessages(format!("Failed to save config: {}", e)));
+            if self.auto_scroll.get() {
+                self.scroll_offset.set(u16::MAX);
+            }
+            return;
+        }
+
+        // Update in-memory config
+        if let Some(ref mut global_config) = self.global_toml_config {
+            global_config.context_capacity = Some(capacity);
+        }
+
+        // Build new provider with updated config
+        if let Some(ref global_config) = self.global_toml_config {
+            let ai_config = build_provider_config(global_config);
+            let provider = OpenCodeGoProvider::new(ai_config);
+            if let Some(agent_manager) = &self.main_agent {
+                let _ = agent_manager
+                    .request_sender
+                    .send(RequestAgent::SetProvider(Box::new(provider)))
+                    .await;
+            }
+        }
+
+        self.messages.push_back(UiMessages(format!(
+            "Switched context capacity to: {}",
+            format_token_count(capacity),
+        )));
+        if self.auto_scroll.get() {
+            self.scroll_offset.set(u16::MAX);
+        }
+    }
+
+    /// Update a single config field (base_url / api_key / model) and restart agent.
+    async fn switch_single_setting(&mut self, field: &str, value: &str) {
+        let mut config = GlobalTomlConfig {
+            base_url: None,
+            api_key: None,
+            model: None,
+            theme: None,
+            reasoning_effort: None,
+            context_capacity: None,
+        };
+
+        // Preserve existing values from in-memory config
+        if let Some(ref global) = self.global_toml_config {
+            config.base_url = global.base_url.clone();
+            config.api_key = global.api_key.clone();
+            config.model = global.model.clone();
+            config.reasoning_effort = global.reasoning_effort.clone();
+            config.context_capacity = global.context_capacity;
+            config.theme = global.theme.clone();
+        }
+
+        // Override the specific field
+        match field {
+            "base_url" => config.base_url = Some(value.to_string()),
+            "api_key" => config.api_key = Some(value.to_string()),
+            "model" => config.model = Some(value.to_string()),
+            _ => {}
+        }
+
+        if let Err(e) = config.save() {
+            self.messages
+                .push_back(UiMessages(format!("Failed to save config: {}", e)));
+            if self.auto_scroll.get() {
+                self.scroll_offset.set(u16::MAX);
+            }
+            return;
+        }
+        self.global_toml_config = Some(config);
+
+        // Build new provider with updated config
+        if let Some(ref global_config) = self.global_toml_config {
+            let ai_config = build_provider_config(global_config);
+            let provider = OpenCodeGoProvider::new(ai_config);
+            if let Some(agent_manager) = &self.main_agent {
+                let _ = agent_manager
+                    .request_sender
+                    .send(RequestAgent::SetProvider(Box::new(provider)))
+                    .await;
+            }
+        }
+
+        self.messages
+            .push_back(UiMessages(format!("Updated {} to: {}", field, value)));
+        if self.auto_scroll.get() {
+            self.scroll_offset.set(u16::MAX);
+        }
+    }
+
     /// Execute /model with collected values: save config and restart agent.
-    async fn execute_model_command(&mut self, base_url: String, api_key: String, model: String) {
+    async fn execute_model_command(
+        &mut self,
+        base_url: String,
+        api_key: String,
+        model: String,
+        context_capacity: String,
+    ) {
+        // Parse context capacity, default to 200000
+        let ctx_val: Option<u64> = context_capacity.trim().parse().ok();
         // 1. Save config
         let config = GlobalTomlConfig {
             base_url: Some(base_url.clone()),
             api_key: Some(api_key.clone()),
             model: Some(model.clone()),
             theme: None,
+            reasoning_effort: None, // preserve existing
+            context_capacity: ctx_val,
         };
         if let Err(e) = config.save() {
             self.messages
@@ -982,44 +1297,24 @@ impl App {
         }
         self.global_toml_config = Some(config);
 
-        // 2. Extract messages from old agent
-        let old_messages = if let Some(ref agent) = self.main_agent {
-            agent.extract_messages().await
-        } else {
-            vec![]
+        // 2. Build new provider + registry
+        let Some(ref global_config) = self.global_toml_config else {
+            return;
         };
-
-        // 3. Build new provider + registry
-        let global_config = self.global_toml_config.as_ref().unwrap();
         let ai_config = build_provider_config(global_config);
         let provider = OpenCodeGoProvider::new(ai_config);
-        let mut registry = ToolRegistry::new();
-        register_default_tools(&mut registry);
-        let main_agent = MainAgent::new_with_max_iterations(None);
+        if let Some(agent_manager) = &self.main_agent {
+            let _ = agent_manager
+                .request_sender
+                .send(RequestAgent::SetProvider(Box::new(provider)))
+                .await;
+        }
 
-        // 4. Start new agent with old context
-        let (request_sender, response_receiver, join_handle) =
-            start_agent_background_with_context(main_agent, provider, registry, old_messages).await;
-
-        let mut new_agent = AgentManager::new(
-            "MainAgent".to_owned(),
-            join_handle,
-            request_sender,
-            response_receiver,
-        );
-
-        // 5. Replace event handler
-        let new_events = if let Some(response_receiver) = new_agent.response_receiver.take() {
-            EventHandler::new_with_receiver(response_receiver)
-        } else {
-            EventHandler::new()
-        };
-
-        self.main_agent = Some(new_agent);
-        self.events = new_events;
-
-        self.messages
-            .push_back(UiMessages(format!("Switched to model: {}", model)));
+        self.messages.push_back(UiMessages(format!(
+            "Switched to model: {} , context: {} , please start the conversation again",
+            model,
+            ctx_val.map_or("200k".to_string(), format_token_count),
+        )));
         if self.auto_scroll.get() {
             self.scroll_offset.set(u16::MAX);
         }
@@ -1071,12 +1366,12 @@ pub async fn start_main_agent_background(global_toml_config: &GlobalTomlConfig) 
     let ai_config = build_provider_config(global_toml_config);
 
     let provider = OpenCodeGoProvider::new(ai_config);
-    let mut registry = ToolRegistry::new();
-    register_default_tools(&mut registry);
+    let mut tool_registry = ToolRegistry::new();
+    register_default_tools(&mut tool_registry);
 
-    let main_agent = MainAgent::new_with_max_iterations(None);
+    let main_agent = MainAgent::new(None);
     let (request_sender, response_receiver, join_handle) =
-        start_agent_background(main_agent, provider, registry).await;
+        Orchestrator::start(main_agent, provider, tool_registry);
 
     AgentManager::new(
         "MainAgent".to_owned(),

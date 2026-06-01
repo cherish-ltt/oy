@@ -1,13 +1,13 @@
 [package]
 name = "oy-agent"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2024"
 description = "Agent orchestration for oy"
 license = "MIT"
 repository = "https://github.com/cherish-ltt/oy"
 
 [dependencies]
-oy-ai = { path = "../oy-ai", version = "0.1.2" }
+oy-ai = { path = "../oy-ai", version = "0.2.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -15,6 +15,8 @@ uuid = { version = "1", features = ["v7", "serde"] }
 dirs = "6"
 chrono = "0.4.44"
 tokio = { version = "1", features = ["full"] }
+futures = "0.3.32"
+tiktoken-rs = "0.11.0"
 
 [dev-dependencies]
 async-trait = "0.1"

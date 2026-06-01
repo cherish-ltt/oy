@@ -3,6 +3,7 @@ use serde_json::Value;
 use crate::domain::errors::AgentError;
 use crate::domain::tool::Tool;
 
+#[derive(Clone)]
 pub struct ReadTool;
 
 impl Tool for ReadTool {
@@ -41,6 +42,10 @@ impl Tool for ReadTool {
         r#"
         - `read`: Read the file content; use `read` instead of `cat` or `sed`
         "#
+    }
+
+    fn clone_box(&self) -> Box<dyn Tool> {
+        Box::new(self.clone())
     }
 }
 

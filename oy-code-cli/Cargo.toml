@@ -1,6 +1,6 @@
 [package]
 name = "oy-code-cli"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2024"
 description = "CLI entry point for oy"
 license = "MIT"
@@ -11,9 +11,9 @@ name = "oy"
 path = "src/main.rs"
 
 [dependencies]
-oy-agent = { path = "../oy-agent", version = "0.1.2" }
-oy-ai = { path = "../oy-ai", version = "0.1.2" }
-oy-tui = { path = "../oy-tui", version = "0.1.2" }
+oy-agent = { path = "../oy-agent", version = "0.2.0" }
+oy-ai = { path = "../oy-ai", version = "0.2.0" }
+oy-tui = { path = "../oy-tui", version = "0.2.0" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde = { version = "1", features = ["derive"] }

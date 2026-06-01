@@ -8,4 +8,5 @@ pub trait Tool: Send + Sync {
     fn schema(&self) -> Value;
     fn execute(&self, args: Value) -> Result<String, AgentError>;
     fn get_system_prompt(&self) -> &str;
+    fn clone_box(&self) -> Box<dyn Tool>;
 }

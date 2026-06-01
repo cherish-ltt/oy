@@ -4,6 +4,7 @@ pub mod ui;
 
 mod agent;
 mod command;
+mod config;
 mod load_config;
 mod message;
 mod theme;
