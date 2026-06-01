@@ -3,6 +3,7 @@ use serde_json::Value;
 use crate::domain::errors::AgentError;
 use crate::domain::tool::Tool;
 
+#[derive(Clone)]
 pub struct WriteTool;
 
 impl Tool for WriteTool {
@@ -48,6 +49,10 @@ impl Tool for WriteTool {
         r#"
         - `write`: Create or overwrite a file, used only for new files or for a complete rewrite
         "#
+    }
+
+    fn clone_box(&self) -> Box<dyn Tool> {
+        Box::new(self.clone())
     }
 }
 

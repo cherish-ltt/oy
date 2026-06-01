@@ -5,6 +5,7 @@ use std::path::Path;
 use crate::domain::errors::AgentError;
 use crate::domain::tool::Tool;
 
+#[derive(Clone)]
 pub struct EditTool;
 
 impl EditTool {
@@ -122,6 +123,10 @@ impl Tool for EditTool {
         r#"
         - `edit`: Precise file editing through precise text replacement; Keep the old text block small and unique; Combine multiple edits in the same file into one edit call
         "#
+    }
+
+    fn clone_box(&self) -> Box<dyn Tool> {
+        Box::new(self.clone())
     }
 }
 

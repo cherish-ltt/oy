@@ -7,6 +7,7 @@ use crate::domain::tool::Tool;
 const BLACKLISTED_PREFIXES: &[&str] = &["rm -rf /", "rm -rf /*"];
 const BLACKLISTED_SUBSTRINGS: &[&str] = &[" sudo "];
 
+#[derive(Clone)]
 pub struct BashTool;
 
 impl BashTool {
@@ -71,6 +72,10 @@ impl Tool for BashTool {
         r#"
         - `bash`: Using Bash for file operations
         "#
+    }
+
+    fn clone_box(&self) -> Box<dyn Tool> {
+        Box::new(self.clone())
     }
 }
 

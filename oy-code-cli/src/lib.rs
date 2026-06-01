@@ -1,14 +1,11 @@
-use std::env;
-
 use clap::Parser;
-use oy_agent::Orchestrator;
-use oy_agent::infrastructure::agents::main_agent::MainAgent;
 use oy_agent::infrastructure::tools::edit::EditTool;
 use oy_agent::infrastructure::tools::read::ReadTool;
 use oy_agent::infrastructure::tools::write::WriteTool;
 use oy_agent::infrastructure::tools::{ToolRegistry, bash::BashTool};
-use oy_ai::{AiConfig, OpenCodeGoProvider};
+use oy_ai::AiConfig;
 use serde::Deserialize;
+use std::env;
 
 /// CLI arguments for oy-agent
 #[derive(Parser, Debug)]
@@ -104,24 +101,5 @@ pub async fn run(args: CliArgs) -> Result<(), anyhow::Error> {
         return Ok(());
     }
 
-    let prompt = args.prompt.as_ref().unwrap();
-    let cli_config = CliConfig::load();
-    let ai_config = build_provider_config(&cli_config, &args);
-
-    eprintln!("url:{}", ai_config.base_url);
-    eprintln!(
-        "key:{}...",
-        &ai_config.api_key[..8.min(ai_config.api_key.len())]
-    );
-
-    let provider = OpenCodeGoProvider::new(ai_config);
-    let mut registry = ToolRegistry::new();
-    register_default_tools(&mut registry);
-
-    let main_agent = MainAgent::new_with_max_iterations(None);
-    let mut orchestrator = Orchestrator::new(main_agent, provider, registry);
-    orchestrator.init();
-    let result = orchestrator.execute(prompt).await?;
-    println!("{}", result);
     Ok(())
 }

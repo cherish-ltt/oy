@@ -2,7 +2,7 @@
 use color_eyre::eyre::OptionExt;
 use crossterm::event::Event as CrosstermEvent;
 use futures::{FutureExt, StreamExt};
-use oy_agent::{agent::OutputAgentSignal, oy_ai::ChatMessage};
+use oy_agent::{agent::ResponseAgent, oy_ai::ChatMessage};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -44,7 +44,7 @@ impl EventHandler {
         Self { sender, receiver }
     }
 
-    pub fn new_with_receiver(response_receiver: mpsc::Receiver<OutputAgentSignal>) -> Self {
+    pub fn new_with_receiver(response_receiver: mpsc::Receiver<ResponseAgent>) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
         let actor = EventTask::new_with_response_receiver(sender.clone(), response_receiver);
         tokio::spawn(async { actor.run().await });
@@ -65,7 +65,7 @@ impl EventHandler {
 
 struct EventTask {
     sender: mpsc::UnboundedSender<Event>,
-    response_receiver: Option<mpsc::Receiver<OutputAgentSignal>>,
+    response_receiver: Option<mpsc::Receiver<ResponseAgent>>,
 }
 
 impl EventTask {
@@ -78,7 +78,7 @@ impl EventTask {
 
     fn new_with_response_receiver(
         sender: mpsc::UnboundedSender<Event>,
-        response_receiver: mpsc::Receiver<OutputAgentSignal>,
+        response_receiver: mpsc::Receiver<ResponseAgent>,
     ) -> Self {
         Self {
             sender,
@@ -113,10 +113,10 @@ impl EventTask {
                     match msg_opt {
                         Some(msg) => {
                             match msg {
-                                OutputAgentSignal::Pause => self.send(Event::App(AppEvent::Pause)),
-                                OutputAgentSignal::Running => self.send(Event::App(AppEvent::Running)),
-                                OutputAgentSignal::ChatMessage(chat_message) => self.send(Event::App(AppEvent::ChatMessage(chat_message))),
-                                OutputAgentSignal::AgentError(agent_error) => self.send(Event::App(AppEvent::AgentError(agent_error.to_string()))),
+                                ResponseAgent::Pause => self.send(Event::App(AppEvent::Pause)),
+                                ResponseAgent::Running => self.send(Event::App(AppEvent::Running)),
+                                ResponseAgent::ChatMessage(chat_message) => self.send(Event::App(AppEvent::ChatMessage(chat_message))),
+                                ResponseAgent::AgentError(agent_error) => self.send(Event::App(AppEvent::AgentError(agent_error.to_string()))),
                             }
                         }
                         None => {

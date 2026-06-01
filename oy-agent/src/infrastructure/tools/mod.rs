@@ -30,8 +30,8 @@ impl ToolRegistry {
         self.tools.insert(tool.name().to_string(), Box::new(tool));
     }
 
-    pub fn get(&self, name: &str) -> Option<&dyn Tool> {
-        self.tools.get(name).map(|t| t.as_ref() as &dyn Tool)
+    pub(crate) fn get_clone(&self, name: &str) -> Option<Box<dyn Tool>> {
+        self.tools.get(name).map(|tool| tool.clone_box())
     }
 
     pub fn get_schemas(&self) -> Vec<Value> {
@@ -78,14 +78,14 @@ mod tests {
     #[test]
     fn test_registry_new_is_empty() {
         let r = ToolRegistry::new();
-        assert!(r.get("Read").is_none());
+        assert!(r.get_clone("Read").is_none());
     }
 
     #[test]
     fn test_register_and_get() {
         let mut r = ToolRegistry::new();
         r.register(ReadTool);
-        let tool = r.get("Read");
+        let tool = r.get_clone("Read");
         assert!(tool.is_some());
         assert_eq!(tool.unwrap().name(), "Read");
     }
@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn test_get_nonexistent() {
         let r = sample_registry();
-        assert!(r.get("Nonexistent").is_none());
+        assert!(r.get_clone("Nonexistent").is_none());
     }
 
     #[test]
@@ -101,7 +101,7 @@ mod tests {
         let mut r = ToolRegistry::new();
         r.register(ReadTool);
         r.register(ReadTool); // same name, overwrites
-        assert!(r.get("Read").is_some());
+        assert!(r.get_clone("Read").is_some());
     }
 
     #[test]
@@ -136,6 +136,6 @@ mod tests {
     #[test]
     fn test_default_trait() {
         let r = ToolRegistry::default();
-        assert!(r.get("Read").is_none());
+        assert!(r.get_clone("Read").is_none());
     }
 }

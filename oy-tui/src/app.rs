@@ -2,6 +2,7 @@
 use crate::{
     agent::AgentManager,
     command::{CommandId, CommandRegistry, theme_items},
+    config::{VERSION, WELCOME_TIPS_VEC},
     event::{AppEvent, Event, EventHandler},
     load_config::{GlobalTomlConfig, build_provider_config, register_default_tools},
     message::{
@@ -12,19 +13,19 @@ use crate::{
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use oy_agent::{
-    agent::InputAgentSignal,
-    application::orchestrator::{start_agent_background, start_agent_background_with_context},
+    Orchestrator,
+    agent::RequestAgent,
     infrastructure::{agents::main_agent::MainAgent, tools::ToolRegistry},
     oy_ai::OpenCodeGoProvider,
 };
-const MAX_POPUP_ROWS: usize = 5;
-
 use ratatui::DefaultTerminal;
 use std::{
     cell::Cell,
     collections::{HashMap, VecDeque},
     time::Instant,
 };
+
+const MAX_POPUP_ROWS: usize = 5;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppMode {
@@ -92,13 +93,13 @@ pub struct App {
 impl App {
     pub async fn new() -> Self {
         let mut messages = VecDeque::new();
-        messages.push_back(Message::UiMessages("OY v0.1.2".to_string()));
-        messages.push_back(Message::UiMessages(
-            "Type a message and press Enter to send.\nThen communicate with the LLM to achieve your goal".to_string(),
-        ));
-        messages.push_back(Message::UiMessages(
-            "Use ↑/↓/←/→ to move cursor, Enter to send, Ctrl+C/Esc/q to quit.".to_string(),
-        ));
+        WELCOME_TIPS_VEC.iter().for_each(|tip| {
+            if tip.eq(&"OY") {
+                messages.push_back(Message::UiMessages(format!("{} {}", tip, VERSION)));
+            } else {
+                messages.push_back(Message::UiMessages(tip.to_string()));
+            }
+        });
 
         let global_toml_config = GlobalTomlConfig::load();
 
@@ -322,7 +323,7 @@ impl App {
                 } else if let Some(main_agent) = &self.main_agent {
                     let _ = main_agent
                         .request_sender
-                        .send(InputAgentSignal::UserPrompt(input))
+                        .send(RequestAgent::Prompt(input))
                         .await;
                 } else {
                     self.messages.push_back(UiMessages(
@@ -982,44 +983,21 @@ impl App {
         }
         self.global_toml_config = Some(config);
 
-        // 2. Extract messages from old agent
-        let old_messages = if let Some(ref agent) = self.main_agent {
-            agent.extract_messages().await
-        } else {
-            vec![]
-        };
-
-        // 3. Build new provider + registry
+        // 2. Build new provider + registry
         let global_config = self.global_toml_config.as_ref().unwrap();
         let ai_config = build_provider_config(global_config);
         let provider = OpenCodeGoProvider::new(ai_config);
-        let mut registry = ToolRegistry::new();
-        register_default_tools(&mut registry);
-        let main_agent = MainAgent::new_with_max_iterations(None);
+        if let Some(agent_manager) = &self.main_agent {
+            let _ = agent_manager
+                .request_sender
+                .send(RequestAgent::SetProvider(Box::new(provider)))
+                .await;
+        }
 
-        // 4. Start new agent with old context
-        let (request_sender, response_receiver, join_handle) =
-            start_agent_background_with_context(main_agent, provider, registry, old_messages).await;
-
-        let mut new_agent = AgentManager::new(
-            "MainAgent".to_owned(),
-            join_handle,
-            request_sender,
-            response_receiver,
-        );
-
-        // 5. Replace event handler
-        let new_events = if let Some(response_receiver) = new_agent.response_receiver.take() {
-            EventHandler::new_with_receiver(response_receiver)
-        } else {
-            EventHandler::new()
-        };
-
-        self.main_agent = Some(new_agent);
-        self.events = new_events;
-
-        self.messages
-            .push_back(UiMessages(format!("Switched to model: {}", model)));
+        self.messages.push_back(UiMessages(format!(
+            "Switched to model: {} , please start the conversation again",
+            model
+        )));
         if self.auto_scroll.get() {
             self.scroll_offset.set(u16::MAX);
         }
@@ -1071,12 +1049,12 @@ pub async fn start_main_agent_background(global_toml_config: &GlobalTomlConfig) 
     let ai_config = build_provider_config(global_toml_config);
 
     let provider = OpenCodeGoProvider::new(ai_config);
-    let mut registry = ToolRegistry::new();
-    register_default_tools(&mut registry);
+    let mut tool_registry = ToolRegistry::new();
+    register_default_tools(&mut tool_registry);
 
-    let main_agent = MainAgent::new_with_max_iterations(None);
+    let main_agent = MainAgent::new(None);
     let (request_sender, response_receiver, join_handle) =
-        start_agent_background(main_agent, provider, registry).await;
+        Orchestrator::start(main_agent, provider, tool_registry);
 
     AgentManager::new(
         "MainAgent".to_owned(),

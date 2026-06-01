@@ -11,6 +11,9 @@ pub enum AgentError {
     #[error("Tool execution error: {0}")]
     ToolExecutionError(String),
 
+    #[error("Chat Message error: {0}")]
+    ChatMessageError(String),
+
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
 
