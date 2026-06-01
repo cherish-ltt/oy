@@ -328,18 +328,11 @@ impl Widget for &App {
                 let sel = *selected;
                 let scroll = *scroll_offset;
                 let total = matches.len();
-                let max_rows = 5usize;
+                let max_rows = (chunks[2].height.saturating_sub(2)) as usize;
                 let visible: Vec<&&CommandInfo> =
                     matches.iter().skip(scroll).take(max_rows).collect();
                 let has_more_down = scroll + max_rows < total;
                 let has_more_up = scroll > 0;
-
-                let popup_area = Rect {
-                    x: chunks[2].x + 1,
-                    y: chunks[2].y + 1,
-                    width: chunks[2].width.saturating_sub(2),
-                    height: chunks[2].height.saturating_sub(2),
-                };
 
                 let mut popup_text = Text::default();
                 if has_more_up {
@@ -370,11 +363,13 @@ impl Widget for &App {
                 let popup = Paragraph::new(popup_text)
                     .block(
                         Block::bordered()
+                            .title("Commands")
+                            .title_alignment(Alignment::Left)
                             .border_type(BorderType::Rounded)
                             .border_style(Style::default().fg(t.accent)),
                     )
                     .style(Style::default().bg(t.surface_bg));
-                popup.render(popup_area, buf);
+                popup.render(chunks[2], buf);
             }
         }
     }
