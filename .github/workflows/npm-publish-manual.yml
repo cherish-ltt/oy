@@ -189,4 +189,4 @@ jobs:
       - name: Publish to npm with provenance
         run: |
           cd npm-package
-          npm publish --provenance --access public --tag ${{ github.event.inputs.npm_tag }}
+          npm publish --provenance --access public
