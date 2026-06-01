@@ -1,13 +1,13 @@
 [package]
 name = "oy-agent"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Agent orchestration for oy"
 license = "MIT"
 repository = "https://github.com/cherish-ltt/oy"
 
 [dependencies]
-oy-ai = { path = "../oy-ai", version = "0.2.0" }
+oy-ai = { path = "../oy-ai", version = "0.2.1" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

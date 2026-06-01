@@ -1,13 +1,13 @@
 [package]
 name = "oy-tui"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Terminal UI for oy"
 license = "MIT"
 repository = "https://github.com/cherish-ltt/oy"
 
 [dependencies]
-oy-agent = { path = "../oy-agent", version = "0.2.0" }
+oy-agent = { path = "../oy-agent", version = "0.2.1" }
 crossterm = { version = "0.28.1", features = ["event-stream", "bracketed-paste"] }
 futures = "0.3.31"
 ratatui = "0.30.0"

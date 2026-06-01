@@ -1,6 +1,6 @@
 [package]
 name = "oy-ai"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "AI provider abstraction layer for oy"
 license = "MIT"

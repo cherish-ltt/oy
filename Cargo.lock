@@ -1641,7 +1641,7 @@ checksum = "d211803b9b6b570f68772237e415a029d5a50c65d382910b879fb19d3271f94d"
 
 [[package]]
 name = "oy-agent"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1658,7 +1658,7 @@ dependencies = [
 
 [[package]]
 name = "oy-ai"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-openai",
  "async-trait",
@@ -1669,7 +1669,7 @@ dependencies = [
 
 [[package]]
 name = "oy-code-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1685,7 +1685,7 @@ dependencies = [
 
 [[package]]
 name = "oy-tui"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "color-eyre",
