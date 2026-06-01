@@ -261,10 +261,7 @@ impl Widget for &App {
             .to_string();
         if let Some(config) = &self.global_toml_config {
             if let Some(model_name) = &config.model {
-                let effort = config
-                    .reasoning_effort
-                    .as_deref()
-                    .unwrap_or("high");
+                let effort = config.reasoning_effort.as_deref().unwrap_or("high");
                 status_right = status_right.replace(
                     "Use the /model command to set up one model ",
                     &format!("{} · {} ", model_name, effort),

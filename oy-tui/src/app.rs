@@ -13,12 +13,11 @@ use crate::{
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use oy_agent::{
-    Orchestrator,
+    Orchestrator, TokenUsage,
     agent::RequestAgent,
     format_token_count,
     infrastructure::{agents::main_agent::MainAgent, tools::ToolRegistry},
     oy_ai::OpenCodeGoProvider,
-    TokenUsage,
 };
 use ratatui::DefaultTerminal;
 use std::{
@@ -521,10 +520,7 @@ impl App {
                 // Determine if this is a single-field form by checking input_title
                 let is_single = matches!(
                     self.input_title.as_str(),
-                    "API Base URL:"
-                        | "API Key:"
-                        | "Model:"
-                        | "Custom Context Capacity (tokens):"
+                    "API Base URL:" | "API Key:" | "Model:" | "Custom Context Capacity (tokens):"
                 ) && step == 0;
 
                 if is_single {
@@ -877,8 +873,7 @@ impl App {
         match key_event.code {
             KeyCode::Up => {
                 let new_sel = if selected == 0 { max_idx } else { selected - 1 };
-                let new_scroll =
-                    Self::adjust_scroll(new_sel, items.len(), MAX_POPUP_ROWS);
+                let new_scroll = Self::adjust_scroll(new_sel, items.len(), MAX_POPUP_ROWS);
                 self.app_mode = AppMode::SubMenu {
                     title,
                     items,
@@ -888,8 +883,7 @@ impl App {
             }
             KeyCode::Down => {
                 let new_sel = if selected >= max_idx { 0 } else { selected + 1 };
-                let new_scroll =
-                    Self::adjust_scroll(new_sel, items.len(), MAX_POPUP_ROWS);
+                let new_scroll = Self::adjust_scroll(new_sel, items.len(), MAX_POPUP_ROWS);
                 self.app_mode = AppMode::SubMenu {
                     title,
                     items,
@@ -974,36 +968,21 @@ impl App {
                         self.input_title = "API Base URL:".to_string();
                         self.app_mode = AppMode::ModelForm {
                             step: 0,
-                            values: [
-                                String::new(),
-                                String::new(),
-                                String::new(),
-                                String::new(),
-                            ],
+                            values: [String::new(), String::new(), String::new(), String::new()],
                         };
                     }
                     Some(CommandId::SetApiKey) => {
                         self.input_title = "API Key:".to_string();
                         self.app_mode = AppMode::ModelForm {
                             step: 0,
-                            values: [
-                                String::new(),
-                                String::new(),
-                                String::new(),
-                                String::new(),
-                            ],
+                            values: [String::new(), String::new(), String::new(), String::new()],
                         };
                     }
                     Some(CommandId::SetModel) => {
                         self.input_title = "Model:".to_string();
                         self.app_mode = AppMode::ModelForm {
                             step: 0,
-                            values: [
-                                String::new(),
-                                String::new(),
-                                String::new(),
-                                String::new(),
-                            ],
+                            values: [String::new(), String::new(), String::new(), String::new()],
                         };
                     }
                     Some(id)
@@ -1064,10 +1043,8 @@ impl App {
                         }
                     }
                     _ => {
-                        self.messages.push_back(UiMessages(format!(
-                            "Unknown submenu item: {}",
-                            item_name
-                        )));
+                        self.messages
+                            .push_back(UiMessages(format!("Unknown submenu item: {}", item_name)));
                         if self.auto_scroll.get() {
                             self.scroll_offset.set(u16::MAX);
                         }
@@ -1284,10 +1261,8 @@ impl App {
             }
         }
 
-        self.messages.push_back(UiMessages(format!(
-            "Updated {} to: {}",
-            field, value
-        )));
+        self.messages
+            .push_back(UiMessages(format!("Updated {} to: {}", field, value)));
         if self.auto_scroll.get() {
             self.scroll_offset.set(u16::MAX);
         }
@@ -1336,7 +1311,7 @@ impl App {
         self.messages.push_back(UiMessages(format!(
             "Switched to model: {} , context: {} , please start the conversation again",
             model,
-            ctx_val.map_or("200k".to_string(), |v| format_token_count(v)),
+            ctx_val.map_or("200k".to_string(), format_token_count),
         )));
         if self.auto_scroll.get() {
             self.scroll_offset.set(u16::MAX);

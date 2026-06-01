@@ -1,7 +1,7 @@
 use oy_ai::ChatMessage;
 use std::sync::LazyLock;
-use tiktoken_rs::cl100k_base_singleton;
 use tiktoken_rs::CoreBPE;
+use tiktoken_rs::cl100k_base_singleton;
 
 /// Global singleton for the cl100k_base tokenizer (GPT-4, GPT-3.5-turbo, etc.)
 static CL100K_BASE: LazyLock<CoreBPE> = LazyLock::new(|| cl100k_base_singleton().clone());

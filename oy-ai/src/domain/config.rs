@@ -85,8 +85,8 @@ mod tests {
 
     #[test]
     fn test_ai_config_with_reasoning_effort_none() {
-        let config = AiConfig::new("url".into(), "key".into(), "m".into())
-            .with_reasoning_effort(None);
+        let config =
+            AiConfig::new("url".into(), "key".into(), "m".into()).with_reasoning_effort(None);
         assert_eq!(config.reasoning_effort, None);
     }
 
