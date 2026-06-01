@@ -16,7 +16,7 @@
 
 
 
-> 🚀 一个 Rust 工作区，实现了基于 OpenRouter / 兼容 API 的函数调用 AI 智能体，提供 Read/Write/Edit/Bash 四类工具。基于**领域驱动设计**和**洋葱架构**原则，构建在四个隔离的 crate 之上。
+> 🚀 一个 Rust 工作区，实现了基于 OpenAI / 兼容 API 的函数调用 AI 智能体，提供 Read/Write/Edit/Bash 四类工具。基于**领域驱动设计**和**洋葱架构**原则，构建在四个隔离的 crate 之上。
 
 
 
@@ -30,7 +30,7 @@ oy (oy -p "prompt" 直接执行) ────
 
 | Crate | 层 | 描述 |
 | :--- | :--- | :--- |
-| [`oy-ai`](./oy-ai/) | 核心 | AI 提供者 trait、值对象（ChatMessage、ToolCall）、OpenRouter 实现 |
+| [`oy-ai`](./oy-ai/) | 核心 | AI 提供者 trait、值对象（ChatMessage、ToolCall）、OpenCode-GO 实现 |
 | [`oy-agent`](./oy-agent/) | 领域 | Agent 实体、Tool trait、编排器循环、工具实现（Read/Write/Edit/Bash）、会话持久化 |
 | [`oy-code-cli`](./oy-code-cli/) | 基础设施 | CLI 参数解析（clap）、二进制入口 `oy` |
 | [`oy-tui`](./oy-tui/) | 基础设施 | 基于 ratatui 的 TUI shell，markdown 渲染、命令系统、主题切换 |
@@ -45,8 +45,8 @@ oy (oy -p "prompt" 直接执行) ────
 
 ### 前置条件
 
-- Rust 1.85+（`rust-toolchain.toml` 自动配置）
-- 一个 OpenRouter 或兼容的 API 密钥
+- Rust 1.95+（`rust-toolchain.toml` 自动配置）
+- 一个 OpenAI 或兼容的 API 密钥
 
 ### 配置
 
@@ -54,17 +54,12 @@ oy (oy -p "prompt" 直接执行) ────
 
 ```toml
 api_key = "sk-or-..."
-base_url = "https://openrouter.ai/api/v1"
-model = "anthropic/claude-haiku-4.5"
+base_url = "https://opencode.ai/zen/go/v1"
+model = "deepseek-v4-pro"
 theme = "light"          # "light" 或 "dark"
-```
-
-也可通过环境变量设置：
-
-```bash
-export OPENROUTER_API_KEY="sk-or-..."
-export OPENROUTER_BASE_URL="https://openrouter.ai/api/v1"
-export OPENROUTER_MODEL="anthropic/claude-haiku-4.5"
+reasoning_effort = "xhigh"
+context_capacity = 1048576
+...other
 ```
 
 ### 安装
@@ -80,10 +75,10 @@ bun install -g @ghyper9023/oy --registry https://registry.npmjs.org/
 通过 **npm** 安装：
 
 ```bash
-npm install -g @ghyper9023/oy
+npm install -g @ghyper9023/oy --registry https://registry.npmjs.org/
 ```
 
-或通过 **cargo** 从源码编译（推荐，享受最新特性）：
+或通过 **cargo** 从源码编译（推荐）：
 
 ```bash
 cargo install oy-code-cli
@@ -188,7 +183,7 @@ oy/
 ├── oy-ai/                         # AI 提供者抽象
 │   └── src/
 │       ├── domain/ (AiProvider trait, ChatMessage, ToolCall, AiConfig, AiError)
-│       └── infrastructure/ (OpenRouter 实现)
+│       └── infrastructure/ (OpenCode-go 实现)
 ├── oy-agent/                      # 智能体编排
 │   ├── tests/integration_test.rs  # MockProvider 集成测试
 │   └── src/
