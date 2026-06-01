@@ -19,6 +19,8 @@ pub struct GlobalTomlConfig {
     pub theme: Option<String>,
     /// Reasoning effort level: "none", "low", "medium", "high", "xhigh"
     pub reasoning_effort: Option<String>,
+    /// Maximum context capacity in tokens (e.g. 200000). Defaults to 200k if None.
+    pub context_capacity: Option<u64>,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -62,6 +64,9 @@ impl GlobalTomlConfig {
         }
         if self.reasoning_effort.is_some() {
             existing.reasoning_effort = self.reasoning_effort.clone();
+        }
+        if self.context_capacity.is_some() {
+            existing.context_capacity = self.context_capacity;
         }
         let toml_string =
             toml::to_string(&existing).map_err(|e| format!("Failed to serialize config: {}", e))?;
@@ -117,6 +122,10 @@ pub fn build_provider_config(config: &GlobalTomlConfig) -> AiConfig {
         .clone()
         .or_else(|| Some("high".to_string()));
     ai_config = ai_config.with_reasoning_effort(effort);
+
+    // Pass context_capacity from config, defaulting to 200k
+    let ctx = config.context_capacity.or(Some(200_000));
+    ai_config = ai_config.with_context_capacity(ctx);
 
     ai_config
 }

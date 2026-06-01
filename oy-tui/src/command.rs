@@ -10,6 +10,16 @@ pub enum CommandId {
     ThinkingMedium,
     ThinkingHigh,
     ThinkingXhigh,
+    ContextSize32k,
+    ContextSize64k,
+    ContextSize128k,
+    ContextSize200k,
+    ContextSize512k,
+    ContextSize1M,
+    ContextSizeCustom,
+    SetBaseUrl,
+    SetApiKey,
+    SetModel,
 }
 
 #[derive(Debug, Clone)]
@@ -36,7 +46,7 @@ impl CommandRegistry {
         let mut cmds = vec![
             CommandInfo {
                 name: "/model",
-                description: "Set API configuration (base-url, api-key, model)",
+                description: "Set full API configuration (base-url, api-key, model, context)",
                 children: vec![],
             },
             CommandInfo {
@@ -52,6 +62,26 @@ impl CommandRegistry {
                         name: "/thinking",
                         description: "Set reasoning effort (none/low/medium/high/xhigh)",
                         id: CommandId::None,
+                    },
+                    CommandItem {
+                        name: "/context",
+                        description: "Set context capacity (32k/64k/128k/200k/512k/1M/custom)",
+                        id: CommandId::None,
+                    },
+                    CommandItem {
+                        name: "/base-url",
+                        description: "Set API base URL",
+                        id: CommandId::SetBaseUrl,
+                    },
+                    CommandItem {
+                        name: "/api-key",
+                        description: "Set API key",
+                        id: CommandId::SetApiKey,
+                    },
+                    CommandItem {
+                        name: "/model-name",
+                        description: "Set model name",
+                        id: CommandId::SetModel,
                     },
                 ],
             },
@@ -115,6 +145,47 @@ pub fn thinking_items() -> Vec<CommandItem> {
             name: "xhigh",
             description: "Extra high reasoning effort",
             id: CommandId::ThinkingXhigh,
+        },
+    ]
+}
+
+/// Context capacity items shown when /settings /context is selected
+pub fn context_items() -> Vec<CommandItem> {
+    vec![
+        CommandItem {
+            name: "32k",
+            description: "32,768 tokens",
+            id: CommandId::ContextSize32k,
+        },
+        CommandItem {
+            name: "64k",
+            description: "65,536 tokens",
+            id: CommandId::ContextSize64k,
+        },
+        CommandItem {
+            name: "128k",
+            description: "131,072 tokens",
+            id: CommandId::ContextSize128k,
+        },
+        CommandItem {
+            name: "200k",
+            description: "200,000 tokens (default)",
+            id: CommandId::ContextSize200k,
+        },
+        CommandItem {
+            name: "512k",
+            description: "524,288 tokens",
+            id: CommandId::ContextSize512k,
+        },
+        CommandItem {
+            name: "1M",
+            description: "1,048,576 tokens",
+            id: CommandId::ContextSize1M,
+        },
+        CommandItem {
+            name: "custom",
+            description: "Enter custom context size",
+            id: CommandId::ContextSizeCustom,
         },
     ]
 }
@@ -184,9 +255,13 @@ mod tests {
     fn test_settings_has_children() {
         let reg = CommandRegistry::new();
         let settings = &reg.commands[1];
-        assert_eq!(settings.children.len(), 2);
+        assert_eq!(settings.children.len(), 6);
         assert_eq!(settings.children[0].name, "/theme");
         assert_eq!(settings.children[1].name, "/thinking");
+        assert_eq!(settings.children[2].name, "/context");
+        assert_eq!(settings.children[3].name, "/base-url");
+        assert_eq!(settings.children[4].name, "/api-key");
+        assert_eq!(settings.children[5].name, "/model-name");
     }
 
     #[test]
@@ -214,5 +289,31 @@ mod tests {
         assert_eq!(items[0].id, CommandId::ThinkingNone);
         assert_eq!(items[3].id, CommandId::ThinkingHigh);
         assert_eq!(items[4].id, CommandId::ThinkingXhigh);
+    }
+
+    #[test]
+    fn test_context_items() {
+        let items = context_items();
+        assert_eq!(items.len(), 7);
+        assert_eq!(items[0].name, "32k");
+        assert_eq!(items[3].name, "200k");
+        assert_eq!(items[5].name, "1M");
+        assert_eq!(items[6].name, "custom");
+    }
+
+    #[test]
+    fn test_context_items_ids() {
+        let items = context_items();
+        assert_eq!(items[0].id, CommandId::ContextSize32k);
+        assert_eq!(items[3].id, CommandId::ContextSize200k);
+        assert_eq!(items[5].id, CommandId::ContextSize1M);
+        assert_eq!(items[6].id, CommandId::ContextSizeCustom);
+    }
+
+    #[test]
+    fn test_context_item_descriptions() {
+        let items = context_items();
+        assert_eq!(items[3].description, "200,000 tokens (default)");
+        assert_eq!(items[6].description, "Enter custom context size");
     }
 }

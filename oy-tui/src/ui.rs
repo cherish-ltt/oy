@@ -214,15 +214,38 @@ impl Widget for &App {
             format!(" [↑{} ↓{}]", input, output)
         };
 
+        // Build context usage string: current_context/max_context (percentage)
+        let context_display = {
+            let total_used = self.token_usage.input_tokens + self.token_usage.output_tokens;
+            let capacity = self
+                .global_toml_config
+                .as_ref()
+                .and_then(|c| c.context_capacity)
+                .unwrap_or(200_000);
+            let used_str = format_token_count(total_used);
+            let cap_str = if capacity >= 1_000_000 {
+                format!("{}M", capacity / 1_000_000)
+            } else {
+                format_token_count(capacity)
+            };
+            let pct = if capacity > 0 {
+                (total_used as f64 / capacity as f64 * 100.0).round() as u64
+            } else {
+                0
+            };
+            format!(" {}/{} ({}%)", used_str, cap_str, pct)
+        };
+
         let mut agent_label = "<Current Agent>".to_string();
         if let Some(main_agent) = &self.main_agent {
             agent_label = format!("<{}>", &main_agent.name);
         }
 
         let status_text = format!(
-            " {}{} {} (Cycle with shift+tab)\n Messages: {} | ↑/↓/←/→ move cursor | Enter send | Ctrl+O expand | Ctrl+C/Esc/q quit",
+            " {}{}{} {} (Cycle with shift+tab)\n Messages: {} | ↑/↓/←/→ move cursor | Enter send | Ctrl+O expand | Ctrl+C/Esc/q quit",
             agent_label,
             token_stats,
+            context_display,
             spinner_char,
             self.messages.len()
         );
