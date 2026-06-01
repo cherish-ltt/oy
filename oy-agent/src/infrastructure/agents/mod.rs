@@ -131,21 +131,19 @@ impl AgentLoop {
     async fn thinking(&mut self) -> Result<AgentEvent, AgentError> {
         let _ = self.response_tx.send(ResponseAgent::Running).await;
 
-        // Count input tokens from all messages before sending to provider
-        let input_tokens = count_input_tokens(self.agent.messages());
-        self.token_usage.add_input(input_tokens);
-
-        // Track current conversation context size (for context usage display)
-        self.token_usage.context_tokens = count_input_tokens(self.agent.messages());
-
         let response = self
             .provider
             .chat(self.agent.messages(), &self.tool_registry.get_schemas())
             .await?;
 
-        // Count output tokens from the response (content + reasoning_content)
-        let output_tokens = count_message_tokens(&response);
-        self.token_usage.add_output(output_tokens);
+        // Push response to messages first so context_tokens includes it
+        self.agent.push_message_back(self.uuid, response.clone())?;
+
+        // Current conversation total (all messages, including the latest response)
+        self.token_usage.context_tokens = count_input_tokens(self.agent.messages());
+        self.token_usage.input_tokens = self.token_usage.context_tokens;
+        // Latest output tokens only (not cumulative)
+        self.token_usage.output_tokens = count_message_tokens(&response);
 
         // Send updated token usage to the UI
         let _ = self
@@ -153,7 +151,6 @@ impl AgentLoop {
             .send(ResponseAgent::TokenUsage(self.token_usage))
             .await;
 
-        self.agent.push_message_back(self.uuid, response.clone())?;
         let _ = self
             .response_tx
             .send(ResponseAgent::ChatMessage(response))
