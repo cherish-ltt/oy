@@ -76,7 +76,11 @@ jobs:
             "license": "MIT",
             "repository": {
               "type": "git",
-              "url": "https://github.com/cherish-ltt/oy"
+              "url": "git+https://github.com/cherish-ltt/oy.git"
+            },
+            "homepage": "https://github.com/cherish-ltt/oy#readme",
+            "bugs": {
+              "url": "https://github.com/cherish-ltt/oy/issues"
             }
           }
           EOF
