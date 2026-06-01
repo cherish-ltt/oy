@@ -1,4 +1,5 @@
 use oy_ai::ChatMessage;
+use oy_ai::Role;
 use std::sync::LazyLock;
 use tiktoken_rs::CoreBPE;
 use tiktoken_rs::cl100k_base_singleton;
@@ -6,14 +7,14 @@ use tiktoken_rs::cl100k_base_singleton;
 /// Global singleton for the cl100k_base tokenizer (GPT-4, GPT-3.5-turbo, etc.)
 static CL100K_BASE: LazyLock<CoreBPE> = LazyLock::new(|| cl100k_base_singleton().clone());
 
-/// Token usage for the current conversation state.
+/// Token usage broken down by role side (input vs output).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TokenUsage {
-    /// Total input (prompt) tokens in the current conversation context
+    /// User-side tokens: System + User + Tool role messages
     pub input_tokens: u64,
-    /// Tokens in the latest assistant response (output)
+    /// AI-side tokens: Assistant role messages (content + reasoning_content)
     pub output_tokens: u64,
-    /// Current conversation context size (total tokens in all messages right now)
+    /// Total conversation tokens: input_tokens + output_tokens
     pub context_tokens: u64,
 }
 
@@ -67,6 +68,24 @@ pub fn count_input_tokens(messages: &[ChatMessage]) -> u64 {
 /// Count output tokens from a response message (content + reasoning_content).
 pub fn count_output_tokens(msg: &ChatMessage) -> u64 {
     count_message_tokens(msg)
+}
+
+/// Count tokens in messages on the user/input side (System, User, Tool roles).
+pub fn count_input_side_tokens(messages: &[ChatMessage]) -> u64 {
+    messages
+        .iter()
+        .filter(|m| m.role != Role::Assistant)
+        .map(count_message_tokens)
+        .sum()
+}
+
+/// Count tokens in messages on the AI/output side (Assistant role).
+pub fn count_output_side_tokens(messages: &[ChatMessage]) -> u64 {
+    messages
+        .iter()
+        .filter(|m| m.role == Role::Assistant)
+        .map(count_message_tokens)
+        .sum()
 }
 
 /// Format a token count for display (e.g., 3140 → "3.1k", 500 → "500")

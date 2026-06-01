@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::{
     AgentError,
     agent::{AgentCore, AgentEvent, RequestAgent, ResponseAgent},
-    domain::token_counter::{TokenUsage, count_input_tokens, count_message_tokens},
+    domain::token_counter::{TokenUsage, count_input_side_tokens, count_output_side_tokens},
     infrastructure::tools::ToolRegistry,
 };
 
@@ -136,14 +136,14 @@ impl AgentLoop {
             .chat(self.agent.messages(), &self.tool_registry.get_schemas())
             .await?;
 
-        // Push response to messages first so context_tokens includes it
+        // Push response to messages first so all counts are accurate
         self.agent.push_message_back(self.uuid, response.clone())?;
 
-        // Current conversation total (all messages, including the latest response)
-        self.token_usage.context_tokens = count_input_tokens(self.agent.messages());
-        self.token_usage.input_tokens = self.token_usage.context_tokens;
-        // Latest output tokens only (not cumulative)
-        self.token_usage.output_tokens = count_message_tokens(&response);
+        // Role-based token breakdown
+        self.token_usage.input_tokens = count_input_side_tokens(self.agent.messages());
+        self.token_usage.output_tokens = count_output_side_tokens(self.agent.messages());
+        self.token_usage.context_tokens =
+            self.token_usage.input_tokens + self.token_usage.output_tokens;
 
         // Send updated token usage to the UI
         let _ = self
