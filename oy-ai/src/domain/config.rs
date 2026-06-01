@@ -5,6 +5,9 @@ pub struct AiConfig {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
+    /// Reasoning effort level: "none", "low", "medium", "high", "xhigh"
+    /// Defaults to "high" if None.
+    pub reasoning_effort: Option<String>,
 }
 
 impl Default for AiConfig {
@@ -13,6 +16,7 @@ impl Default for AiConfig {
             base_url: "https://opencode.ai/zen/go/v1/chat/completions".to_string(),
             api_key: String::new(),
             model: "deepseek-v4-flash".to_string(),
+            reasoning_effort: Some("high".to_string()),
         }
     }
 }
@@ -23,7 +27,13 @@ impl AiConfig {
             base_url,
             api_key,
             model,
+            reasoning_effort: Some("high".to_string()),
         }
+    }
+
+    pub fn with_reasoning_effort(mut self, effort: Option<String>) -> Self {
+        self.reasoning_effort = effort;
+        self
     }
 }
 
@@ -39,6 +49,7 @@ mod tests {
             config.base_url,
             "https://opencode.ai/zen/go/v1/chat/completions"
         );
+        assert_eq!(config.reasoning_effort, Some("high".to_string()));
     }
 
     #[test]
@@ -51,6 +62,21 @@ mod tests {
         assert_eq!(config.base_url, "https://example.com/api");
         assert_eq!(config.api_key, "sk-test-key");
         assert_eq!(config.model, "gpt-4");
+        assert_eq!(config.reasoning_effort, Some("high".to_string()));
+    }
+
+    #[test]
+    fn test_ai_config_with_reasoning_effort() {
+        let config = AiConfig::new("url".into(), "key".into(), "m".into())
+            .with_reasoning_effort(Some("low".into()));
+        assert_eq!(config.reasoning_effort, Some("low".to_string()));
+    }
+
+    #[test]
+    fn test_ai_config_with_reasoning_effort_none() {
+        let config = AiConfig::new("url".into(), "key".into(), "m".into())
+            .with_reasoning_effort(None);
+        assert_eq!(config.reasoning_effort, None);
     }
 
     #[test]

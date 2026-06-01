@@ -1,7 +1,7 @@
 // app.rs
 use crate::{
     agent::AgentManager,
-    command::{CommandId, CommandRegistry, theme_items},
+    command::{CommandId, CommandRegistry, theme_items, thinking_items},
     config::{VERSION, WELCOME_TIPS_VEC},
     event::{AppEvent, Event, EventHandler},
     load_config::{GlobalTomlConfig, build_provider_config, register_default_tools},
@@ -882,10 +882,24 @@ impl App {
                     selected: 0,
                 };
             }
+            "/settings" if item_name == "/thinking" => {
+                // Open thinking effort submenu
+                let t_items = thinking_items();
+                let items: Vec<(String, String)> = t_items
+                    .iter()
+                    .map(|c| (c.name.to_string(), c.description.to_string()))
+                    .collect();
+                self.app_mode = AppMode::SubMenu {
+                    title: format!("{} {}", parent_title, item_name),
+                    items,
+                    selected: 0,
+                };
+            }
             _ => {
-                // Check if item has a CommandId
+                // Collect all known leaf items from theme + thinking + command children
                 let matched_id = theme_items()
                     .iter()
+                    .chain(thinking_items().iter())
                     .chain(
                         self.command_registry
                             .commands
@@ -898,7 +912,35 @@ impl App {
                 match matched_id {
                     Some(CommandId::ThemeLight) => self.switch_theme("light"),
                     Some(CommandId::ThemeDark) => self.switch_theme("dark"),
-                    _ => {
+                    Some(id) => {
+                        match id {
+                            CommandId::ThinkingNone
+                            | CommandId::ThinkingLow
+                            | CommandId::ThinkingMedium
+                            | CommandId::ThinkingHigh
+                            | CommandId::ThinkingXhigh => {
+                                let effort = match id {
+                                    CommandId::ThinkingNone => "none",
+                                    CommandId::ThinkingLow => "low",
+                                    CommandId::ThinkingMedium => "medium",
+                                    CommandId::ThinkingHigh => "high",
+                                    CommandId::ThinkingXhigh => "xhigh",
+                                    _ => unreachable!(),
+                                };
+                                self.switch_reasoning_effort(effort).await;
+                            }
+                            _ => {
+                                self.messages.push_back(UiMessages(format!(
+                                    "Unknown submenu item: {}",
+                                    item_name
+                                )));
+                                if self.auto_scroll.get() {
+                                    self.scroll_offset.set(u16::MAX);
+                                }
+                            }
+                        }
+                    }
+                    None => {
                         self.messages
                             .push_back(UiMessages(format!("Unknown submenu item: {}", item_name)));
                         if self.auto_scroll.get() {
@@ -961,11 +1003,57 @@ impl App {
             api_key: None,
             model: None,
             theme: Some(name.to_string()),
+            reasoning_effort: None,
         };
         let _ = config.save();
 
         self.messages
             .push_back(UiMessages(format!("Switched to {} theme", self.theme.name)));
+        if self.auto_scroll.get() {
+            self.scroll_offset.set(u16::MAX);
+        }
+    }
+
+    /// Switch reasoning effort, save config, and restart agent with new provider.
+    async fn switch_reasoning_effort(&mut self, effort: &str) {
+        // Save config
+        let config = GlobalTomlConfig {
+            base_url: None,
+            api_key: None,
+            model: None,
+            theme: None,
+            reasoning_effort: Some(effort.to_string()),
+        };
+        if let Err(e) = config.save() {
+            self.messages
+                .push_back(UiMessages(format!("Failed to save config: {}", e)));
+            if self.auto_scroll.get() {
+                self.scroll_offset.set(u16::MAX);
+            }
+            return;
+        }
+
+        // Update in-memory config
+        if let Some(ref mut global_config) = self.global_toml_config {
+            global_config.reasoning_effort = Some(effort.to_string());
+        }
+
+        // Build new provider with updated config
+        if let Some(ref global_config) = self.global_toml_config {
+            let ai_config = build_provider_config(global_config);
+            let provider = OpenCodeGoProvider::new(ai_config);
+            if let Some(agent_manager) = &self.main_agent {
+                let _ = agent_manager
+                    .request_sender
+                    .send(RequestAgent::SetProvider(Box::new(provider)))
+                    .await;
+            }
+        }
+
+        self.messages.push_back(UiMessages(format!(
+            "Switched reasoning effort to: {}",
+            effort
+        )));
         if self.auto_scroll.get() {
             self.scroll_offset.set(u16::MAX);
         }
@@ -979,6 +1067,7 @@ impl App {
             api_key: Some(api_key.clone()),
             model: Some(model.clone()),
             theme: None,
+            reasoning_effort: None, // preserve existing
         };
         if let Err(e) = config.save() {
             self.messages

@@ -5,6 +5,11 @@ pub enum CommandId {
     None,
     ThemeLight,
     ThemeDark,
+    ThinkingNone,
+    ThinkingLow,
+    ThinkingMedium,
+    ThinkingHigh,
+    ThinkingXhigh,
 }
 
 #[derive(Debug, Clone)]
@@ -37,11 +42,18 @@ impl CommandRegistry {
             CommandInfo {
                 name: "/settings",
                 description: "Open settings menu",
-                children: vec![CommandItem {
-                    name: "/theme",
-                    description: "Switch color theme",
-                    id: CommandId::None,
-                }],
+                children: vec![
+                    CommandItem {
+                        name: "/theme",
+                        description: "Switch color theme",
+                        id: CommandId::None,
+                    },
+                    CommandItem {
+                        name: "/thinking",
+                        description: "Set reasoning effort (none/low/medium/high/xhigh)",
+                        id: CommandId::None,
+                    },
+                ],
             },
         ];
         cmds.sort_by(|a, b| a.name.cmp(b.name));
@@ -72,6 +84,37 @@ pub fn theme_items() -> Vec<CommandItem> {
             name: "dark",
             description: "Dark theme",
             id: CommandId::ThemeDark,
+        },
+    ]
+}
+
+/// Thinking effort items shown when /settings /thinking is selected
+pub fn thinking_items() -> Vec<CommandItem> {
+    vec![
+        CommandItem {
+            name: "none",
+            description: "No reasoning effort",
+            id: CommandId::ThinkingNone,
+        },
+        CommandItem {
+            name: "low",
+            description: "Low reasoning effort",
+            id: CommandId::ThinkingLow,
+        },
+        CommandItem {
+            name: "medium",
+            description: "Medium reasoning effort",
+            id: CommandId::ThinkingMedium,
+        },
+        CommandItem {
+            name: "high",
+            description: "High reasoning effort (default)",
+            id: CommandId::ThinkingHigh,
+        },
+        CommandItem {
+            name: "xhigh",
+            description: "Extra high reasoning effort",
+            id: CommandId::ThinkingXhigh,
         },
     ]
 }
@@ -141,8 +184,9 @@ mod tests {
     fn test_settings_has_children() {
         let reg = CommandRegistry::new();
         let settings = &reg.commands[1];
-        assert_eq!(settings.children.len(), 1);
+        assert_eq!(settings.children.len(), 2);
         assert_eq!(settings.children[0].name, "/theme");
+        assert_eq!(settings.children[1].name, "/thinking");
     }
 
     #[test]
@@ -151,5 +195,24 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].id, CommandId::ThemeLight);
         assert_eq!(items[1].id, CommandId::ThemeDark);
+    }
+
+    #[test]
+    fn test_thinking_items() {
+        let items = thinking_items();
+        assert_eq!(items.len(), 5);
+        assert_eq!(items[0].name, "none");
+        assert_eq!(items[1].name, "low");
+        assert_eq!(items[2].name, "medium");
+        assert_eq!(items[3].name, "high");
+        assert_eq!(items[4].name, "xhigh");
+    }
+
+    #[test]
+    fn test_thinking_items_ids() {
+        let items = thinking_items();
+        assert_eq!(items[0].id, CommandId::ThinkingNone);
+        assert_eq!(items[3].id, CommandId::ThinkingHigh);
+        assert_eq!(items[4].id, CommandId::ThinkingXhigh);
     }
 }

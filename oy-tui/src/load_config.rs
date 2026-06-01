@@ -17,6 +17,8 @@ pub struct GlobalTomlConfig {
     pub base_url: Option<String>,
     pub model: Option<String>,
     pub theme: Option<String>,
+    /// Reasoning effort level: "none", "low", "medium", "high", "xhigh"
+    pub reasoning_effort: Option<String>,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -57,6 +59,9 @@ impl GlobalTomlConfig {
         }
         if self.theme.is_some() {
             existing.theme = self.theme.clone();
+        }
+        if self.reasoning_effort.is_some() {
+            existing.reasoning_effort = self.reasoning_effort.clone();
         }
         let toml_string =
             toml::to_string(&existing).map_err(|e| format!("Failed to serialize config: {}", e))?;
@@ -104,7 +109,16 @@ pub fn build_provider_config(config: &GlobalTomlConfig) -> AiConfig {
         .or_else(|| env::var("OPENCODE_MODEL").ok())
         .unwrap_or_else(|| "deepseek-v4-flash".to_string());
 
-    AiConfig::new(base_url, api_key, model)
+    let mut ai_config = AiConfig::new(base_url, api_key, model);
+
+    // Pass reasoning_effort from config, defaulting to "high"
+    let effort = config
+        .reasoning_effort
+        .clone()
+        .or_else(|| Some("high".to_string()));
+    ai_config = ai_config.with_reasoning_effort(effort);
+
+    ai_config
 }
 
 /// Register the default set of tools (Read, Write, Bash).

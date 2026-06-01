@@ -40,6 +40,11 @@ impl AiProvider for OpenCodeGoProvider {
             body["tools"] = json!(tools);
         }
 
+        // Add reasoning_effort if configured (none/low/medium/high/xhigh)
+        if let Some(ref effort) = self.config.reasoning_effort {
+            body["reasoning_effort"] = json!(effort);
+        }
+
         // Use create_byot (Bring Your Own Token) to send a raw JSON body directly.
         // This is required because OpenRouter exposes an OpenAI-compatible API but we
         // construct the request body manually to support tool calling with dynamic
