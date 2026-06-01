@@ -1298,7 +1298,9 @@ impl App {
         self.global_toml_config = Some(config);
 
         // 2. Build new provider + registry
-        let global_config = self.global_toml_config.as_ref().unwrap();
+        let Some(ref global_config) = self.global_toml_config else {
+            return;
+        };
         let ai_config = build_provider_config(global_config);
         let provider = OpenCodeGoProvider::new(ai_config);
         if let Some(agent_manager) = &self.main_agent {
