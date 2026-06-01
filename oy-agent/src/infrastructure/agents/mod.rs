@@ -135,6 +135,9 @@ impl AgentLoop {
         let input_tokens = count_input_tokens(self.agent.messages());
         self.token_usage.add_input(input_tokens);
 
+        // Track current conversation context size (for context usage display)
+        self.token_usage.context_tokens = count_input_tokens(self.agent.messages());
+
         let response = self
             .provider
             .chat(self.agent.messages(), &self.tool_registry.get_schemas())

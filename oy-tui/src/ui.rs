@@ -216,7 +216,7 @@ impl Widget for &App {
 
         // Build context usage string: current_context/max_context (percentage)
         let context_display = {
-            let total_used = self.token_usage.input_tokens + self.token_usage.output_tokens;
+            let total_used = self.token_usage.context_tokens;
             let capacity = self
                 .global_toml_config
                 .as_ref()
