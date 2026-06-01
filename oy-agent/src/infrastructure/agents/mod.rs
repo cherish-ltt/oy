@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::{
     AgentError,
     agent::{AgentCore, AgentEvent, RequestAgent, ResponseAgent},
+    domain::token_counter::{TokenUsage, count_input_tokens, count_message_tokens},
     infrastructure::tools::ToolRegistry,
 };
 
@@ -23,6 +24,8 @@ pub(crate) struct AgentLoop {
     tool_tasks: Option<FuturesUnordered<JoinHandle<ChatMessage>>>,
     request_rx: Receiver<RequestAgent>,
     response_tx: Sender<ResponseAgent>,
+    /// Cumulative token usage across the entire session
+    token_usage: TokenUsage,
 }
 
 impl AgentLoop {
@@ -43,6 +46,7 @@ impl AgentLoop {
             tool_tasks: None,
             request_rx,
             response_tx,
+            token_usage: TokenUsage::new(),
         }
     }
 
@@ -127,10 +131,25 @@ impl AgentLoop {
     async fn thinking(&mut self) -> Result<AgentEvent, AgentError> {
         let _ = self.response_tx.send(ResponseAgent::Running).await;
 
+        // Count input tokens from all messages before sending to provider
+        let input_tokens = count_input_tokens(self.agent.messages());
+        self.token_usage.add_input(input_tokens);
+
         let response = self
             .provider
             .chat(self.agent.messages(), &self.tool_registry.get_schemas())
             .await?;
+
+        // Count output tokens from the response (content + reasoning_content)
+        let output_tokens = count_message_tokens(&response);
+        self.token_usage.add_output(output_tokens);
+
+        // Send updated token usage to the UI
+        let _ = self
+            .response_tx
+            .send(ResponseAgent::TokenUsage(self.token_usage))
+            .await;
+
         self.agent.push_message_back(self.uuid, response.clone())?;
         let _ = self
             .response_tx

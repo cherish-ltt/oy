@@ -1,4 +1,5 @@
 use crate::AgentError;
+use crate::domain::token_counter::TokenUsage;
 use oy_ai::{AiProvider, ChatMessage};
 use uuid::Uuid;
 
@@ -50,5 +51,6 @@ pub enum ResponseAgent {
     Pause,
     Running,
     ChatMessage(ChatMessage),
+    TokenUsage(TokenUsage),
     AgentError(AgentError),
 }

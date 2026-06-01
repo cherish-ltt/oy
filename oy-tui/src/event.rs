@@ -3,6 +3,7 @@ use color_eyre::eyre::OptionExt;
 use crossterm::event::Event as CrosstermEvent;
 use futures::{FutureExt, StreamExt};
 use oy_agent::{agent::ResponseAgent, oy_ai::ChatMessage};
+use oy_agent::TokenUsage;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -19,6 +20,7 @@ pub enum Event {
 pub enum AppEvent {
     Quit,
     ChatMessage(ChatMessage),
+    TokenUsage(TokenUsage),
     AgentError(String),
     Pause,
     Running,
@@ -116,6 +118,7 @@ impl EventTask {
                                 ResponseAgent::Pause => self.send(Event::App(AppEvent::Pause)),
                                 ResponseAgent::Running => self.send(Event::App(AppEvent::Running)),
                                 ResponseAgent::ChatMessage(chat_message) => self.send(Event::App(AppEvent::ChatMessage(chat_message))),
+                                ResponseAgent::TokenUsage(token_usage) => self.send(Event::App(AppEvent::TokenUsage(token_usage))),
                                 ResponseAgent::AgentError(agent_error) => self.send(Event::App(AppEvent::AgentError(agent_error.to_string()))),
                             }
                         }

@@ -17,6 +17,7 @@ use oy_agent::{
     agent::RequestAgent,
     infrastructure::{agents::main_agent::MainAgent, tools::ToolRegistry},
     oy_ai::OpenCodeGoProvider,
+    TokenUsage,
 };
 use ratatui::DefaultTerminal;
 use std::{
@@ -88,6 +89,8 @@ pub struct App {
     pub agent_status: Cell<Status>,
     /// 帧计数器（用于 spinner 动画）
     pub tick_counter: Cell<u64>,
+    /// 累计token使用量
+    pub token_usage: TokenUsage,
 }
 
 impl App {
@@ -151,6 +154,7 @@ impl App {
             theme,
             agent_status: Cell::new(Status::Pause),
             tick_counter: Cell::new(0),
+            token_usage: TokenUsage::new(),
         }
     }
 
@@ -190,6 +194,9 @@ impl App {
                     AppEvent::Quit => self.quit(),
                     AppEvent::ChatMessage(chat_message) => {
                         self.handle_chat_message(chat_message).await;
+                    }
+                    AppEvent::TokenUsage(token_usage) => {
+                        self.token_usage = token_usage;
                     }
                     AppEvent::AgentError(e) => {
                         self.messages

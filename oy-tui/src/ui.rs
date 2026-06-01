@@ -1,5 +1,6 @@
 use std::env;
 
+use oy_agent::format_token_count;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Layout, Rect},
@@ -206,16 +207,26 @@ impl Widget for &App {
             Status::Pause => "•",
         };
 
-        let mut status_text = format!(
-            " <Current Agent> {} (Cycle with shift+tab)\n Messages: {} | ↑/↓/←/→ move cursor | Enter send | Ctrl+O expand | Ctrl+C/Esc/q quit",
+        // Build token stats string: [↑input ↓output]
+        let token_stats = {
+            let input = format_token_count(self.token_usage.input_tokens);
+            let output = format_token_count(self.token_usage.output_tokens);
+            format!(" [↑{} ↓{}]", input, output)
+        };
+
+        let mut agent_label = "<Current Agent>".to_string();
+        if let Some(main_agent) = &self.main_agent {
+            agent_label = format!("<{}>", &main_agent.name);
+        }
+
+        let status_text = format!(
+            " {}{} {} (Cycle with shift+tab)\n Messages: {} | ↑/↓/←/→ move cursor | Enter send | Ctrl+O expand | Ctrl+C/Esc/q quit",
+            agent_label,
+            token_stats,
             spinner_char,
             self.messages.len()
         );
 
-        if let Some(main_agent) = &self.main_agent {
-            status_text =
-                status_text.replace("<Current Agent>", &format!("<{}>", &main_agent.name));
-        }
         let status_paragraph = Paragraph::new(status_text)
             .alignment(Alignment::Left)
             .style(Style::default().fg(t.status_fg).bg(t.status_bg));
