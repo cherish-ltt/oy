@@ -286,29 +286,59 @@ impl Widget for &App {
         // ── SubMenu / Command Selector Popup ──
         // Render into chunks[2] (reserved popup area)
         if let AppMode::SubMenu {
-            title: _,
+            title,
             items,
             selected,
+            scroll_offset,
         } = &self.app_mode
             && !items.is_empty()
         {
             let sel = *selected;
+            let scroll = *scroll_offset;
+            let total = items.len();
+            let max_content_rows = (chunks[2].height.saturating_sub(2)) as usize;
+            let has_more_up = scroll > 0;
+            let has_more_down = scroll + max_content_rows < total;
+
+            // Account for "↑/↓ more..." indicator lines
+            let indicator_lines = (has_more_up as usize) + (has_more_down as usize);
+            let max_items = max_content_rows.saturating_sub(indicator_lines);
+            let visible: Vec<&(String, String)> =
+                items.iter().skip(scroll).take(max_items).collect();
+
+            // Recalculate has_more_down based on actual items taken
+            let has_more_down = scroll + visible.len() < total;
+
             let mut popup_text = Text::default();
-            for (i, (name, desc)) in items.iter().enumerate() {
-                let style = if i == sel {
+            if has_more_up {
+                popup_text.push_line(Line::from(Span::styled(
+                    "  \u{2191} more...",
+                    Style::default().fg(t.subtle),
+                )));
+            }
+            for (i, (name, desc)) in visible.iter().enumerate() {
+                let abs_idx = scroll + i;
+                let style = if abs_idx == sel {
                     Style::default().fg(t.surface_bg).bg(t.accent)
                 } else {
                     Style::default().fg(t.surface_fg)
                 };
                 popup_text.push_line(Line::from(vec![
-                    Span::styled(if i == sel { "\u{25b8} " } else { "  " }, style),
+                    Span::styled(if abs_idx == sel { "\u{25b8} " } else { "  " }, style),
                     Span::styled(format!("{}  - {}", name, desc), style),
                 ]));
             }
+            if has_more_down {
+                popup_text.push_line(Line::from(Span::styled(
+                    "  \u{2193} more...",
+                    Style::default().fg(t.subtle),
+                )));
+            }
+
             let popup = Paragraph::new(popup_text)
                 .block(
                     Block::bordered()
-                        .title("Settings")
+                        .title(title.as_str())
                         .title_alignment(Alignment::Left)
                         .border_type(BorderType::Rounded)
                         .border_style(Style::default().fg(t.accent)),
@@ -328,11 +358,18 @@ impl Widget for &App {
                 let sel = *selected;
                 let scroll = *scroll_offset;
                 let total = matches.len();
-                let max_rows = (chunks[2].height.saturating_sub(2)) as usize;
-                let visible: Vec<&&CommandInfo> =
-                    matches.iter().skip(scroll).take(max_rows).collect();
-                let has_more_down = scroll + max_rows < total;
+                let max_content_rows = (chunks[2].height.saturating_sub(2)) as usize;
                 let has_more_up = scroll > 0;
+                let has_more_down = scroll + max_content_rows < total;
+
+                // Account for "↑/↓ more..." indicator lines
+                let indicator_lines = (has_more_up as usize) + (has_more_down as usize);
+                let max_items = max_content_rows.saturating_sub(indicator_lines);
+                let visible: Vec<&&CommandInfo> =
+                    matches.iter().skip(scroll).take(max_items).collect();
+
+                // Recalculate has_more_down based on actual items taken
+                let has_more_down = scroll + visible.len() < total;
 
                 let mut popup_text = Text::default();
                 if has_more_up {

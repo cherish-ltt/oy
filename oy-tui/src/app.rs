@@ -27,7 +27,7 @@ use std::{
     time::Instant,
 };
 
-const MAX_POPUP_ROWS: usize = 5;
+const MAX_POPUP_ROWS: usize = 4;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppMode {
@@ -40,6 +40,7 @@ pub enum AppMode {
         title: String,
         items: Vec<(String, String)>,
         selected: usize,
+        scroll_offset: usize,
     },
     ModelForm {
         step: usize,
@@ -866,6 +867,7 @@ impl App {
                 title,
                 items,
                 selected,
+                ..
             } => (title.clone(), items.clone(), *selected),
             _ => return Ok(()),
         };
@@ -875,18 +877,24 @@ impl App {
         match key_event.code {
             KeyCode::Up => {
                 let new_sel = if selected == 0 { max_idx } else { selected - 1 };
+                let new_scroll =
+                    Self::adjust_scroll(new_sel, items.len(), MAX_POPUP_ROWS);
                 self.app_mode = AppMode::SubMenu {
                     title,
                     items,
                     selected: new_sel,
+                    scroll_offset: new_scroll,
                 };
             }
             KeyCode::Down => {
                 let new_sel = if selected >= max_idx { 0 } else { selected + 1 };
+                let new_scroll =
+                    Self::adjust_scroll(new_sel, items.len(), MAX_POPUP_ROWS);
                 self.app_mode = AppMode::SubMenu {
                     title,
                     items,
                     selected: new_sel,
+                    scroll_offset: new_scroll,
                 };
             }
             KeyCode::Enter if !items.is_empty() => {
@@ -915,6 +923,7 @@ impl App {
                     title: format!("{} {}", parent_title, item_name),
                     items,
                     selected: 0,
+                    scroll_offset: 0,
                 };
             }
             "/settings" if item_name == "/thinking" => {
@@ -927,6 +936,7 @@ impl App {
                     title: format!("{} {}", parent_title, item_name),
                     items,
                     selected: 0,
+                    scroll_offset: 0,
                 };
             }
             "/settings" if item_name == "/context" => {
@@ -939,6 +949,7 @@ impl App {
                     title: format!("{} {}", parent_title, item_name),
                     items,
                     selected: 0,
+                    scroll_offset: 0,
                 };
             }
             _ => {
@@ -1086,6 +1097,7 @@ impl App {
                 title,
                 items,
                 selected: 0,
+                scroll_offset: 0,
             };
             return;
         }
