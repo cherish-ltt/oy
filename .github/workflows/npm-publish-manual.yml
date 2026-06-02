@@ -33,7 +33,14 @@ jobs:
       - name: Normalize version
         id: version
         run: |
-          RAW_VERSION="${{ github.event.inputs.version }}"
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            RAW_VERSION="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
+            RAW_VERSION="${{ github.ref_name }}"
+          else
+            echo "Cannot determine version. Aborting."
+            exit 1
+          fi
           CLEAN_VERSION="${RAW_VERSION#v}"
           TAG="v${CLEAN_VERSION}"
           echo "version=${CLEAN_VERSION}" >> $GITHUB_OUTPUT
@@ -190,3 +197,4 @@ jobs:
         run: |
           cd npm-package
           npm publish --provenance --access public
+          
