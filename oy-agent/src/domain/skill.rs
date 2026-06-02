@@ -30,10 +30,11 @@ fn parse_skill_frontmatter(content: &str) -> Option<(String, String)> {
     let mut description = None;
 
     for line in frontmatter.lines() {
+        let line = line.trim();
         if let Some(stripped) = line.strip_prefix("name:") {
-            name = Some(stripped.trim().to_string());
+            name = Some(stripped.trim().trim_matches(&['"', '\'']).to_string());
         } else if let Some(stripped) = line.strip_prefix("description:") {
-            description = Some(stripped.trim().to_string());
+            description = Some(stripped.trim().trim_matches(&['"', '\'']).to_string());
         }
     }
 
