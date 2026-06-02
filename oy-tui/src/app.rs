@@ -268,9 +268,15 @@ impl App {
                         || tc.function_name.eq("Edit")
                         || tc.function_name.eq("Write")
                     {
-                        tc.arguments.get("file_path").and_then(|v| v.as_str()).map(|s| s.to_string())
+                        tc.arguments
+                            .get("file_path")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
                     } else if tc.function_name.eq("Bash") {
-                        tc.arguments.get("command").and_then(|v| v.as_str()).map(|s| s.to_string())
+                        tc.arguments
+                            .get("command")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
                     } else {
                         None
                     },
