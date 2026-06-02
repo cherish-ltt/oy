@@ -4,7 +4,6 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };
-use serde_json::Value;
 use std::time::Instant;
 use unicode_width::UnicodeWidthStr;
 
@@ -911,7 +910,7 @@ fn render_table(accum: &TableAccum, theme: &Theme) -> Vec<Vec<Span<'static>>> {
     // Body rows
     for row in &accum.rows {
         let mut spans = vec![Span::styled("│", border_style)];
-        for i in 0..col_count {
+        for (i, _) in col_widths.iter().enumerate().take(col_count) {
             let align = accum.alignments[i];
             let text = row.get(i).map(|s| s.as_str()).unwrap_or("");
             let cell = fmt_cell(text, align, col_widths[i]);
