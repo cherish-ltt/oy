@@ -1,4 +1,5 @@
 use crate::AgentError;
+use crate::domain::skill::SkillSummary;
 use crate::domain::token_counter::TokenUsage;
 use oy_ai::{AiProvider, ChatMessage};
 use uuid::Uuid;
@@ -40,11 +41,13 @@ pub trait Agent: Send + Sync {
     fn get_system_prompt(&self, tools_description: &str) -> String;
     fn get_front_message(&self) -> Option<&ChatMessage>;
     fn get_back_message(&self) -> Option<&ChatMessage>;
+    fn set_skills(&mut self, _skills: Vec<SkillSummary>) {}
 }
 
 pub enum RequestAgent {
     Prompt(String),
     SetProvider(Box<dyn AiProvider>),
+    SetSkills(Vec<SkillSummary>),
 }
 
 pub enum ResponseAgent {

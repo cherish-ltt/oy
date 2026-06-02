@@ -20,6 +20,7 @@ pub enum CommandId {
     SetBaseUrl,
     SetApiKey,
     SetModel,
+    ReadClaudeSkills,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +83,11 @@ impl CommandRegistry {
                         name: "/model-name",
                         description: "Set model name",
                         id: CommandId::SetModel,
+                    },
+                    CommandItem {
+                        name: "/claude-skills",
+                        description: "Toggle reading ~/.claude/skills/ (default: on)",
+                        id: CommandId::ReadClaudeSkills,
                     },
                 ],
             },
@@ -255,13 +261,14 @@ mod tests {
     fn test_settings_has_children() {
         let reg = CommandRegistry::new();
         let settings = &reg.commands[1];
-        assert_eq!(settings.children.len(), 6);
+        assert_eq!(settings.children.len(), 7);
         assert_eq!(settings.children[0].name, "/theme");
         assert_eq!(settings.children[1].name, "/thinking");
         assert_eq!(settings.children[2].name, "/context");
         assert_eq!(settings.children[3].name, "/base-url");
         assert_eq!(settings.children[4].name, "/api-key");
         assert_eq!(settings.children[5].name, "/model-name");
+        assert_eq!(settings.children[6].name, "/claude-skills");
     }
 
     #[test]

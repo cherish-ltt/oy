@@ -72,7 +72,8 @@ impl Message {
                     lines.push(Line::from(Span::styled(
                         format!(
                             "[{:#?} - thinking] {}",
-                            chat_message.role, reasoning_content.trim_end()
+                            chat_message.role,
+                            reasoning_content.trim_end()
                         ),
                         role_style.add_modifier(Modifier::ITALIC),
                     )));

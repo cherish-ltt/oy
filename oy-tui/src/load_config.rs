@@ -21,6 +21,8 @@ pub struct GlobalTomlConfig {
     pub reasoning_effort: Option<String>,
     /// Maximum context capacity in tokens (e.g. 200000). Defaults to 200k if None.
     pub context_capacity: Option<u64>,
+    /// Whether to read skills from ~/.claude/skills/ (default: true if None)
+    pub read_claude_skills: Option<bool>,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -67,6 +69,9 @@ impl GlobalTomlConfig {
         }
         if self.context_capacity.is_some() {
             existing.context_capacity = self.context_capacity;
+        }
+        if self.read_claude_skills.is_some() {
+            existing.read_claude_skills = self.read_claude_skills;
         }
         let toml_string =
             toml::to_string(&existing).map_err(|e| format!("Failed to serialize config: {}", e))?;
