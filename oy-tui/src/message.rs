@@ -895,7 +895,7 @@ fn render_table(accum: &TableAccum, theme: &Theme) -> Vec<Vec<Span<'static>>> {
     }
 
     // Header-body separator:  ├───┼───┤
-    {
+    if !accum.headers.is_empty() {
         let sep = format!(
             "├{}┤",
             col_widths
