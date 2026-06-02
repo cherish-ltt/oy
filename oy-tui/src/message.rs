@@ -72,7 +72,7 @@ impl Message {
                     lines.push(Line::from(Span::styled(
                         format!(
                             "[{:#?} - thinking] {}",
-                            chat_message.role, reasoning_content
+                            chat_message.role, reasoning_content.trim_end()
                         ),
                         role_style.add_modifier(Modifier::ITALIC),
                     )));
@@ -121,6 +121,7 @@ impl Message {
                     }
                 } else {
                     if let Some(content) = &chat_message.content {
+                        let content = content.trim_end();
                         let prefix = format!("[{:#?}] ", chat_message.role);
                         let md_lines = Self::render_markdown(content, role_style, theme);
                         for (i, line) in md_lines.into_iter().enumerate() {
