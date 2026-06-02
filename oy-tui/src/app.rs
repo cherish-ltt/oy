@@ -268,9 +268,9 @@ impl App {
                         || tc.function_name.eq("Edit")
                         || tc.function_name.eq("Write")
                     {
-                        Some(tc.arguments["file_path"].to_string())
+                        tc.arguments.get("file_path").and_then(|v| v.as_str()).map(|s| s.to_string())
                     } else if tc.function_name.eq("Bash") {
-                        Some(tc.arguments["command"].to_string())
+                        tc.arguments.get("command").and_then(|v| v.as_str()).map(|s| s.to_string())
                     } else {
                         None
                     },
