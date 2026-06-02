@@ -13,7 +13,7 @@ use crate::{
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use oy_agent::{
-    Orchestrator, TokenUsage,
+    Orchestrator, SkillSummary, TokenUsage,
     agent::RequestAgent,
     format_token_count,
     infrastructure::{agents::main_agent::MainAgent, tools::ToolRegistry},
@@ -92,6 +92,8 @@ pub struct App {
     pub tick_counter: Cell<u64>,
     /// 累计token使用量
     pub token_usage: TokenUsage,
+    /// 已加载的技能列表
+    pub skills: Vec<SkillSummary>,
 }
 
 impl App {
@@ -107,9 +109,34 @@ impl App {
 
         let global_toml_config = GlobalTomlConfig::load();
 
+        // Load skills
+        let read_claude = global_toml_config
+            .as_ref()
+            .and_then(|c| c.read_claude_skills)
+            .unwrap_or(true);
+        let skills = oy_agent::domain::skill::discover_skills(read_claude);
+        if !skills.is_empty() {
+            let skill_names: Vec<String> = skills
+                .iter()
+                .map(|s| format!("{}/{}", s.folder_name, s.name))
+                .collect();
+            messages.push_back(Message::UiMessages(format!(
+                "[Available Skills] \n{}",
+                skill_names.join(", ")
+            )));
+        }
+
         let mut main_agent: Option<AgentManager> = None;
         if let Some(global_toml_config) = &global_toml_config {
             main_agent = Some(start_main_agent_background(global_toml_config).await);
+        }
+
+        // Pass skills to the agent
+        if let Some(ref agent_manager) = main_agent {
+            let _ = agent_manager
+                .request_sender
+                .send(RequestAgent::SetSkills(skills.clone()))
+                .await;
         }
 
         let events = if let Some(agent_manager) = &mut main_agent {
@@ -156,6 +183,7 @@ impl App {
             agent_status: Cell::new(Status::Pause),
             tick_counter: Cell::new(0),
             token_usage: TokenUsage::new(),
+            skills,
         }
     }
 
@@ -236,6 +264,22 @@ impl App {
             for tc in tool_calls {
                 self.messages.push_back(ToolCallMsg(ToolCallState {
                     function_name: tc.function_name.clone(),
+                    arguments: if tc.function_name.eq("Read")
+                        || tc.function_name.eq("Edit")
+                        || tc.function_name.eq("Write")
+                    {
+                        tc.arguments
+                            .get("file_path")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                    } else if tc.function_name.eq("Bash") {
+                        tc.arguments
+                            .get("command")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                    } else {
+                        None
+                    },
                     tool_call_id: tc.id.clone(),
                     result: None,
                     start_time: Instant::now(),
@@ -985,6 +1029,9 @@ impl App {
                             values: [String::new(), String::new(), String::new(), String::new()],
                         };
                     }
+                    Some(CommandId::ReadClaudeSkills) => {
+                        self.switch_claude_skills().await;
+                    }
                     Some(id)
                         if matches!(
                             id,
@@ -1108,6 +1155,7 @@ impl App {
             theme: Some(name.to_string()),
             reasoning_effort: None,
             context_capacity: None,
+            read_claude_skills: None,
         };
         let _ = config.save();
 
@@ -1128,6 +1176,7 @@ impl App {
             theme: None,
             reasoning_effort: Some(effort.to_string()),
             context_capacity: None,
+            read_claude_skills: None,
         };
         if let Err(e) = config.save() {
             self.messages
@@ -1174,6 +1223,7 @@ impl App {
             theme: None,
             reasoning_effort: None,
             context_capacity: Some(capacity),
+            read_claude_skills: None,
         };
         if let Err(e) = config.save() {
             self.messages
@@ -1219,6 +1269,7 @@ impl App {
             theme: None,
             reasoning_effort: None,
             context_capacity: None,
+            read_claude_skills: None,
         };
 
         // Preserve existing values from in-memory config
@@ -1286,6 +1337,7 @@ impl App {
             theme: None,
             reasoning_effort: None, // preserve existing
             context_capacity: ctx_val,
+            read_claude_skills: None,
         };
         if let Err(e) = config.save() {
             self.messages
@@ -1318,6 +1370,65 @@ impl App {
         if self.auto_scroll.get() {
             self.scroll_offset.set(u16::MAX);
         }
+    }
+
+    /// Toggle reading ~/.claude/skills/ on/off.
+    async fn switch_claude_skills(&mut self) {
+        let current = self
+            .global_toml_config
+            .as_ref()
+            .and_then(|c| c.read_claude_skills)
+            .unwrap_or(true);
+        let new_val = !current;
+
+        // Save to config
+        let config = GlobalTomlConfig {
+            base_url: None,
+            api_key: None,
+            model: None,
+            theme: None,
+            reasoning_effort: None,
+            context_capacity: None,
+            read_claude_skills: Some(new_val),
+        };
+        if let Err(e) = config.save() {
+            self.messages
+                .push_back(UiMessages(format!("Failed to save config: {}", e)));
+            if self.auto_scroll.get() {
+                self.scroll_offset.set(u16::MAX);
+            }
+            return;
+        }
+
+        // Update in-memory config
+        if let Some(ref mut global_config) = self.global_toml_config {
+            global_config.read_claude_skills = Some(new_val);
+        }
+
+        // Re-discover skills with new setting
+        let new_skills = oy_agent::domain::skill::discover_skills(new_val);
+        self.skills = new_skills.clone();
+
+        // Send updated skills to agent
+        if let Some(ref agent_manager) = self.main_agent {
+            let _ = agent_manager
+                .request_sender
+                .send(RequestAgent::SetSkills(new_skills))
+                .await;
+        }
+
+        let status = if new_val { "on" } else { "off" };
+        self.messages.push_back(UiMessages(format!(
+            "Reading ~/.claude/skills/ is now {}",
+            status
+        )));
+        if self.auto_scroll.get() {
+            self.scroll_offset.set(u16::MAX);
+        }
+
+        self.app_mode = AppMode::Normal;
+        self.input.clear();
+        self.cursor_pos = 0;
     }
 
     fn expand_paste_snippets(&mut self) {

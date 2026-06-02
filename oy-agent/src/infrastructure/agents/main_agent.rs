@@ -6,6 +6,7 @@ use uuid::Uuid;
 use crate::{
     Agent, AgentError,
     agent::{AgentCore, AgentEvent, AgentState, AgentStateTransition},
+    domain::skill::{SkillSummary, skills_to_prompt_fragment},
     infrastructure::persistence::save_session,
 };
 
@@ -56,6 +57,7 @@ pub struct MainAgent {
     agent_state: AgentState,
     messages: VecDeque<ChatMessage>,
     max_iterations: u32,
+    skills: Vec<SkillSummary>,
 }
 
 impl MainAgent {
@@ -64,6 +66,7 @@ impl MainAgent {
             agent_state: AgentState::Idle,
             messages: VecDeque::new(),
             max_iterations: max_iterations.unwrap_or(u32::MAX),
+            skills: Vec::new(),
         }
     }
 }
@@ -134,6 +137,10 @@ impl Agent for MainAgent {
             &format!("- current-Utc-time: {}", formatted),
         );
 
+        // Append available skills section
+        let skills_fragment = skills_to_prompt_fragment(&self.skills);
+        system_prompt.push_str(&skills_fragment);
+
         system_prompt
     }
 
@@ -153,6 +160,10 @@ impl Agent for MainAgent {
 
     fn get_back_message(&self) -> Option<&ChatMessage> {
         self.messages.back()
+    }
+
+    fn set_skills(&mut self, skills: Vec<SkillSummary>) {
+        self.skills = skills;
     }
 }
 

@@ -70,6 +70,10 @@ impl AgentLoop {
                         RequestAgent::SetProvider(ai_provider) => {
                             result = self.set_provider(ai_provider);
                         }
+                        RequestAgent::SetSkills(skills) => {
+                            self.agent.set_skills(skills);
+                            continue;
+                        }
                     },
                     None => break,
                 },
