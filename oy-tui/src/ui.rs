@@ -8,12 +8,76 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Paragraph, Widget, Wrap},
 };
+use unicode_width::UnicodeWidthChar;
 
 use crate::{
     app::{App, AppMode, visual_cursor_pos},
     command::CommandInfo,
     message::Status,
 };
+
+/// 使用与 `visual_cursor_pos` 一致的 word-wrap 算法将输入文本按宽度切割成行。
+/// 这样 ratatui 的 Paragraph 就不再需要 Wrap，光标位置与实际渲染完全对齐。
+fn wrap_input_text(input: &str, width: usize) -> Vec<String> {
+    if input.is_empty() || width == 0 {
+        return vec![input.to_string()];
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut current_line = String::new();
+    let mut col = 0u16;
+    let mut pending_ws: Vec<char> = Vec::new(); // 暂存的空白字符
+
+    for ch in input.chars() {
+        if ch == '\n' {
+            // 显式换行：先刷入暂存空白
+            for wc in pending_ws.drain(..) {
+                current_line.push(wc);
+            }
+            lines.push(std::mem::take(&mut current_line));
+            col = 0;
+            continue;
+        }
+
+        let w = UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
+
+        if ch.is_ascii_whitespace() && ch != '\n' {
+            // 空白字符：暂存起来，等待后面的非空白字符决定是否换行
+            if col + w > width as u16 {
+                // 空白在行末：丢弃空白并换行
+                lines.push(std::mem::take(&mut current_line));
+                pending_ws.clear();
+                col = 0;
+            } else {
+                col += w;
+                pending_ws.push(ch);
+            }
+        } else {
+            // 非空白字符
+            if col + w > width as u16 {
+                // 当前行放不下：丢弃暂存空白，换到新行
+                lines.push(std::mem::take(&mut current_line));
+                pending_ws.clear();
+                col = w;
+                current_line.push(ch);
+            } else {
+                // 先刷入暂存空白
+                for wc in pending_ws.drain(..) {
+                    current_line.push(wc);
+                }
+                col += w;
+                current_line.push(ch);
+            }
+        }
+    }
+    // 刷入末尾暂存的空白
+    for wc in pending_ws.drain(..) {
+        current_line.push(wc);
+    }
+    if !current_line.is_empty() || input.ends_with('\n') {
+        lines.push(current_line);
+    }
+    lines
+}
 
 impl Widget for &App {
     fn render(self, area: Rect, buf: &mut Buffer) {
@@ -158,8 +222,12 @@ impl Widget for &App {
         border_block.render(chunks[0], buf);
 
         // ── Input Area ──
-        let input_display = self.input.to_string();
+        let input_text = self.input.to_string();
         let input_text_width = chunks[1].width.saturating_sub(2) as usize;
+
+        // 手动换行，算法与 visual_cursor_pos 一致
+        let wrapped_lines = wrap_input_text(&input_text, input_text_width);
+        let wrapped_text = wrapped_lines.join("\n");
 
         let (cursor_visual_row, cursor_visual_col) =
             visual_cursor_pos(&self.input, self.cursor_pos, input_text_width);
@@ -183,7 +251,7 @@ impl Widget for &App {
                 "Input".to_string()
             };
 
-        let input_paragraph = Paragraph::new(input_display)
+        let input_paragraph = Paragraph::new(wrapped_text)
             .block(
                 Block::bordered()
                     .title(input_title)
@@ -191,7 +259,6 @@ impl Widget for &App {
                     .border_type(BorderType::Double)
                     .border_style(Style::default().fg(t.input_border)),
             )
-            .wrap(Wrap { trim: false })
             .scroll((input_scroll, 0))
             .style(Style::default().fg(t.surface_fg).bg(t.surface_bg));
 
