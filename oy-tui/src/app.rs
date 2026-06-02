@@ -236,6 +236,13 @@ impl App {
             for tc in tool_calls {
                 self.messages.push_back(ToolCallMsg(ToolCallState {
                     function_name: tc.function_name.clone(),
+                    arguments: if tc.function_name.eq("Read") || tc.function_name.eq("Edit") || tc.function_name.eq("Write") {
+                        Some(tc.arguments["file_path"].to_string())
+                    } else if tc.function_name.eq("Bash") {
+                        Some(tc.arguments["command"].to_string())
+                    }else{
+                        None
+                    },
                     tool_call_id: tc.id.clone(),
                     result: None,
                     start_time: Instant::now(),

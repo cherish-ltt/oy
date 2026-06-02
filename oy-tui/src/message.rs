@@ -1,9 +1,10 @@
 use oy_agent::oy_ai::{ChatMessage, Role};
-use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };
+use serde_json::Value;
 use std::time::Instant;
 use unicode_width::UnicodeWidthStr;
 
@@ -18,6 +19,7 @@ const MAX_EDIT_LINES: usize = 5;
 #[derive(Debug)]
 pub struct ToolCallState {
     pub function_name: String,
+    pub arguments: Option<String>,
     pub tool_call_id: String,
     pub result: Option<ChatMessage>,
     pub start_time: Instant,
@@ -31,6 +33,17 @@ pub enum Message {
     AgentMessages(ChatMessage, bool), // bool = expanded
     ToolCallMsg(ToolCallState),
     AgentStatus(Status),
+}
+
+/// Accumulates table cell data during markdown parsing.
+/// Used by `render_markdown` to buffer table content and then render it as a grid.
+struct TableAccum {
+    alignments: Vec<Alignment>,
+    headers: Vec<String>,
+    rows: Vec<Vec<String>>,
+    current_row: Vec<String>,
+    current_cell: String,
+    in_head: bool,
 }
 
 impl Message {
@@ -150,7 +163,7 @@ impl Message {
                 lines.push(Line::from(vec![
                     Span::styled("🔧 ", Style::default().fg(theme.accent)),
                     Span::styled(
-                        format!("工具调用 {} ", icon),
+                        format!("ToolCall {} ", icon),
                         Style::default().fg(theme.accent),
                     ),
                     Span::styled(
@@ -159,6 +172,21 @@ impl Message {
                             .fg(theme.warning)
                             .add_modifier(Modifier::BOLD),
                     ),
+                    if let Some(arguments) = &state.arguments {
+                        Span::styled(
+                            format!(": {}", arguments),
+                            Style::default()
+                                .fg(theme.subtle)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    } else {
+                        Span::styled(
+                            ": unknown arguments",
+                            Style::default()
+                                .fg(theme.subtle)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    },
                     Span::styled(
                         format!(" ({:.1}s)", duration),
                         Style::default().fg(theme.subtle),
@@ -606,6 +634,9 @@ impl Message {
         let mut style_stack: Vec<Style> = Vec::new();
         let mut in_code_block = false;
 
+        // Table accumulation state
+        let mut table_accum: Option<TableAccum> = None;
+
         fn current_style(base: Style, stack: &[Style]) -> Style {
             let mut s = base;
             for st in stack {
@@ -620,9 +651,66 @@ impl Message {
             }
         }
 
-        for event in Parser::new(text) {
+        for event in Parser::new_ext(text, Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH) {
+            // ── If inside a table, accumulate cell content only ──
+            if let Some(ref mut accum) = table_accum {
+                match event {
+                    Event::Start(Tag::TableHead) => {
+                        accum.in_head = true;
+                    }
+                    Event::Start(Tag::TableRow) => {
+                        accum.current_row.clear();
+                    }
+                    Event::Start(Tag::TableCell) => {
+                        accum.current_cell.clear();
+                    }
+                    Event::End(TagEnd::TableCell) => {
+                        accum
+                            .current_row
+                            .push(std::mem::take(&mut accum.current_cell));
+                    }
+                    Event::End(TagEnd::TableRow) => {
+                        let row = std::mem::take(&mut accum.current_row);
+                        if accum.in_head {
+                            accum.headers = row;
+                            accum.in_head = false;
+                        } else {
+                            accum.rows.push(row);
+                        }
+                    }
+                    Event::End(TagEnd::Table) => {
+                        let rendered = render_table(accum, theme);
+                        lines.extend(rendered);
+                        table_accum = None;
+                    }
+                    Event::Text(t) => {
+                        accum.current_cell.push_str(&t);
+                    }
+                    Event::Code(t) => {
+                        accum.current_cell.push_str(&t);
+                    }
+                    Event::SoftBreak | Event::HardBreak => {
+                        accum.current_cell.push(' ');
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+
+            // ── Normal (non-table) event handling ──
             match event {
                 Event::Start(tag) => match tag {
+                    Tag::Table(alignments) => {
+                        flush(&mut lines, &mut current);
+                        table_accum = Some(TableAccum {
+                            alignments,
+                            headers: Vec::new(),
+                            rows: Vec::new(),
+                            current_row: Vec::new(),
+                            current_cell: String::new(),
+                            in_head: false,
+                        });
+                    }
                     Tag::Paragraph => {}
                     Tag::Strong => {
                         style_stack.push(Style::default().add_modifier(Modifier::BOLD));
@@ -721,7 +809,159 @@ impl Message {
 
         flush(&mut lines, &mut current);
 
+        // Trim trailing whitespace/blank lines at the end of output
+        trim_trailing_lines(&mut lines);
+
         lines.into_iter().map(Line::from).collect()
+    }
+}
+
+/// Render a collected markdown table into styled lines with box-drawing characters.
+fn render_table(accum: &TableAccum, theme: &Theme) -> Vec<Vec<Span<'static>>> {
+    let mut out: Vec<Vec<Span<'static>>> = Vec::new();
+    let col_count = accum.alignments.len();
+    if col_count == 0 {
+        return out;
+    }
+
+    let border_style = Style::default().fg(theme.subtle);
+    let header_style = Style::default()
+        .fg(theme.surface_fg)
+        .add_modifier(Modifier::BOLD);
+    let cell_style = Style::default().fg(theme.surface_fg);
+
+    // Determine max content width per column (visual width of trimmed content)
+    let mut col_widths = vec![1usize; col_count];
+    for (i, h) in accum.headers.iter().enumerate() {
+        if i < col_count {
+            col_widths[i] = col_widths[i].max(UnicodeWidthStr::width(h.trim()));
+        }
+    }
+    for row in &accum.rows {
+        for (i, cell) in row.iter().enumerate() {
+            if i < col_count {
+                col_widths[i] = col_widths[i].max(UnicodeWidthStr::width(cell.trim()));
+            }
+        }
+    }
+
+    // Format cell content with alignment: returns a string of visual width `col_width + 2`
+    let fmt_cell = |content: &str, align: Alignment, width: usize| -> String {
+        let text = content.trim();
+        let text_w = UnicodeWidthStr::width(text);
+        let pad = width.saturating_sub(text_w);
+        let padded = match align {
+            Alignment::Left | Alignment::None => {
+                format!("{}{}", text, " ".repeat(pad))
+            }
+            Alignment::Right => {
+                format!("{}{}", " ".repeat(pad), text)
+            }
+            Alignment::Center => {
+                let l = pad / 2;
+                let r = pad - l;
+                format!("{}{}{}", " ".repeat(l), text, " ".repeat(r))
+            }
+        };
+        format!(" {} ", padded)
+    };
+
+    // Top border:  ┌───┬───┐
+    {
+        let top = format!(
+            "┌{}┐",
+            col_widths
+                .iter()
+                .map(|w| "─".repeat(w + 2))
+                .collect::<Vec<_>>()
+                .join("┬")
+        );
+        out.push(vec![Span::styled(top, border_style)]);
+    }
+
+    // Header row
+    if !accum.headers.is_empty() {
+        let mut spans = vec![Span::styled("│", border_style)];
+        for (i, h) in accum.headers.iter().enumerate() {
+            if i < col_count {
+                let align = accum.alignments[i];
+                let cell = fmt_cell(h, align, col_widths[i]);
+                spans.push(Span::styled(cell, header_style));
+                spans.push(Span::styled("│", border_style));
+            }
+        }
+        out.push(spans);
+    }
+
+    // Header-body separator:  ├───┼───┤
+    {
+        let sep = format!(
+            "├{}┤",
+            col_widths
+                .iter()
+                .map(|w| "─".repeat(w + 2))
+                .collect::<Vec<_>>()
+                .join("┼")
+        );
+        out.push(vec![Span::styled(sep, border_style)]);
+    }
+
+    // Body rows
+    for row in &accum.rows {
+        let mut spans = vec![Span::styled("│", border_style)];
+        for i in 0..col_count {
+            let align = accum.alignments[i];
+            let text = row.get(i).map(|s| s.as_str()).unwrap_or("");
+            let cell = fmt_cell(text, align, col_widths[i]);
+            spans.push(Span::styled(cell, cell_style));
+            spans.push(Span::styled("│", border_style));
+        }
+        out.push(spans);
+    }
+
+    // Bottom border:  └───┴───┘
+    {
+        let bottom = format!(
+            "└{}┘",
+            col_widths
+                .iter()
+                .map(|w| "─".repeat(w + 2))
+                .collect::<Vec<_>>()
+                .join("┴")
+        );
+        out.push(vec![Span::styled(bottom, border_style)]);
+    }
+
+    out
+}
+
+/// Remove trailing empty/whitespace-only lines and trailing whitespace from the last line.
+fn trim_trailing_lines(lines: &mut Vec<Vec<Span<'static>>>) {
+    // Remove trailing lines that are empty or contain only whitespace spans
+    while let Some(last) = lines.last() {
+        let all_blank = last.iter().all(|s| s.content.trim().is_empty());
+        if all_blank {
+            lines.pop();
+        } else {
+            break;
+        }
+    }
+
+    // Trim trailing whitespace from the last non-blank span
+    if let Some(last_line) = lines.last_mut() {
+        // Remove trailing spans that are pure whitespace
+        while let Some(last_span) = last_line.last() {
+            if last_span.content.trim().is_empty() {
+                last_line.pop();
+            } else {
+                break;
+            }
+        }
+        // Trim trailing whitespace from the last span's content
+        if let Some(last_span) = last_line.last_mut() {
+            let trimmed = last_span.content.trim_end().to_string();
+            last_span.content = std::borrow::Cow::Owned(trimmed);
+        }
     }
 }
 
@@ -780,6 +1020,7 @@ mod tests {
     fn test_message_bg_tool_call_message() {
         let state = ToolCallState {
             function_name: "Read".into(),
+            arguments: None,
             tool_call_id: "id".into(),
             result: None,
             start_time: Instant::now(),
@@ -814,6 +1055,7 @@ mod tests {
     fn test_tool_call_state_debug() {
         let state = ToolCallState {
             function_name: "Bash".into(),
+            arguments: None,
             tool_call_id: "c1".into(),
             result: None,
             start_time: Instant::now(),
