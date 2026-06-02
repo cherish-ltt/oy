@@ -107,6 +107,10 @@ pub fn discover_skills(read_claude: bool) -> Vec<SkillSummary> {
         }
     }
 
+    // Unify and remove duplicates, ensuring a definite order and avoiding repetitions (retain OY skills first).
+    skills.sort_by(|a, b| a.folder_name.cmp(&b.folder_name));
+    skills.dedup_by(|a, b| a.folder_name == b.folder_name);
+
     skills
 }
 
