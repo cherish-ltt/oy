@@ -1,23 +1,23 @@
 [package]
 name = "oy-code-cli"
-version = "0.4.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 description = "CLI entry point for oy"
-license = "MIT"
-repository = "https://github.com/cherish-ltt/oy"
+license.workspace = true
+repository.workspace = true
 
 [[bin]]
 name = "oy"
 path = "src/main.rs"
 
 [dependencies]
-oy-agent = { path = "../oy-agent", version = "0.4.0" }
-oy-ai = { path = "../oy-ai", version = "0.4.0" }
-oy-tui = { path = "../oy-tui", version = "0.4.0" }
-clap = { version = "4", features = ["derive"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-serde = { version = "1", features = ["derive"] }
-toml = "0.8"
-dirs = "6"
-anyhow = "1"
-color-eyre = "0.6.3"
+oy-agent.workspace = true
+oy-ai.workspace = true
+oy-tui.workspace = true
+clap.workspace = true
+tokio.workspace = true
+serde.workspace = true
+toml.workspace = true
+dirs.workspace = true
+anyhow.workspace = true
+color-eyre.workspace = true
