@@ -166,9 +166,7 @@ impl App {
         }
 
         // ── Normal agent start (no session or session load failed) ──
-        if !session_loaded
-            && let Some(global_toml_config) = &global_toml_config
-        {
+        if !session_loaded && let Some(global_toml_config) = &global_toml_config {
             main_agent = Some(start_main_agent_background(global_toml_config).await);
         }
 

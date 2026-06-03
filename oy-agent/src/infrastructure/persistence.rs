@@ -88,7 +88,7 @@ pub fn list_all_sessions() -> Result<Vec<SessionEntry>, AgentError> {
         })
         .collect();
 
-    entries_with_mtime.sort_by(|a, b| b.1.cmp(&a.1));
+    entries_with_mtime.sort_by_key(|b| std::cmp::Reverse(b.1));
     let entries: Vec<SessionEntry> = entries_with_mtime.into_iter().map(|(e, _)| e).collect();
 
     Ok(entries)
