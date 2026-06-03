@@ -271,6 +271,7 @@ impl Widget for &App {
                     .border_style(Style::default().fg(t.input_border)),
             )
             .scroll((input_scroll, 0))
+            .wrap(Wrap { trim: false })
             .style(Style::default().fg(t.surface_fg).bg(t.surface_bg));
 
         input_paragraph.render(chunks[1], buf);
