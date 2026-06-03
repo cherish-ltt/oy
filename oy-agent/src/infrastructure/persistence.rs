@@ -105,6 +105,9 @@ pub fn list_all_sessions() -> Result<Vec<SessionEntry>, AgentError> {
 
 /// Extract the first user message from a session file for preview purposes.
 /// Returns `None` if no user message is found.
+///
+/// The preview is flattened to a single line (newlines → spaces, whitespace collapsed)
+/// and truncated to ~60 characters.
 pub fn get_session_preview(path: &Path) -> Result<Option<String>, AgentError> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| AgentError::SessionPersistenceError(format!("Read error: {}", e)))?;
@@ -116,12 +119,15 @@ pub fn get_session_preview(path: &Path) -> Result<Option<String>, AgentError> {
         .find(|m| m.role == oy_ai::Role::User)
         .and_then(|m| m.content)
         .map(|c| {
-            // Truncate to ~60 chars for display
-            let trimmed: String = c.chars().collect::<Vec<_>>().into_iter().take(60).collect();
-            if c.chars().count() > 60 {
-                format!("{}...", trimmed)
+            // Flatten to single line: collapse all whitespace (newlines, tabs, spaces)
+            let joined: Vec<&str> = c.split_ascii_whitespace().collect();
+            let flat = joined.join(" ");
+            // Truncate to ~60 visible chars
+            let truncated: String = flat.chars().take(60).collect();
+            if flat.chars().count() > 60 {
+                format!("{}...", truncated.trim_end())
             } else {
-                trimmed
+                truncated
             }
         }))
 }

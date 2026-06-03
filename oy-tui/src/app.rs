@@ -212,6 +212,9 @@ impl App {
             })
             .unwrap_or(&LIGHT_THEME);
 
+        // Determine initial scroll offset: session loads should show latest messages
+        let initial_scroll_offset = if session_path.is_some() { u16::MAX } else { 0 };
+
         Self {
             running: true,
             messages,
@@ -220,7 +223,7 @@ impl App {
             cursor_x: Cell::new(0),
             cursor_y: Cell::new(0),
             input_width: Cell::new(0),
-            scroll_offset: Cell::new(0),
+            scroll_offset: Cell::new(initial_scroll_offset),
             auto_scroll: Cell::new(true),
             paste_snippets: HashMap::new(),
             paste_counter: 0,
