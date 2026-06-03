@@ -156,10 +156,10 @@ pub async fn run(args: CliArgs) -> Result<(), anyhow::Error> {
 // ── Update subcommand ──────────────────────────────────────────
 
 async fn run_update() -> Result<(), anyhow::Error> {
-    let timeout = Duration::from_secs(500);
+    let timeout = Duration::from_secs(300);
 
     // First attempt: default registry
-    println!("⏳ Running: npm install -g @ghyper9023/oy (timeout: 500s)...");
+    println!("⏳ Running: npm install -g @ghyper9023/oy (timeout: {}s)...",timeout.as_secs());
     match run_npm(&["install", "-g", "@ghyper9023/oy"], timeout).await {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
