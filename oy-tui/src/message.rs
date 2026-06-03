@@ -273,10 +273,9 @@ impl Message {
                 let label_style = Style::default().fg(theme.warning);
 
                 // Truncate prompt text: if longer than 80 chars, cut with "..."
-                let display_text = if text.len() > 80 {
-                // Truncate prompt text: if longer than 80 chars, cut with "..."
                 let display_text = if text.chars().count() > 80 {
-                    let cut = text.char_indices()
+                    let cut = text
+                        .char_indices()
                         .take(80)
                         .last()
                         .map(|(i, c)| i + c.len_utf8())

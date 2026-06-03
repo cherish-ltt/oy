@@ -65,7 +65,7 @@ impl Reactor {
         }
     }
 
-        pub(crate) async fn run(mut self) {
+    pub(crate) async fn run(mut self) {
         loop {
             tokio::select! {
                 // ── Request from TUI ──
