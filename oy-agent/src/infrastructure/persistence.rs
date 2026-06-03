@@ -77,16 +77,19 @@ pub fn list_all_sessions() -> Result<Vec<SessionEntry>, AgentError> {
         }
     }
 
-    // Sort by mtime descending (newest first)
-    entries.sort_by(|a, b| {
-        let m_a = std::fs::metadata(&a.path)
-            .and_then(|m| m.modified())
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-        let m_b = std::fs::metadata(&b.path)
-            .and_then(|m| m.modified())
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-        m_b.cmp(&m_a)
-    });
+    // Sort by mtime descending (newest first) — cache metadata to avoid O(N log N) disk I/O
+    let mut entries_with_mtime: Vec<(SessionEntry, std::time::SystemTime)> = entries
+        .into_iter()
+        .map(|entry| {
+            let mtime = std::fs::metadata(&entry.path)
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            (entry, mtime)
+        })
+        .collect();
+
+    entries_with_mtime.sort_by(|a, b| b.1.cmp(&a.1));
+    let entries: Vec<SessionEntry> = entries_with_mtime.into_iter().map(|(e, _)| e).collect();
 
     Ok(entries)
 }
