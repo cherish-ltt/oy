@@ -114,6 +114,7 @@ impl App {
         let skills = oy_agent::domain::skill::discover_skills(read_claude);
 
         let mut main_agent: Option<AgentManager> = None;
+        let mut session_loaded = false;
 
         // ── Session restore path ──
         if let Some(path) = &session_path {
@@ -142,6 +143,7 @@ impl App {
                     messages.push_back(Message::UiMessages(
                         "Session restored. Continue the conversation below.".to_string(),
                     ));
+                    session_loaded = true;
                 }
                 Err(e) => {
                     messages.push_back(Message::UiMessages(format!(
@@ -152,8 +154,8 @@ impl App {
             }
         }
 
-        // ── Fresh (non-session) path: add welcome tips ──
-        if session_path.is_none() {
+        // ── Fresh (session not loaded) path: add welcome tips ──
+        if !session_loaded {
             WELCOME_TIPS_VEC.iter().for_each(|tip| {
                 if tip.eq(&"OY") {
                     messages.push_back(Message::UiMessages(format!("{} {}", tip, VERSION)));
@@ -163,8 +165,8 @@ impl App {
             });
         }
 
-        // ── Normal agent start (no session) ──
-        if session_path.is_none()
+        // ── Normal agent start (no session or session load failed) ──
+        if !session_loaded
             && let Some(global_toml_config) = &global_toml_config
         {
             main_agent = Some(start_main_agent_background(global_toml_config).await);
@@ -213,7 +215,7 @@ impl App {
             .unwrap_or(&LIGHT_THEME);
 
         // Determine initial scroll offset: session loads should show latest messages
-        let initial_scroll_offset = if session_path.is_some() { u16::MAX } else { 0 };
+        let initial_scroll_offset = if session_loaded { u16::MAX } else { 0 };
 
         Self {
             running: true,
