@@ -6,6 +6,7 @@ use oy_agent::TokenUsage;
 use oy_agent::{agent::ResponseAgent, oy_ai::ChatMessage};
 use std::time::Duration;
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 const TICK_FPS: f64 = 30.0;
 
@@ -24,6 +25,8 @@ pub enum AppEvent {
     AgentError(String),
     Pause,
     Running,
+    PromptConsumed { id: Uuid },
+    PromptQueued { id: Uuid },
 }
 
 #[derive(Debug)]
@@ -120,6 +123,8 @@ impl EventTask {
                                 ResponseAgent::ChatMessage(chat_message) => self.send(Event::App(AppEvent::ChatMessage(chat_message))),
                                 ResponseAgent::TokenUsage(token_usage) => self.send(Event::App(AppEvent::TokenUsage(token_usage))),
                                 ResponseAgent::AgentError(agent_error) => self.send(Event::App(AppEvent::AgentError(agent_error.to_string()))),
+                                ResponseAgent::PromptConsumed { id } => self.send(Event::App(AppEvent::PromptConsumed { id })),
+                                ResponseAgent::PromptQueued { id } => self.send(Event::App(AppEvent::PromptQueued { id })),
                             }
                         }
                         None => {

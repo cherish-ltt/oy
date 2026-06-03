@@ -8,33 +8,36 @@ use uuid::Uuid;
 
 use crate::{
     AgentError,
-    agent::{AgentCore, AgentEvent, RequestAgent, ResponseAgent},
+    agent::{AgentCore, AgentEvent, AgentState, ResponseAgent},
     domain::token_counter::{TokenUsage, count_input_side_tokens, count_output_side_tokens},
     infrastructure::tools::ToolRegistry,
 };
 
-pub mod main_agent;
+use self::reactor::{WorkerCommand, WorkerEvent};
 
-pub(crate) struct AgentLoop {
+pub mod main_agent;
+pub mod reactor;
+
+pub(crate) struct Worker {
     uuid: Uuid,
     agent: Box<dyn AgentCore>,
     provider: Box<dyn AiProvider + Send + Sync>,
     tool_registry: ToolRegistry,
     current_iterations: u32,
     tool_tasks: Option<FuturesUnordered<JoinHandle<ChatMessage>>>,
-    request_rx: Receiver<RequestAgent>,
-    response_tx: Sender<ResponseAgent>,
+    cmd_rx: Receiver<WorkerCommand>,
+    event_tx: Sender<WorkerEvent>,
     /// Cumulative token usage across the entire session
     token_usage: TokenUsage,
 }
 
-impl AgentLoop {
+impl Worker {
     pub(crate) fn new(
         agent: impl AgentCore + 'static,
         provider: impl AiProvider + 'static,
         tool_registry: ToolRegistry,
-        request_rx: Receiver<RequestAgent>,
-        response_tx: Sender<ResponseAgent>,
+        cmd_rx: Receiver<WorkerCommand>,
+        event_tx: Sender<WorkerEvent>,
     ) -> Self {
         let uuid = Uuid::now_v7();
         Self {
@@ -44,10 +47,22 @@ impl AgentLoop {
             current_iterations: 0,
             tool_registry,
             tool_tasks: None,
-            request_rx,
-            response_tx,
+            cmd_rx,
+            event_tx,
             token_usage: TokenUsage::new(),
         }
+    }
+
+    fn send_event(&self, event: WorkerEvent) {
+        let _ = self.event_tx.try_send(event);
+    }
+
+    async fn send_event_async(&self, event: WorkerEvent) {
+        let _ = self.event_tx.send(event).await;
+    }
+
+    fn notify_state(&self, state: AgentState) {
+        self.send_event(WorkerEvent::StateChanged(state));
     }
 
     pub(crate) fn set_provider(
@@ -62,25 +77,34 @@ impl AgentLoop {
         let mut result;
         loop {
             match self.agent.current_state() {
-                crate::agent::AgentState::Idle => match self.request_rx.recv().await {
-                    Some(request) => match request {
-                        RequestAgent::Prompt(prompt) => {
-                            result = self.assembly_prompts(&prompt).await;
+                AgentState::Idle => match self.cmd_rx.recv().await {
+                    Some(cmd) => match cmd {
+                        WorkerCommand::Prompt { text, .. } => {
+                            result = self.assembly_prompts(&text).await;
                         }
-                        RequestAgent::SetProvider(ai_provider) => {
+                        WorkerCommand::FlushEnterQueue(requests) => {
+                            // Inject all queued Enter prompts and trigger Thinking
+                            let mut last_result = Ok(AgentEvent::Start);
+                            for pr in &requests {
+                                last_result = self.assembly_prompts(&pr.text).await;
+                            }
+                            result = last_result;
+                            // Fall through to state transition (Idle + Start → Thinking)
+                        }
+                        WorkerCommand::SetProvider(ai_provider) => {
                             result = self.set_provider(ai_provider);
                         }
-                        RequestAgent::SetSkills(skills) => {
+                        WorkerCommand::SetSkills(skills) => {
                             self.agent.set_skills(skills);
                             continue;
                         }
                     },
                     None => break,
                 },
-                crate::agent::AgentState::Thinking => result = self.thinking().await,
-                crate::agent::AgentState::Acting => result = self.acting().await,
-                crate::agent::AgentState::ToolCall => result = self.tool_call().await,
-                crate::agent::AgentState::Observing => result = self.observing().await,
+                AgentState::Thinking => result = self.thinking().await,
+                AgentState::Acting => result = self.acting().await,
+                AgentState::ToolCall => result = self.tool_call().await,
+                AgentState::Observing => result = self.observing().await,
             }
 
             match result {
@@ -88,7 +112,12 @@ impl AgentLoop {
                     if let Some(agent_state) =
                         self.agent.next_state(self.agent.current_state(), &event)
                     {
+                        let old_state = self.agent.current_state().clone();
                         self.agent.set_state(agent_state);
+                        let new_state = self.agent.current_state();
+                        if *new_state != old_state {
+                            self.notify_state(new_state.clone());
+                        }
                     }
                 }
                 Err(e) => {
@@ -96,7 +125,12 @@ impl AgentLoop {
                         .agent
                         .next_state(self.agent.current_state(), &self.handle_error(e).await)
                     {
+                        let old_state = self.agent.current_state().clone();
                         self.agent.set_state(agent_state);
+                        let new_state = self.agent.current_state();
+                        if *new_state != old_state {
+                            self.notify_state(new_state.clone());
+                        }
                     }
                 }
             }
@@ -104,11 +138,8 @@ impl AgentLoop {
     }
 
     async fn handle_error(&self, error: AgentError) -> AgentEvent {
-        let _ = self
-            .response_tx
-            .send(ResponseAgent::AgentError(error))
+        self.send_event_async(WorkerEvent::Response(ResponseAgent::AgentError(error)))
             .await;
-
         AgentEvent::Error
     }
 
@@ -124,16 +155,17 @@ impl AgentLoop {
         }
         self.agent
             .push_message_back(self.uuid, ChatMessage::user(prompt.clone()))?;
-        let _ = self
-            .response_tx
-            .send(ResponseAgent::ChatMessage(ChatMessage::user(prompt)))
-            .await;
+        self.send_event_async(WorkerEvent::Response(ResponseAgent::ChatMessage(
+            ChatMessage::user(prompt),
+        )))
+        .await;
 
         Ok(AgentEvent::Start)
     }
 
     async fn thinking(&mut self) -> Result<AgentEvent, AgentError> {
-        let _ = self.response_tx.send(ResponseAgent::Running).await;
+        self.send_event_async(WorkerEvent::Response(ResponseAgent::Running))
+            .await;
 
         let response = self
             .provider
@@ -150,14 +182,12 @@ impl AgentLoop {
             self.token_usage.input_tokens + self.token_usage.output_tokens;
 
         // Send updated token usage to the UI
-        let _ = self
-            .response_tx
-            .send(ResponseAgent::TokenUsage(self.token_usage))
-            .await;
+        self.send_event_async(WorkerEvent::Response(ResponseAgent::TokenUsage(
+            self.token_usage,
+        )))
+        .await;
 
-        let _ = self
-            .response_tx
-            .send(ResponseAgent::ChatMessage(response))
+        self.send_event_async(WorkerEvent::Response(ResponseAgent::ChatMessage(response)))
             .await;
 
         self.current_iterations += 1;
@@ -227,10 +257,10 @@ impl AgentLoop {
                     Ok(chat_message) => {
                         self.agent
                             .push_message_back(self.uuid, chat_message.clone())?;
-                        let _ = self
-                            .response_tx
-                            .send(ResponseAgent::ChatMessage(chat_message))
-                            .await;
+                        self.send_event_async(WorkerEvent::Response(ResponseAgent::ChatMessage(
+                            chat_message,
+                        )))
+                        .await;
                     }
                     Err(_e) => {}
                 }
@@ -244,7 +274,8 @@ impl AgentLoop {
         if self.tool_tasks.is_some() {
             self.tool_tasks = None;
         }
-        let _ = self.response_tx.send(ResponseAgent::Pause).await;
+        self.send_event_async(WorkerEvent::Response(ResponseAgent::Pause))
+            .await;
 
         Ok(AgentEvent::Reset)
     }

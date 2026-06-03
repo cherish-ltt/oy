@@ -14,7 +14,7 @@ use crate::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use oy_agent::{
     Orchestrator, SkillSummary, TokenUsage,
-    agent::RequestAgent,
+    agent::{PromptKind, RequestAgent},
     format_token_count,
     infrastructure::{agents::main_agent::MainAgent, tools::ToolRegistry},
     oy_ai::OpenCodeGoProvider,
@@ -25,6 +25,7 @@ use std::{
     collections::{HashMap, VecDeque},
     time::Instant,
 };
+use uuid::Uuid;
 
 const MAX_POPUP_ROWS: usize = 4;
 
@@ -94,6 +95,8 @@ pub struct App {
     pub token_usage: TokenUsage,
     /// 已加载的技能列表
     pub skills: Vec<SkillSummary>,
+    /// 等待被 Agent 消费的 Prompt IDs
+    pub pending_prompts: Vec<Uuid>,
 }
 
 impl App {
@@ -184,6 +187,7 @@ impl App {
             tick_counter: Cell::new(0),
             token_usage: TokenUsage::new(),
             skills,
+            pending_prompts: Vec::new(),
         }
     }
 
@@ -239,6 +243,27 @@ impl App {
                     }
                     AppEvent::Running => {
                         self.agent_status.set(Status::Running);
+                    }
+                    AppEvent::PromptConsumed { id } => {
+                        self.pending_prompts.retain(|x| *x != id);
+                        // Remove the queuing message from the UI
+                        self.messages.retain(|msg| match msg {
+                            Message::PromptQueued(queued_id) => *queued_id != id,
+                            _ => true,
+                        });
+                        if self.auto_scroll.get() {
+                            self.scroll_offset.set(u16::MAX);
+                        }
+                    }
+                    AppEvent::PromptQueued { id } => {
+                        // Ensure the queuing message is in the UI
+                        if !self.pending_prompts.iter().any(|x| *x == id) {
+                            self.pending_prompts.push(id);
+                            self.messages.push_back(Message::PromptQueued(id));
+                            if self.auto_scroll.get() {
+                                self.scroll_offset.set(u16::MAX);
+                            }
+                        }
                     }
                 },
             }
@@ -369,14 +394,31 @@ impl App {
                 self.paste_counter = 0;
                 self.scroll_offset.set(u16::MAX);
 
+                // Determine prompt kind: Alt+Enter = AltEnter, Enter = Enter
+                let kind = if key_event.modifiers == KeyModifiers::ALT {
+                    PromptKind::AltEnter
+                } else {
+                    PromptKind::Enter
+                };
+
                 // Check for slash commands
                 if input.starts_with('/') {
                     self.execute_command(&input).await;
                 } else if let Some(main_agent) = &self.main_agent {
+                    let id = Uuid::now_v7();
                     let _ = main_agent
                         .request_sender
-                        .send(RequestAgent::Prompt(input))
+                        .send(RequestAgent::Prompt {
+                            text: input,
+                            id,
+                            kind,
+                        })
                         .await;
+                    self.pending_prompts.push(id);
+                    self.messages.push_back(Message::PromptQueued(id));
+                    if self.auto_scroll.get() {
+                        self.scroll_offset.set(u16::MAX);
+                    }
                 } else {
                     self.messages.push_back(UiMessages(
                         "Agent not initialized. Please use /model to configure your API key and model first.".to_string()

@@ -32,6 +32,7 @@ pub enum Message {
     AgentMessages(ChatMessage, bool), // bool = expanded
     ToolCallMsg(ToolCallState),
     AgentStatus(Status),
+    PromptQueued(uuid::Uuid), // 排队中的 prompt
 }
 
 /// Accumulates table cell data during markdown parsing.
@@ -263,6 +264,10 @@ impl Message {
                     Style::default().fg(theme.success).bold(),
                 ))],
             },
+            Message::PromptQueued(_id) => vec![Line::from(Span::styled(
+                "⏳ Prompt queuing...",
+                Style::default().fg(theme.warning).italic(),
+            ))],
         }
     }
 
@@ -484,6 +489,7 @@ impl Message {
                 Role::System => theme.surface_bg,
             },
             Message::ToolCallMsg(_) => theme.tool_bg,
+            Message::PromptQueued(_) => theme.surface_bg,
         }
     }
 
@@ -544,6 +550,7 @@ impl Message {
                 count.max(1)
             }
             Message::AgentStatus(_) => 1,
+            Message::PromptQueued(_) => 1,
         }
     }
 
