@@ -268,4 +268,263 @@ mod tests {
             }
         }
     }
+
+    // ── get_session_preview tests ──────────────────────────────
+
+    #[test]
+    fn test_get_session_preview_finds_first_user() {
+        let dir = test_dir("preview_first_user");
+        let uuid = Uuid::now_v7();
+        let msgs = vec![
+            ChatMessage::system("system prompt"),
+            ChatMessage::user("hello world"),
+            ChatMessage::assistant(Some("response".into()), None, None),
+        ];
+        let refs: Vec<&ChatMessage> = msgs.iter().collect();
+        let path = save_session(uuid, refs, &dir).unwrap();
+        let preview = get_session_preview(Path::new(&path)).unwrap();
+        assert_eq!(preview, Some("hello world".to_string()));
+        if let Some(p) = Path::new(&path).parent() {
+            let _ = std::fs::remove_dir_all(p);
+        }
+    }
+
+    #[test]
+    fn test_get_session_preview_skips_system_and_picks_first_user() {
+        let dir = test_dir("preview_skip_system");
+        let uuid = Uuid::now_v7();
+        // Multiple system messages before the first user message
+        let msgs = vec![
+            ChatMessage::system("system 1"),
+            ChatMessage::system("system 2"),
+            ChatMessage::user("actual prompt"),
+        ];
+        let refs: Vec<&ChatMessage> = msgs.iter().collect();
+        let path = save_session(uuid, refs, &dir).unwrap();
+        let preview = get_session_preview(Path::new(&path)).unwrap();
+        assert_eq!(preview, Some("actual prompt".to_string()));
+        if let Some(p) = Path::new(&path).parent() {
+            let _ = std::fs::remove_dir_all(p);
+        }
+    }
+
+    #[test]
+    fn test_get_session_preview_flattens_newlines_and_tabs() {
+        let dir = test_dir("preview_flatten");
+        let uuid = Uuid::now_v7();
+        let msg = ChatMessage::user("需求:\n添加一个oy -session命令\n\t用于加载session文件");
+        let refs = vec![&msg];
+        let path = save_session(uuid, refs, &dir).unwrap();
+        let preview = get_session_preview(Path::new(&path)).unwrap();
+        assert_eq!(
+            preview,
+            Some("需求: 添加一个oy -session命令 用于加载session文件".to_string())
+        );
+        if let Some(p) = Path::new(&path).parent() {
+            let _ = std::fs::remove_dir_all(p);
+        }
+    }
+
+    #[test]
+    fn test_get_session_preview_collapses_consecutive_whitespace() {
+        let dir = test_dir("preview_collapse");
+        let uuid = Uuid::now_v7();
+        let msg = ChatMessage::user("hello    world\n\n\nmulti   \n  spaced");
+        let refs = vec![&msg];
+        let path = save_session(uuid, refs, &dir).unwrap();
+        let preview = get_session_preview(Path::new(&path)).unwrap();
+        assert_eq!(preview, Some("hello world multi spaced".to_string()));
+        if let Some(p) = Path::new(&path).parent() {
+            let _ = std::fs::remove_dir_all(p);
+        }
+    }
+
+    #[test]
+    fn test_get_session_preview_truncates_long_message() {
+        let dir = test_dir("preview_truncate");
+        let uuid = Uuid::now_v7();
+        let long_body = "a".repeat(100);
+        let msg = ChatMessage::user(&long_body);
+        let refs = vec![&msg];
+        let path = save_session(uuid, refs, &dir).unwrap();
+        let preview = get_session_preview(Path::new(&path)).unwrap();
+        assert!(preview.is_some());
+        let preview = preview.unwrap();
+        // Should be 60 chars + "..." = 63
+        assert_eq!(preview.chars().count(), 63, "expected 63 chars (60 + ...)");
+        assert!(preview.ends_with("..."), "preview should end with ...");
+        assert_eq!(
+            &preview[..60],
+            "a".repeat(60),
+            "first 60 chars should be 'a'"
+        );
+        if let Some(p) = Path::new(&path).parent() {
+            let _ = std::fs::remove_dir_all(p);
+        }
+    }
+
+    #[test]
+    fn test_get_session_preview_exactly_60_chars_no_ellipsis() {
+        let dir = test_dir("preview_exact_60");
+        let uuid = Uuid::now_v7();
+        let body = "b".repeat(60);
+        let msg = ChatMessage::user(&body);
+        let refs = vec![&msg];
+        let path = save_session(uuid, refs, &dir).unwrap();
+        let preview = get_session_preview(Path::new(&path)).unwrap();
+        assert_eq!(preview, Some("b".repeat(60)));
+        assert!(!preview.unwrap().ends_with("..."));
+        if let Some(p) = Path::new(&path).parent() {
+            let _ = std::fs::remove_dir_all(p);
+        }
+    }
+
+    #[test]
+    fn test_get_session_preview_no_user_message_returns_none() {
+        let dir = test_dir("preview_no_user");
+        let uuid = Uuid::now_v7();
+        let msgs = vec![
+            ChatMessage::system("system"),
+            ChatMessage::assistant(Some("response".into()), None, None),
+            ChatMessage::tool("result", "call_1".into(), Some("Read".into()), None),
+        ];
+        let refs: Vec<&ChatMessage> = msgs.iter().collect();
+        let path = save_session(uuid, refs, &dir).unwrap();
+        let preview = get_session_preview(Path::new(&path)).unwrap();
+        assert_eq!(preview, None);
+        if let Some(p) = Path::new(&path).parent() {
+            let _ = std::fs::remove_dir_all(p);
+        }
+    }
+
+    #[test]
+    fn test_get_session_preview_only_has_tool_and_assistant() {
+        let dir = test_dir("preview_only_tool");
+        let uuid = Uuid::now_v7();
+        let msgs = vec![
+            ChatMessage::assistant(Some("thinking...".into()), None, None),
+            ChatMessage::tool("output", "c1".into(), Some("Bash".into()), None),
+        ];
+        let refs: Vec<&ChatMessage> = msgs.iter().collect();
+        let path = save_session(uuid, refs, &dir).unwrap();
+        let preview = get_session_preview(Path::new(&path)).unwrap();
+        assert_eq!(preview, None);
+        if let Some(p) = Path::new(&path).parent() {
+            let _ = std::fs::remove_dir_all(p);
+        }
+    }
+
+    #[test]
+    fn test_get_session_preview_empty_user_message() {
+        let dir = test_dir("preview_empty_user");
+        let uuid = Uuid::now_v7();
+        let msg = ChatMessage::user("");
+        let refs = vec![&msg];
+        let path = save_session(uuid, refs, &dir).unwrap();
+        let preview = get_session_preview(Path::new(&path)).unwrap();
+        assert_eq!(preview, Some(String::new()));
+        if let Some(p) = Path::new(&path).parent() {
+            let _ = std::fs::remove_dir_all(p);
+        }
+    }
+
+    // ── load_session_messages tests ────────────────────────────
+
+    #[test]
+    fn test_load_session_messages_roundtrip() {
+        let dir = test_dir("load_msgs_roundtrip");
+        let uuid = Uuid::now_v7();
+        let msgs = vec![
+            ChatMessage::system("system prompt"),
+            ChatMessage::user("hello"),
+            ChatMessage::assistant(Some("world".into()), None, None),
+        ];
+        let refs: Vec<&ChatMessage> = msgs.iter().collect();
+        let path = save_session(uuid, refs, &dir).unwrap();
+        let (loaded_uuid, loaded_msgs) = load_session_messages(Path::new(&path)).unwrap();
+        assert_eq!(loaded_uuid, uuid);
+        assert_eq!(loaded_msgs.len(), 3);
+        assert_eq!(loaded_msgs[0].role, oy_ai::Role::System);
+        assert_eq!(loaded_msgs[0].content.as_deref(), Some("system prompt"));
+        assert_eq!(loaded_msgs[1].role, oy_ai::Role::User);
+        assert_eq!(loaded_msgs[1].content.as_deref(), Some("hello"));
+        assert_eq!(loaded_msgs[2].role, oy_ai::Role::Assistant);
+        if let Some(p) = Path::new(&path).parent() {
+            let _ = std::fs::remove_dir_all(p);
+        }
+    }
+
+    #[test]
+    fn test_load_session_messages_preserves_tool_calls() {
+        let dir = test_dir("load_msgs_tool_calls");
+        let uuid = Uuid::now_v7();
+        use oy_ai::ToolCall;
+        let tool_call = ToolCall {
+            id: "call_1".into(),
+            function_name: "Read".into(),
+            arguments: serde_json::json!({"file_path": "/tmp/x.txt"}),
+        };
+        let msgs = vec![
+            ChatMessage::user("read a file"),
+            ChatMessage::assistant(None, None, Some(vec![tool_call])),
+            ChatMessage::tool("content", "call_1".into(), Some("Read".into()), None),
+        ];
+        let refs: Vec<&ChatMessage> = msgs.iter().collect();
+        let path = save_session(uuid, refs, &dir).unwrap();
+        let (_, loaded_msgs) = load_session_messages(Path::new(&path)).unwrap();
+        assert_eq!(loaded_msgs.len(), 3);
+        let assistant = &loaded_msgs[1];
+        assert_eq!(assistant.role, oy_ai::Role::Assistant);
+        assert!(assistant.tool_calls.is_some());
+        assert_eq!(assistant.tool_calls.as_ref().unwrap().len(), 1);
+        assert_eq!(
+            assistant.tool_calls.as_ref().unwrap()[0].function_name,
+            "Read"
+        );
+        let tool_result = &loaded_msgs[2];
+        assert_eq!(tool_result.role, oy_ai::Role::Tool);
+        assert_eq!(tool_result.tool_call_id.as_deref(), Some("call_1"));
+        if let Some(p) = Path::new(&path).parent() {
+            let _ = std::fs::remove_dir_all(p);
+        }
+    }
+
+    #[test]
+    fn test_load_session_messages_nonexistent_path() {
+        let path = Path::new("/tmp/_oy_test_nonexistent_session_file.json");
+        let result = load_session_messages(path);
+        assert!(matches!(result, Err(AgentError::PathIsNotFile(_))));
+    }
+
+    #[test]
+    fn test_load_session_messages_invalid_json() {
+        let dir = test_dir("load_msgs_invalid_json");
+        let uuid = Uuid::now_v7();
+        // Write invalid JSON to a session file path
+        let home = dirs::home_dir().unwrap();
+        let session_dir = home.join(".oy-ai-agent").join("sessions").join(&dir);
+        std::fs::create_dir_all(&session_dir).unwrap();
+        let file_path = session_dir.join(format!("{}.json", uuid));
+        std::fs::write(&file_path, "not valid json {").unwrap();
+        let result = load_session_messages(&file_path);
+        assert!(matches!(
+            result,
+            Err(AgentError::SessionPersistenceError(_))
+        ));
+        let _ = std::fs::remove_dir_all(&session_dir);
+    }
+
+    #[test]
+    fn test_load_session_messages_empty_array() {
+        let dir = test_dir("load_msgs_empty");
+        let uuid = Uuid::now_v7();
+        let refs: Vec<&ChatMessage> = vec![];
+        let path = save_session(uuid, refs, &dir).unwrap();
+        let (loaded_uuid, loaded_msgs) = load_session_messages(Path::new(&path)).unwrap();
+        assert_eq!(loaded_uuid, uuid);
+        assert!(loaded_msgs.is_empty());
+        if let Some(p) = Path::new(&path).parent() {
+            let _ = std::fs::remove_dir_all(p);
+        }
+    }
 }

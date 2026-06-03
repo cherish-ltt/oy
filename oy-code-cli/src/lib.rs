@@ -9,7 +9,7 @@ use oy_agent::infrastructure::tools::{ToolRegistry, bash::BashTool};
 use oy_ai::AiConfig;
 use serde::Deserialize;
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::process::Command;
 
@@ -310,7 +310,7 @@ async fn run_restore_session() -> Result<(), anyhow::Error> {
 
 // ── Load session by path ───────────────────────────────────────
 
-async fn run_session_path(path: &PathBuf) -> Result<(), anyhow::Error> {
+async fn run_session_path(path: &Path) -> Result<(), anyhow::Error> {
     if !path.exists() {
         eprintln!("❌ Session file not found: {}", path.display());
         std::process::exit(1);
@@ -324,7 +324,7 @@ async fn run_session_path(path: &PathBuf) -> Result<(), anyhow::Error> {
     match oy_agent::infrastructure::persistence::load_session_messages(path) {
         Ok((uuid, _msgs)) => {
             eprintln!("📂 Loading session: {} ({})", uuid, path.display());
-            oy_tui::run_tui(Some(path.clone()))
+            oy_tui::run_tui(Some(path.to_path_buf()))
                 .await
                 .map_err(|e| anyhow::Error::msg(format!("{}", e)))?;
             Ok(())
