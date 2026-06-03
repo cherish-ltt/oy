@@ -17,24 +17,12 @@ pub struct SessionEntry {
 }
 
 /// Find the most recent session across all project directories.
+///
+/// Relies on `list_all_sessions()` which already returns results sorted
+/// by modification time (newest first).
 pub fn find_latest_session() -> Result<Option<SessionEntry>, AgentError> {
-    let mut all = list_all_sessions()?;
-    if all.is_empty() {
-        return Ok(None);
-    }
-    // UUID v7 is time-sorted: newest uuid = highest timestamp bits.
-    // But we trust the file-system mtime as the definitive "last used" order.
-    // Use mtime descending — the most recently modified file is latest.
-    all.sort_by(|a, b| {
-        let m_a = std::fs::metadata(&a.path)
-            .and_then(|m| m.modified())
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-        let m_b = std::fs::metadata(&b.path)
-            .and_then(|m| m.modified())
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-        m_b.cmp(&m_a)
-    });
-    Ok(Some(all.remove(0)))
+    let all = list_all_sessions()?;
+    Ok(all.into_iter().next())
 }
 
 /// List all session files across all project directories,
