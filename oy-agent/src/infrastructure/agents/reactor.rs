@@ -65,18 +65,23 @@ impl Reactor {
         }
     }
 
-    pub(crate) async fn run(mut self) {
+        pub(crate) async fn run(mut self) {
         loop {
             tokio::select! {
                 // ── Request from TUI ──
-                Some(request) = self.request_rx.recv() => {
-                    self.handle_request(request).await;
+                res = self.request_rx.recv() => {
+                    match res {
+                        Some(request) => self.handle_request(request).await,
+                        None => break,
+                    }
                 }
                 // ── Event from Worker ──
-                Some(event) = self.worker_event_rx.recv() => {
-                    self.handle_worker_event(event).await;
+                res = self.worker_event_rx.recv() => {
+                    match res {
+                        Some(event) => self.handle_worker_event(event).await,
+                        None => break,
+                    }
                 }
-                else => break,
             }
         }
     }
