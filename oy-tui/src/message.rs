@@ -32,10 +32,7 @@ pub enum Message {
     AgentMessages(ChatMessage, bool), // bool = expanded
     ToolCallMsg(ToolCallState),
     AgentStatus(Status),
-    PromptQueued {
-        id: uuid::Uuid,
-        text: String,
-    }, // 排队中的 prompt
+    PromptQueued { id: uuid::Uuid, text: String }, // 排队中的 prompt
 }
 
 /// Accumulates table cell data during markdown parsing.
@@ -277,7 +274,8 @@ impl Message {
 
                 // Truncate prompt text: if longer than 80 chars, cut with "..."
                 let display_text = if text.len() > 80 {
-                    let cut = text.char_indices()
+                    let cut = text
+                        .char_indices()
                         .take(80)
                         .last()
                         .map(|(i, c)| i + c.len_utf8())

@@ -308,7 +308,7 @@ impl Worker {
                 }
                 Ok(WorkerCommand::FlushEnterQueue(requests)) => {
                     for pr in &requests {
-                        if let Err(_) = self.inject_user_message(&pr.text).await {
+                        if self.inject_user_message(&pr.text).await.is_err() {
                             break;
                         }
                     }

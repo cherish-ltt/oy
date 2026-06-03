@@ -248,9 +248,7 @@ impl App {
                         self.pending_prompts.retain(|x| *x != id);
                         // Remove the queuing message from the UI
                         self.messages.retain(|msg| match msg {
-                            Message::PromptQueued {
-                                id: queued_id, ..
-                            } => *queued_id != id,
+                            Message::PromptQueued { id: queued_id, .. } => *queued_id != id,
                             _ => true,
                         });
                         if self.auto_scroll.get() {
@@ -262,7 +260,7 @@ impl App {
                         // and pushed the id to pending_prompts. This event from the reactor
                         // is just a confirmation that the prompt was queued on the agent side.
                         // If somehow the id isn't tracked yet (shouldn't happen), add it.
-                        if !self.pending_prompts.iter().any(|x| *x == id) {
+                        if !self.pending_prompts.contains(&id) {
                             self.pending_prompts.push(id);
                         }
                     }
@@ -435,10 +433,7 @@ impl App {
                         })
                         .await;
                     self.pending_prompts.push(id);
-                    self.insert_before_queued(Message::PromptQueued {
-                        id,
-                        text: input,
-                    });
+                    self.insert_before_queued(Message::PromptQueued { id, text: input });
                     if self.auto_scroll.get() {
                         self.scroll_offset.set(u16::MAX);
                     }
@@ -1155,7 +1150,10 @@ impl App {
                         }
                     }
                     _ => {
-                        self.insert_before_queued(UiMessages(format!("Unknown submenu item: {}", item_name)));
+                        self.insert_before_queued(UiMessages(format!(
+                            "Unknown submenu item: {}",
+                            item_name
+                        )));
                         if self.auto_scroll.get() {
                             self.scroll_offset.set(u16::MAX);
                         }

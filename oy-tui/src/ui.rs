@@ -255,7 +255,8 @@ impl Widget for &App {
 
         let input_title = if matches!(self.app_mode, AppMode::RevokeSelect) {
             "Revoke [1-9]: select, Esc: cancel".to_string()
-        } else if matches!(self.app_mode, AppMode::ModelForm { .. }) && !self.input_title.is_empty() {
+        } else if matches!(self.app_mode, AppMode::ModelForm { .. }) && !self.input_title.is_empty()
+        {
             self.input_title.clone()
         } else {
             "Input".to_string()
@@ -325,11 +326,7 @@ impl Widget for &App {
         };
         let status_text = format!(
             " {}{}{} {} (Cycle with shift+tab)\n ↑/↓/←/→ move cursor | Enter send/Alt+Enter send to queue  | Ctrl+O expand | Ctrl+C/Esc/q quit{}",
-            agent_label,
-            token_stats,
-            context_display,
-            spinner_char,
-            revoke_hint,
+            agent_label, token_stats, context_display, spinner_char, revoke_hint,
         );
 
         let status_paragraph = Paragraph::new(status_text)
