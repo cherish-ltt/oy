@@ -46,20 +46,6 @@ struct TableAccum {
     in_head: bool,
 }
 
-/// Count how many visual lines a slice of rendered `Line`s occupies
-/// after wrapping at `width` (matching ratatui's `Wrap { trim: false }`).
-fn count_wrapped_lines(lines: &[Line<'_>], width: usize) -> usize {
-    if width == 0 {
-        return lines.len().max(1);
-    }
-    let mut count = 0;
-    for line in lines {
-        let w = line.width();
-        count += if w == 0 { 1 } else { w.div_ceil(width) };
-    }
-    count.max(1)
-}
-
 /// Count wrapped visual lines for content lines with a fixed prefix width.
 fn count_wrapped_content_lines(lines: &[&str], prefix_w: usize, width: usize) -> usize {
     if width == 0 || lines.is_empty() {
@@ -70,7 +56,11 @@ fn count_wrapped_content_lines(lines: &[&str], prefix_w: usize, width: usize) ->
     for line in lines {
         let line_w = UnicodeWidthStr::width(*line);
         let total_w = prefix_w + line_w;
-        count += if total_w == 0 { 1 } else { total_w.div_ceil(width) };
+        count += if total_w == 0 {
+            1
+        } else {
+            total_w.div_ceil(width)
+        };
     }
     count.max(1)
 }
@@ -600,7 +590,11 @@ impl Message {
                     duration,
                 );
                 let header_w = UnicodeWidthStr::width(header.as_str());
-                count += if header_w == 0 { 1 } else { header_w.div_ceil(width) };
+                count += if header_w == 0 {
+                    1
+                } else {
+                    header_w.div_ceil(width)
+                };
 
                 // Content lines with "  " prefix
                 if let Some(result) = &state.result
@@ -651,11 +645,8 @@ impl Message {
                             }
                         }
                         _ => {
-                            count += count_wrapped_content_lines(
-                                &all_lines,
-                                content_prefix_w,
-                                width,
-                            );
+                            count +=
+                                count_wrapped_content_lines(&all_lines, content_prefix_w, width);
                         }
                     }
                 }
@@ -683,7 +674,11 @@ impl Message {
                 };
                 let line2 = format!("    {}", display_text);
                 let line2_w = UnicodeWidthStr::width(line2.as_str());
-                count += if line2_w == 0 { 1 } else { line2_w.div_ceil(width) };
+                count += if line2_w == 0 {
+                    1
+                } else {
+                    line2_w.div_ceil(width)
+                };
 
                 count.max(1)
             }
@@ -706,7 +701,10 @@ impl Message {
 
         if !expanded && total > MAX_READ_LINES {
             // hint line: "... (N more lines, ctrl+o to expand) "
-            let hint = format!("... ({} more lines, ctrl+o to expand) ", total - MAX_READ_LINES);
+            let hint = format!(
+                "... ({} more lines, ctrl+o to expand) ",
+                total - MAX_READ_LINES
+            );
             count += UnicodeWidthStr::width(hint.as_str()).div_ceil(width.max(1));
         }
 
@@ -725,7 +723,10 @@ impl Message {
 
         // Collapsed: hint line + last MAX_BASH_LINES lines
         let mut count = 0usize;
-        let hint = format!("... ({} earlier lines, ctrl+o to expand) ", total - MAX_BASH_LINES);
+        let hint = format!(
+            "... ({} earlier lines, ctrl+o to expand) ",
+            total - MAX_BASH_LINES
+        );
         count += UnicodeWidthStr::width(hint.as_str()).div_ceil(width.max(1));
         count += count_wrapped_content_lines(&all_lines[total - MAX_BASH_LINES..], prefix_w, width);
         count.max(1)
@@ -756,7 +757,11 @@ impl Message {
         if let Some(result) = &chat.content {
             let total_w =
                 UnicodeWidthStr::width("[Tool - Edit] ") + UnicodeWidthStr::width(result.as_str());
-            count += if total_w == 0 { 1 } else { total_w.div_ceil(width) };
+            count += if total_w == 0 {
+                1
+            } else {
+                total_w.div_ceil(width)
+            };
         }
 
         // old text lines (with truncation)
@@ -806,7 +811,11 @@ impl Message {
         if let Some(result) = &chat.content {
             let total_w =
                 UnicodeWidthStr::width("[Tool - Write] ") + UnicodeWidthStr::width(result.as_str());
-            count += if total_w == 0 { 1 } else { total_w.div_ceil(width) };
+            count += if total_w == 0 {
+                1
+            } else {
+                total_w.div_ceil(width)
+            };
         }
 
         // file path line
@@ -823,30 +832,45 @@ impl Message {
             .unwrap_or(0);
         let file_line = format!("      📄 {} ({} lines)", file_path, line_count);
         let file_w = UnicodeWidthStr::width(file_line.as_str());
-        count += if file_w == 0 { 1 } else { file_w.div_ceil(width) };
+        count += if file_w == 0 {
+            1
+        } else {
+            file_w.div_ceil(width)
+        };
 
         count.max(1)
     }
 
-    fn visual_default_count(&self, chat: &ChatMessage, width: usize, theme: &Theme) -> usize {
+    fn visual_default_count(&self, chat: &ChatMessage, width: usize, _theme: &Theme) -> usize {
+        let width = width.max(1);
         let mut count = 0usize;
+
+        // reasoning content: to_lines puts it on ONE line with "[{:#?} - thinking] " prefix
         if let Some(r) = &chat.reasoning_content {
-            count += count_wrapped_lines(
-                &Self::render_markdown(r, Style::default(), theme),
-                width,
-            );
+            let line = format!("[{:#?} - thinking] {}", chat.role, r.trim_end());
+            let w = UnicodeWidthStr::width(line.as_str());
+            count += if w == 0 { 1 } else { w.div_ceil(width) };
         }
+
+        // content: to_lines uses render_markdown and adds "[{:#?}] " prefix to first line
         if let Some(c) = &chat.content {
-            count += count_wrapped_lines(
-                &Self::render_markdown(c, Style::default(), theme),
-                width,
-            );
-        }
-        if let Some(tools) = &chat.tool_calls {
-            for _tool in tools {
-                count += 2;
+            let md_lines = Self::render_markdown(c, Style::default(), _theme);
+            let prefix = format!("[{:#?}] ", chat.role);
+            let prefix_w = UnicodeWidthStr::width(prefix.as_str());
+            for (i, line) in md_lines.iter().enumerate() {
+                let w = if i == 0 {
+                    line.width() + prefix_w
+                } else {
+                    line.width()
+                };
+                count += if w == 0 { 1 } else { w.div_ceil(width) };
             }
         }
+
+        if let Some(tools) = &chat.tool_calls {
+            count += tools.len() * 2;
+        }
+
         count
     }
 
