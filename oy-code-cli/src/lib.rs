@@ -9,6 +9,7 @@ use oy_agent::infrastructure::tools::{ToolRegistry, bash::BashTool};
 use oy_ai::AiConfig;
 use serde::Deserialize;
 use std::env;
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
 
@@ -33,6 +34,10 @@ pub struct CliArgs {
     /// Restore a session interactively (session selector)
     #[arg(short = 'r', long)]
     pub restore: bool,
+
+    /// Load a specific session file by path
+    #[arg(short = 's', long = "session")]
+    pub session: Option<PathBuf>,
 }
 
 #[derive(Parser, Debug)]
@@ -130,7 +135,12 @@ pub async fn run(args: CliArgs) -> Result<(), anyhow::Error> {
         return run_restore_session().await;
     }
 
-    // 4. Existing logic: launch TUI (fresh) or handle direct prompt
+    // 4. Load a specific session file by path
+    if let Some(path) = &args.session {
+        return run_session_path(path).await;
+    }
+
+    // 5. Existing logic: launch TUI (fresh) or handle direct prompt
     if args.prompt.is_some() {
         // TODO: implement direct prompt mode
         return Ok(());
@@ -296,4 +306,32 @@ async fn run_restore_session() -> Result<(), anyhow::Error> {
     }
 
     Ok(())
+}
+
+// ── Load session by path ───────────────────────────────────────
+
+async fn run_session_path(path: &PathBuf) -> Result<(), anyhow::Error> {
+    if !path.exists() {
+        eprintln!("❌ Session file not found: {}", path.display());
+        std::process::exit(1);
+    }
+    if !path.is_file() {
+        eprintln!("❌ Path is not a file: {}", path.display());
+        std::process::exit(1);
+    }
+
+    // Validate that the file contains valid session data
+    match oy_agent::infrastructure::persistence::load_session_messages(path) {
+        Ok((uuid, _msgs)) => {
+            eprintln!("📂 Loading session: {} ({})", uuid, path.display());
+            oy_tui::run_tui(Some(path.clone()))
+                .await
+                .map_err(|e| anyhow::Error::msg(format!("{}", e)))?;
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to load session file: {}", e);
+            std::process::exit(1);
+        }
+    }
 }
