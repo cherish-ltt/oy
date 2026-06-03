@@ -148,6 +148,20 @@ impl Reactor {
                     }
                 }
             }
+            RequestAgent::CancelPrompt { id } => {
+                // Remove from both queues if still pending
+                let removed_enter = self.enter_queue.iter().any(|pr| pr.id == id);
+                self.enter_queue.retain(|pr| pr.id != id);
+                let removed_alt = self.alt_queue.iter().any(|pr| pr.id == id);
+                self.alt_queue.retain(|pr| pr.id != id);
+                // If found in either queue, notify TUI that it's been cancelled
+                if removed_enter || removed_alt {
+                    let _ = self
+                        .response_tx
+                        .send(ResponseAgent::PromptConsumed { id })
+                        .await;
+                }
+            }
             RequestAgent::SetProvider(provider) => {
                 let _ = self
                     .worker_cmd_tx

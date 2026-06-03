@@ -32,7 +32,10 @@ pub enum Message {
     AgentMessages(ChatMessage, bool), // bool = expanded
     ToolCallMsg(ToolCallState),
     AgentStatus(Status),
-    PromptQueued(uuid::Uuid), // 排队中的 prompt
+    PromptQueued {
+        id: uuid::Uuid,
+        text: String,
+    }, // 排队中的 prompt
 }
 
 /// Accumulates table cell data during markdown parsing.
@@ -50,7 +53,8 @@ impl Message {
     /// Build the styled lines for display.
     /// For Tool messages with a known function_name, content is truncated per tool type
     /// unless `expanded` is true.
-    pub fn to_lines(&self, theme: &Theme) -> Vec<Line<'_>> {
+    /// `queue_number` is the 1-based display number for PromptQueued messages (None for others).
+    pub fn to_lines(&self, theme: &Theme, queue_number: Option<u8>) -> Vec<Line<'_>> {
         match self {
             Message::UiMessages(text) => {
                 vec![Line::from(Span::styled(
@@ -264,10 +268,40 @@ impl Message {
                     Style::default().fg(theme.success).bold(),
                 ))],
             },
-            Message::PromptQueued(_id) => vec![Line::from(Span::styled(
-                "⏳ Prompt queuing...",
-                Style::default().fg(theme.warning).italic(),
-            ))],
+            Message::PromptQueued { id: _id, text } => {
+                let number = queue_number.unwrap_or(0);
+                let number_style = Style::default()
+                    .fg(theme.warning)
+                    .add_modifier(Modifier::BOLD);
+                let label_style = Style::default().fg(theme.warning);
+
+                // Truncate prompt text: if longer than 80 chars, cut with "..."
+                let display_text = if text.len() > 80 {
+                    let cut = text.char_indices()
+                        .take(80)
+                        .last()
+                        .map(|(i, c)| i + c.len_utf8())
+                        .unwrap_or(80);
+                    format!("{}...", &text[..cut])
+                } else {
+                    text.clone()
+                };
+
+                let mut lines = Vec::new();
+                // Line 1: [N] ⏳ Prompt queuing...
+                lines.push(Line::from(vec![
+                    Span::styled(format!("[{}] ", number), number_style),
+                    Span::styled("⏳ Prompt queuing...", label_style),
+                ]));
+                // Line 2: indented italic prompt content
+                lines.push(Line::from(Span::styled(
+                    format!("    {}", display_text),
+                    Style::default()
+                        .fg(theme.subtle)
+                        .add_modifier(Modifier::ITALIC),
+                )));
+                lines
+            }
         }
     }
 
@@ -489,7 +523,7 @@ impl Message {
                 Role::System => theme.surface_bg,
             },
             Message::ToolCallMsg(_) => theme.tool_bg,
-            Message::PromptQueued(_) => theme.surface_bg,
+            Message::PromptQueued { .. } => theme.surface_bg,
         }
     }
 
@@ -550,7 +584,7 @@ impl Message {
                 count.max(1)
             }
             Message::AgentStatus(_) => 1,
-            Message::PromptQueued(_) => 1,
+            Message::PromptQueued { .. } => 2,
         }
     }
 

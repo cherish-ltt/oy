@@ -13,7 +13,7 @@ use unicode_width::UnicodeWidthChar;
 use crate::{
     app::{App, AppMode, visual_cursor_pos},
     command::CommandInfo,
-    message::Status,
+    message::{Message, Status},
 };
 
 /// 使用与 `visual_cursor_pos` 一致的 word-wrap 算法将输入文本按宽度切割成行。
@@ -156,6 +156,8 @@ impl Widget for &App {
         let inner_x = chunks[0].x + 1;
         let inner_w = content_width as u16;
         let mut used_lines = 0usize;
+        // Track the 1-based display number for PromptQueued messages
+        let mut prompt_queue_idx = 0u8;
 
         for (i, _) in msg_heights
             .iter()
@@ -181,7 +183,14 @@ impl Widget for &App {
                 height: render_lines as u16,
             };
 
-            let lines = self.messages[i].to_lines(t);
+            // Compute the queue display number for PromptQueued messages
+            let queue_number = if matches!(self.messages[i], Message::PromptQueued { .. }) {
+                prompt_queue_idx += 1;
+                Some(prompt_queue_idx)
+            } else {
+                None
+            };
+            let lines = self.messages[i].to_lines(t, queue_number);
             let mut text = Text::default();
             text.extend(lines);
 
@@ -244,12 +253,13 @@ impl Widget for &App {
             .set(chunks[1].y + 1 + cursor_visual_row - input_scroll);
         self.input_width.set(chunks[1].width.saturating_sub(2));
 
-        let input_title =
-            if matches!(self.app_mode, AppMode::ModelForm { .. }) && !self.input_title.is_empty() {
-                self.input_title.clone()
-            } else {
-                "Input".to_string()
-            };
+        let input_title = if matches!(self.app_mode, AppMode::RevokeSelect) {
+            "Revoke [1-9]: select, Esc: cancel".to_string()
+        } else if matches!(self.app_mode, AppMode::ModelForm { .. }) && !self.input_title.is_empty() {
+            self.input_title.clone()
+        } else {
+            "Input".to_string()
+        };
 
         let input_paragraph = Paragraph::new(wrapped_text)
             .block(
@@ -308,12 +318,18 @@ impl Widget for &App {
             agent_label = format!("<{}>", &main_agent.name);
         }
 
+        let revoke_hint = if !self.pending_prompts.is_empty() {
+            " | Ctrl+R revoke"
+        } else {
+            ""
+        };
         let status_text = format!(
-            " {}{}{} {} (Cycle with shift+tab)\n ↑/↓/←/→ move cursor | Enter send/Alt+Enter send to queue  | Ctrl+O expand | Ctrl+C/Esc/q quit",
+            " {}{}{} {} (Cycle with shift+tab)\n ↑/↓/←/→ move cursor | Enter send/Alt+Enter send to queue  | Ctrl+O expand | Ctrl+C/Esc/q quit{}",
             agent_label,
             token_stats,
             context_display,
-            spinner_char
+            spinner_char,
+            revoke_hint,
         );
 
         let status_paragraph = Paragraph::new(status_text)

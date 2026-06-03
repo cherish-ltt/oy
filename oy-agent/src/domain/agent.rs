@@ -64,6 +64,9 @@ pub enum RequestAgent {
         id: Uuid,
         kind: PromptKind,
     },
+    CancelPrompt {
+        id: Uuid,
+    },
     SetProvider(Box<dyn AiProvider>),
     SetSkills(Vec<SkillSummary>),
 }
