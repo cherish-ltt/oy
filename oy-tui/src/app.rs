@@ -14,7 +14,7 @@ use crate::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use oy_agent::{
     Orchestrator, SkillSummary, TokenUsage,
-    agent::RequestAgent,
+    agent::{PromptKind, RequestAgent},
     format_token_count,
     infrastructure::{agents::main_agent::MainAgent, tools::ToolRegistry},
     oy_ai::OpenCodeGoProvider,
@@ -25,12 +25,14 @@ use std::{
     collections::{HashMap, VecDeque},
     time::Instant,
 };
+use uuid::Uuid;
 
 const MAX_POPUP_ROWS: usize = 4;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppMode {
     Normal,
+    RevokeSelect,
     CommandSelector {
         selected: usize,
         scroll_offset: usize,
@@ -94,6 +96,8 @@ pub struct App {
     pub token_usage: TokenUsage,
     /// 已加载的技能列表
     pub skills: Vec<SkillSummary>,
+    /// 等待被 Agent 消费的 Prompt IDs
+    pub pending_prompts: Vec<Uuid>,
 }
 
 impl App {
@@ -184,6 +188,7 @@ impl App {
             tick_counter: Cell::new(0),
             token_usage: TokenUsage::new(),
             skills,
+            pending_prompts: Vec::new(),
         }
     }
 
@@ -228,8 +233,7 @@ impl App {
                         self.token_usage = token_usage;
                     }
                     AppEvent::AgentError(e) => {
-                        self.messages
-                            .push_back(UiMessages(format!("errors: {}", e)));
+                        self.insert_before_queued(UiMessages(format!("errors: {}", e)));
                         if self.auto_scroll.get() {
                             self.scroll_offset.set(u16::MAX);
                         }
@@ -239,6 +243,26 @@ impl App {
                     }
                     AppEvent::Running => {
                         self.agent_status.set(Status::Running);
+                    }
+                    AppEvent::PromptConsumed { id } => {
+                        self.pending_prompts.retain(|x| *x != id);
+                        // Remove the queuing message from the UI
+                        self.messages.retain(|msg| match msg {
+                            Message::PromptQueued { id: queued_id, .. } => *queued_id != id,
+                            _ => true,
+                        });
+                        if self.auto_scroll.get() {
+                            self.scroll_offset.set(u16::MAX);
+                        }
+                    }
+                    AppEvent::PromptQueued { id } => {
+                        // The Enter/Alt+Enter handler already added the Message::PromptQueued
+                        // and pushed the id to pending_prompts. This event from the reactor
+                        // is just a confirmation that the prompt was queued on the agent side.
+                        // If somehow the id isn't tracked yet (shouldn't happen), add it.
+                        if !self.pending_prompts.contains(&id) {
+                            self.pending_prompts.push(id);
+                        }
                     }
                 },
             }
@@ -258,11 +282,11 @@ impl App {
             let mut content_msg = chat_message.clone();
             content_msg.tool_calls = None;
             if content_msg.content.is_some() || content_msg.reasoning_content.is_some() {
-                self.messages.push_back(AgentMessages(content_msg, false));
+                self.insert_before_queued(AgentMessages(content_msg, false));
             }
             // Push a ToolCallMsg for each tool call
             for tc in tool_calls {
-                self.messages.push_back(ToolCallMsg(ToolCallState {
+                self.insert_before_queued(ToolCallMsg(ToolCallState {
                     function_name: tc.function_name.clone(),
                     arguments: if tc.function_name.eq("Read")
                         || tc.function_name.eq("Edit")
@@ -314,7 +338,7 @@ impl App {
         }
 
         // Regular message (no tool calls / no tool result): push as-is
-        self.messages.push_back(AgentMessages(chat_message, false));
+        self.insert_before_queued(AgentMessages(chat_message, false));
         if self.auto_scroll.get() {
             self.scroll_offset.set(u16::MAX);
         }
@@ -341,6 +365,7 @@ impl App {
 
         match self.app_mode {
             AppMode::Normal => self.handle_key_normal(key_event).await,
+            AppMode::RevokeSelect => self.handle_key_revoke_select(key_event).await,
             AppMode::CommandSelector { selected, .. } => {
                 self.handle_key_command_selector(key_event, selected).await
             }
@@ -352,6 +377,12 @@ impl App {
     async fn handle_key_normal(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
         match key_event.code {
             KeyCode::Esc | KeyCode::Char('q') => self.events.send(AppEvent::Quit),
+            KeyCode::Char('r' | 'R')
+                if key_event.modifiers == KeyModifiers::CONTROL
+                    && !self.pending_prompts.is_empty() =>
+            {
+                self.app_mode = AppMode::RevokeSelect;
+            }
             KeyCode::Char('c' | 'C') if key_event.modifiers == KeyModifiers::CONTROL => {
                 if self.input.is_empty() {
                     self.events.send(AppEvent::Quit)
@@ -369,16 +400,45 @@ impl App {
                 self.paste_counter = 0;
                 self.scroll_offset.set(u16::MAX);
 
+                // Determine prompt kind: Alt+Enter = AltEnter, Enter = Enter
+                let kind = if key_event.modifiers == KeyModifiers::ALT {
+                    PromptKind::AltEnter
+                } else {
+                    PromptKind::Enter
+                };
+
                 // Check for slash commands
                 if input.starts_with('/') {
                     self.execute_command(&input).await;
                 } else if let Some(main_agent) = &self.main_agent {
+                    // Enforce max 9 queued prompts
+                    if self.pending_prompts.len() >= 9 {
+                        self.insert_before_queued(UiMessages(
+                            "Maximum 9 prompts can be queued. Press Ctrl+R then 1..9 to revoke a queued prompt first.".to_string()
+                        ));
+                        if self.auto_scroll.get() {
+                            self.scroll_offset.set(u16::MAX);
+                        }
+                        return Ok(());
+                    }
+
+                    let id = Uuid::now_v7();
+
                     let _ = main_agent
                         .request_sender
-                        .send(RequestAgent::Prompt(input))
+                        .send(RequestAgent::Prompt {
+                            text: input.clone(),
+                            id,
+                            kind,
+                        })
                         .await;
+                    self.pending_prompts.push(id);
+                    self.insert_before_queued(Message::PromptQueued { id, text: input });
+                    if self.auto_scroll.get() {
+                        self.scroll_offset.set(u16::MAX);
+                    }
                 } else {
-                    self.messages.push_back(UiMessages(
+                    self.insert_before_queued(UiMessages(
                         "Agent not initialized. Please use /model to configure your API key and model first.".to_string()
                     ));
                 }
@@ -578,7 +638,7 @@ impl App {
                             if let Ok(n) = val.trim().parse::<u64>() {
                                 self.switch_context_capacity(n).await;
                             } else {
-                                self.messages.push_back(UiMessages(format!(
+                                self.insert_before_queued(UiMessages(format!(
                                     "Invalid context capacity: {}",
                                     val
                                 )));
@@ -1090,8 +1150,10 @@ impl App {
                         }
                     }
                     _ => {
-                        self.messages
-                            .push_back(UiMessages(format!("Unknown submenu item: {}", item_name)));
+                        self.insert_before_queued(UiMessages(format!(
+                            "Unknown submenu item: {}",
+                            item_name
+                        )));
                         if self.auto_scroll.get() {
                             self.scroll_offset.set(u16::MAX);
                         }
@@ -1133,8 +1195,7 @@ impl App {
                 values: [String::new(), String::new(), String::new(), String::new()],
             };
         } else {
-            self.messages
-                .push_back(UiMessages(format!("Unknown command: {}", trimmed)));
+            self.insert_before_queued(UiMessages(format!("Unknown command: {}", trimmed)));
             if self.auto_scroll.get() {
                 self.scroll_offset.set(u16::MAX);
             }
@@ -1159,8 +1220,7 @@ impl App {
         };
         let _ = config.save();
 
-        self.messages
-            .push_back(UiMessages(format!("Switched to {} theme", self.theme.name)));
+        self.insert_before_queued(UiMessages(format!("Switched to {} theme", self.theme.name)));
         if self.auto_scroll.get() {
             self.scroll_offset.set(u16::MAX);
         }
@@ -1179,8 +1239,7 @@ impl App {
             read_claude_skills: None,
         };
         if let Err(e) = config.save() {
-            self.messages
-                .push_back(UiMessages(format!("Failed to save config: {}", e)));
+            self.insert_before_queued(UiMessages(format!("Failed to save config: {}", e)));
             if self.auto_scroll.get() {
                 self.scroll_offset.set(u16::MAX);
             }
@@ -1204,7 +1263,7 @@ impl App {
             }
         }
 
-        self.messages.push_back(UiMessages(format!(
+        self.insert_before_queued(UiMessages(format!(
             "Switched reasoning effort to: {}",
             effort
         )));
@@ -1226,8 +1285,7 @@ impl App {
             read_claude_skills: None,
         };
         if let Err(e) = config.save() {
-            self.messages
-                .push_back(UiMessages(format!("Failed to save config: {}", e)));
+            self.insert_before_queued(UiMessages(format!("Failed to save config: {}", e)));
             if self.auto_scroll.get() {
                 self.scroll_offset.set(u16::MAX);
             }
@@ -1251,7 +1309,7 @@ impl App {
             }
         }
 
-        self.messages.push_back(UiMessages(format!(
+        self.insert_before_queued(UiMessages(format!(
             "Switched context capacity to: {}",
             format_token_count(capacity),
         )));
@@ -1291,8 +1349,7 @@ impl App {
         }
 
         if let Err(e) = config.save() {
-            self.messages
-                .push_back(UiMessages(format!("Failed to save config: {}", e)));
+            self.insert_before_queued(UiMessages(format!("Failed to save config: {}", e)));
             if self.auto_scroll.get() {
                 self.scroll_offset.set(u16::MAX);
             }
@@ -1312,8 +1369,7 @@ impl App {
             }
         }
 
-        self.messages
-            .push_back(UiMessages(format!("Updated {} to: {}", field, value)));
+        self.insert_before_queued(UiMessages(format!("Updated {} to: {}", field, value)));
         if self.auto_scroll.get() {
             self.scroll_offset.set(u16::MAX);
         }
@@ -1340,8 +1396,7 @@ impl App {
             read_claude_skills: None,
         };
         if let Err(e) = config.save() {
-            self.messages
-                .push_back(UiMessages(format!("Failed to save config: {}", e)));
+            self.insert_before_queued(UiMessages(format!("Failed to save config: {}", e)));
             if self.auto_scroll.get() {
                 self.scroll_offset.set(u16::MAX);
             }
@@ -1362,7 +1417,7 @@ impl App {
                 .await;
         }
 
-        self.messages.push_back(UiMessages(format!(
+        self.insert_before_queued(UiMessages(format!(
             "Switched to model: {} , context: {} , please start the conversation again",
             model,
             ctx_val.map_or("200k".to_string(), format_token_count),
@@ -1392,8 +1447,7 @@ impl App {
             read_claude_skills: Some(new_val),
         };
         if let Err(e) = config.save() {
-            self.messages
-                .push_back(UiMessages(format!("Failed to save config: {}", e)));
+            self.insert_before_queued(UiMessages(format!("Failed to save config: {}", e)));
             if self.auto_scroll.get() {
                 self.scroll_offset.set(u16::MAX);
             }
@@ -1418,7 +1472,7 @@ impl App {
         }
 
         let status = if new_val { "on" } else { "off" };
-        self.messages.push_back(UiMessages(format!(
+        self.insert_before_queued(UiMessages(format!(
             "Reading ~/.claude/skills/ is now {}",
             status
         )));
@@ -1462,6 +1516,81 @@ impl App {
             // Middle — keep selected near middle of visible window
             selected - max_visible / 2
         }
+    }
+
+    /// Handle number selection in revoke mode (Alt+R then 1-9).
+    async fn handle_key_revoke_select(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
+        match key_event.code {
+            KeyCode::Char(c @ '1'..='9') => {
+                let target_number = (c as u8) - b'1' + 1;
+                self.revoke_prompt_by_number(target_number).await;
+                self.app_mode = AppMode::Normal;
+            }
+            KeyCode::Esc | KeyCode::Enter => {
+                self.app_mode = AppMode::Normal;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Insert a message right before the first PromptQueued (so queued prompts stay at bottom).
+    fn insert_before_queued(&mut self, msg: Message) {
+        let pos = self
+            .messages
+            .iter()
+            .position(|m| matches!(m, Message::PromptQueued { .. }));
+        match pos {
+            Some(idx) => self.messages.insert(idx, msg),
+            None => self.messages.push_back(msg),
+        }
+    }
+
+    /// Revoke a queued prompt by its display number (1-9).
+    /// Numbers are 1-based positions in the queue (not persistent IDs).
+    async fn revoke_prompt_by_number(&mut self, number: u8) {
+        // Find the Nth PromptQueued message (1-based) by counting
+        let mut count = 0u8;
+        let idx = self.messages.iter().position(|m| {
+            if matches!(m, Message::PromptQueued { .. }) {
+                count += 1;
+                count == number
+            } else {
+                false
+            }
+        });
+
+        let Some(idx) = idx else {
+            return;
+        };
+
+        // Extract the id and text
+        let (id, text) = match &self.messages[idx] {
+            Message::PromptQueued { id, text } => (*id, text.clone()),
+            _ => return,
+        };
+
+        // Remove from messages
+        self.messages.remove(idx);
+
+        // Remove from pending_prompts
+        self.pending_prompts.retain(|x| *x != id);
+
+        // Cancel on the agent side
+        if let Some(main_agent) = &self.main_agent {
+            let _ = main_agent
+                .request_sender
+                .send(RequestAgent::CancelPrompt { id })
+                .await;
+        }
+
+        // Append text to input (not overwrite)
+        if !self.input.is_empty() {
+            self.input.push('\n');
+            self.cursor_pos = self.input.len();
+        }
+        self.input.push_str(&text);
+        self.cursor_pos = self.input.len();
     }
 
     pub fn tick(&self) {

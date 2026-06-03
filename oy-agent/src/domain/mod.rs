@@ -5,6 +5,7 @@ pub mod token_counter;
 pub mod tool;
 
 pub(crate) use agent::Agent;
+pub use agent::{PromptKind, PromptRequest};
 pub use errors::AgentError;
 pub use skill::SkillSummary;
 pub use token_counter::{

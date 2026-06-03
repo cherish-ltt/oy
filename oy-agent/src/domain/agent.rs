@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 pub(crate) const CHANNEL_SIZE: usize = 64;
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum AgentState {
     Idle,
     Thinking,
@@ -44,8 +45,28 @@ pub trait Agent: Send + Sync {
     fn set_skills(&mut self, _skills: Vec<SkillSummary>) {}
 }
 
+#[derive(Debug, Clone)]
+pub enum PromptKind {
+    Enter,
+    AltEnter,
+}
+
+#[derive(Debug, Clone)]
+pub struct PromptRequest {
+    pub text: String,
+    pub id: Uuid,
+    pub kind: PromptKind,
+}
+
 pub enum RequestAgent {
-    Prompt(String),
+    Prompt {
+        text: String,
+        id: Uuid,
+        kind: PromptKind,
+    },
+    CancelPrompt {
+        id: Uuid,
+    },
     SetProvider(Box<dyn AiProvider>),
     SetSkills(Vec<SkillSummary>),
 }
@@ -56,4 +77,6 @@ pub enum ResponseAgent {
     ChatMessage(ChatMessage),
     TokenUsage(TokenUsage),
     AgentError(AgentError),
+    PromptConsumed { id: Uuid },
+    PromptQueued { id: Uuid },
 }
