@@ -9,11 +9,15 @@ mod load_config;
 mod message;
 mod theme;
 
+use std::path::PathBuf;
+
 use crate::app::App;
 use crossterm::execute;
 
 /// Shared TUI entry point — callable from oy-code-cli.
-pub async fn run_tui() -> color_eyre::Result<()> {
+///
+/// If `session_path` is `Some`, the TUI will load that session on startup.
+pub async fn run_tui(session_path: Option<PathBuf>) -> color_eyre::Result<()> {
     color_eyre::install()?;
     execute!(
         std::io::stdout(),
@@ -21,7 +25,7 @@ pub async fn run_tui() -> color_eyre::Result<()> {
         crossterm::event::EnableBracketedPaste,
     )?;
     let terminal = ratatui::init();
-    let result = App::new().await.run(terminal).await;
+    let result = App::new(session_path).await.run(terminal).await;
     ratatui::restore();
     execute!(
         std::io::stdout(),

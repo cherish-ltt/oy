@@ -30,7 +30,7 @@ oy (CLI 入口, 默认启动 TUI) ──► oy-agent (编排) ──► oy-ai (A
 | :--- | :--- | :--- |
 | [`oy-ai`](./oy-ai/) | 核心 | AI 提供者 trait、值对象（ChatMessage、ToolCall）、Opencode-go 实现 |
 | [`oy-agent`](./oy-agent/) | 领域 | Agent 实体、Tool trait、编排器循环、工具实现（Read/Write/Edit/Bash）、会话持久化 |
-| [`oy-code-cli`](./oy-code-cli/) | 基础设施 | CLI 参数解析（clap）、二进制入口 `oy` |
+| [`oy-code-cli`](./oy-code-cli/) | 基础设施 | CLI 参数解析（clap）、二进制入口 `oy`、update 更新、session 管理（-c/-r） |
 | [`oy-tui`](./oy-tui/) | 基础设施 | 基于 ratatui 的 TUI shell，markdown 渲染、命令系统、主题切换 |
 
 ### 依赖方向
@@ -89,7 +89,23 @@ cargo install oy-code-cli
 ```bash
 # 启动 TUI（默认）
 oy
+
+# 继续最近会话（自动加载最新 session）
+oy -c
+
+# 选择并恢复指定会话
+oy -r
+
+# 加载指定路径的 session 文件
+oy -s /path/to/session.json
+
+# 更新 CLI 工具到最新版本
+oy update
 ```
+
+> `oy -c`：自动扫描 `~/.oy-ai-agent/sessions/` 下的最新 session 并加载历史消息。
+> `oy -r`：列出所有 session（按时间降序），显示 uuid 前缀 + 项目目录 + 首条消息摘要，用户选择后恢复。
+> `oy -s <path>` 或 `oy --session <path>`：直接加载指定文件作为 session（不限位置）。
 
 ### 本地开发
 
@@ -115,7 +131,16 @@ cargo test --workspace
 | `/model` | 三步表单设置 API Base URL / API Key / Model，保存 config，重启 agent 且保留会话消息 |
 | `/settings` → `二级菜单` | 切换 light / dark 主题，thinking等级，model配置等 |
 
-快捷键：`↑`/`↓` 导航选择器，`Enter` 确认，`Esc` 取消，`Ctrl+O` 展开/折叠工具结果。
+快捷键：
+
+| 按键 | 功能 |
+|------|------|
+| `Enter` | 发送消息，打断当前 agent 立即处理 |
+| `Alt+Enter` | 发送消息到等待队列，当前 agent 处理完后自动消费 |
+| `Ctrl+R` | 进入撤销选择模式，按数字键撤销对应队列中的提示词 |
+| `Ctrl+O` | 展开/折叠工具调用结果 |
+| `↑`/`↓` | 命令选择器导航 |
+| `Esc` | 取消/退出当前模式 |
 
 ### Markdown 渲染
 

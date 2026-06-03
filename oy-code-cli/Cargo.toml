@@ -21,3 +21,4 @@ toml.workspace = true
 dirs.workspace = true
 anyhow.workspace = true
 color-eyre.workspace = true
+uuid.workspace = true

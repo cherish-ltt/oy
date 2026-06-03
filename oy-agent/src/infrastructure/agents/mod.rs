@@ -53,6 +53,37 @@ impl Worker {
         }
     }
 
+    /// Create a Worker that resumes an existing session with a specific UUID
+    /// and pre-loaded message history.
+    pub(crate) fn with_session(
+        agent: impl AgentCore + 'static,
+        provider: impl AiProvider + 'static,
+        tool_registry: ToolRegistry,
+        cmd_rx: Receiver<WorkerCommand>,
+        event_tx: Sender<WorkerEvent>,
+        session_uuid: Uuid,
+        initial_messages: Vec<ChatMessage>,
+    ) -> Self {
+        let uuid = session_uuid;
+        let mut worker = Self {
+            uuid,
+            agent: Box::new(agent),
+            provider: Box::new(provider),
+            current_iterations: 0,
+            tool_registry,
+            tool_tasks: None,
+            cmd_rx,
+            event_tx,
+            token_usage: TokenUsage::new(),
+        };
+        // Pre-load historical messages — push_message_back handles
+        // persisting to the session file with the correct uuid.
+        for msg in initial_messages {
+            let _ = worker.agent.push_message_back(worker.uuid, msg);
+        }
+        worker
+    }
+
     async fn send_event_async(&self, event: WorkerEvent) {
         let _ = self.event_tx.send(event).await;
     }
