@@ -53,16 +53,12 @@ impl Worker {
         }
     }
 
-    fn send_event(&self, event: WorkerEvent) {
-        let _ = self.event_tx.try_send(event);
-    }
-
     async fn send_event_async(&self, event: WorkerEvent) {
         let _ = self.event_tx.send(event).await;
     }
 
-    fn notify_state(&self, state: AgentState) {
-        self.send_event(WorkerEvent::StateChanged(state));
+    async fn notify_state(&self, state: AgentState) {
+        let _ = self.event_tx.send(WorkerEvent::StateChanged(state)).await;
     }
 
     pub(crate) fn set_provider(
@@ -83,13 +79,17 @@ impl Worker {
                             result = self.assembly_prompts(&text).await;
                         }
                         WorkerCommand::FlushEnterQueue(requests) => {
-                            // Inject all queued Enter prompts and trigger Thinking
-                            let mut last_result = Ok(AgentEvent::Start);
+                            // Process every prompt so none are lost; collect last error.
+                            let mut last_error = None;
                             for pr in &requests {
-                                last_result = self.assembly_prompts(&pr.text).await;
+                                if let Err(e) = self.assembly_prompts(&pr.text).await {
+                                    last_error = Some(e);
+                                }
                             }
-                            result = last_result;
-                            // Fall through to state transition (Idle + Start → Thinking)
+                            result = match last_error {
+                                Some(e) => Err(e),
+                                None => Ok(AgentEvent::Start),
+                            };
                         }
                         WorkerCommand::SetProvider(ai_provider) => {
                             result = self.set_provider(ai_provider);
@@ -103,7 +103,15 @@ impl Worker {
                 },
                 AgentState::Thinking => result = self.thinking().await,
                 AgentState::Acting => result = self.acting().await,
-                AgentState::ToolCall => result = self.tool_call().await,
+                AgentState::ToolCall => {
+                    result = self.tool_call().await;
+                    // After collecting tool results, drain any queued Enter prompts.
+                    // They get injected as user messages alongside tool results,
+                    // before the next Thinking (LLM call).
+                    if result.is_ok() {
+                        self.drain_pending_enter_prompts().await;
+                    }
+                }
                 AgentState::Observing => result = self.observing().await,
             }
 
@@ -116,7 +124,7 @@ impl Worker {
                         self.agent.set_state(agent_state);
                         let new_state = self.agent.current_state();
                         if *new_state != old_state {
-                            self.notify_state(new_state.clone());
+                            self.notify_state(new_state.clone()).await;
                         }
                     }
                 }
@@ -129,7 +137,7 @@ impl Worker {
                         self.agent.set_state(agent_state);
                         let new_state = self.agent.current_state();
                         if *new_state != old_state {
-                            self.notify_state(new_state.clone());
+                            self.notify_state(new_state.clone()).await;
                         }
                     }
                 }
@@ -268,6 +276,52 @@ impl Worker {
         }
 
         Ok(AgentEvent::ToolCallCompleted)
+    }
+
+    /// Inject a user message into history without triggering state transition.
+    async fn inject_user_message(&mut self, text: &str) -> Result<(), AgentError> {
+        if self.agent.get_front_message().is_none() {
+            self.agent.push_message_back(
+                self.uuid,
+                ChatMessage::system(
+                    self.agent
+                        .get_system_prompt(&self.tool_registry.get_tools_system_prompt()),
+                ),
+            )?;
+        }
+        self.agent
+            .push_message_back(self.uuid, ChatMessage::user(text))?;
+        self.send_event_async(WorkerEvent::Response(ResponseAgent::ChatMessage(
+            ChatMessage::user(text),
+        )))
+        .await;
+        Ok(())
+    }
+
+    /// After tool_call, drain any queued Enter prompts from cmd_rx and inject
+    /// them as user messages so they're included in the next LLM call.
+    async fn drain_pending_enter_prompts(&mut self) {
+        loop {
+            match self.cmd_rx.try_recv() {
+                Ok(WorkerCommand::Prompt { text, .. }) => {
+                    let _ = self.inject_user_message(&text).await;
+                }
+                Ok(WorkerCommand::FlushEnterQueue(requests)) => {
+                    for pr in &requests {
+                        if let Err(_) = self.inject_user_message(&pr.text).await {
+                            break;
+                        }
+                    }
+                }
+                Ok(WorkerCommand::SetProvider(provider)) => {
+                    self.provider = provider;
+                }
+                Ok(WorkerCommand::SetSkills(skills)) => {
+                    self.agent.set_skills(skills);
+                }
+                Err(_) => break,
+            }
+        }
     }
 
     async fn observing(&mut self) -> Result<AgentEvent, AgentError> {

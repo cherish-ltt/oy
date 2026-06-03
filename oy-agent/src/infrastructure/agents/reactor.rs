@@ -5,6 +5,8 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use crate::agent::{AgentState, PromptKind, PromptRequest, RequestAgent, ResponseAgent};
 
 /// Command sent from Reactor to Worker.
+// id/kind fields are used by Reactor for queue routing; Worker matches
+// with `{ text, .. }` and doesn't need them — suppress dead_code lint.
 #[allow(dead_code)]
 pub(crate) enum WorkerCommand {
     Prompt {
@@ -85,6 +87,9 @@ impl Reactor {
                 match kind {
                     PromptKind::Enter => {
                         if self.worker_state == AgentState::Idle {
+                            // Optimistically mark as Thinking to prevent stale-state
+                            // race: Worker will transition Idle→Thinking after processing.
+                            self.worker_state = AgentState::Thinking;
                             // Idle → forward immediately
                             let _ = self
                                 .worker_cmd_tx
@@ -113,6 +118,8 @@ impl Reactor {
                     }
                     PromptKind::AltEnter => {
                         if self.worker_state == AgentState::Idle {
+                            // Same optimistic update for Alt+Enter
+                            self.worker_state = AgentState::Thinking;
                             // Idle → forward immediately
                             let _ = self
                                 .worker_cmd_tx
@@ -161,7 +168,16 @@ impl Reactor {
             WorkerEvent::StateChanged(new_state) => {
                 let old_state = std::mem::replace(&mut self.worker_state, new_state);
 
-                // When worker enters Thinking: flush Enter queue
+                // When worker enters ToolCall: flush Enter queue so prompts
+                // arrive at cmd_rx before worker transitions back to Thinking.
+                // Worker will drain them in tool_call() and inject as user messages
+                // alongside tool results, before the next LLM call.
+                if self.worker_state == AgentState::ToolCall {
+                    self.flush_enter_queue().await;
+                }
+
+                // When worker enters Thinking: flush Enter queue (fallback for
+                // the no-tool-call path: Thinking→Acting→TaskCompleted→Observing→Idle)
                 if self.worker_state == AgentState::Thinking {
                     self.flush_enter_queue().await;
                 }
@@ -185,6 +201,8 @@ impl Reactor {
         if self.enter_queue.is_empty() {
             return;
         }
+        // Optimistically mark as Thinking before sending commands to Worker
+        self.worker_state = AgentState::Thinking;
         let batch: Vec<PromptRequest> = self.enter_queue.drain(..).collect();
         // Notify Worker to inject these prompts
         let _ = self
@@ -205,6 +223,8 @@ impl Reactor {
         if self.alt_queue.is_empty() {
             return;
         }
+        // Optimistically mark as Thinking before sending commands to Worker
+        self.worker_state = AgentState::Thinking;
         let batch: Vec<PromptRequest> = self.alt_queue.drain(..).collect();
         // Send each as a prompt command to the worker
         for pr in &batch {
