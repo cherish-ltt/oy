@@ -309,12 +309,11 @@ impl Widget for &App {
         }
 
         let status_text = format!(
-            " {}{}{} {} (Cycle with shift+tab)\n Messages: {} | ↑/↓/←/→ move cursor | Enter send | Ctrl+O expand | Ctrl+C/Esc/q quit",
+            " {}{}{} {} (Cycle with shift+tab)\n ↑/↓/←/→ move cursor | Enter send/Alt+Enter send to queue  | Ctrl+O expand | Ctrl+C/Esc/q quit",
             agent_label,
             token_stats,
             context_display,
-            spinner_char,
-            self.messages.len()
+            spinner_char
         );
 
         let status_paragraph = Paragraph::new(status_text)
