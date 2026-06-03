@@ -414,7 +414,7 @@ impl App {
                     // Enforce max 9 queued prompts
                     if self.pending_prompts.len() >= 9 {
                         self.insert_before_queued(UiMessages(
-                            "Maximum 9 prompts can be queued. Press Alt+R then 1..9 to revoke a queued prompt first.".to_string()
+                            "Maximum 9 prompts can be queued. Press Ctrl+R then 1..9 to revoke a queued prompt first.".to_string()
                         ));
                         if self.auto_scroll.get() {
                             self.scroll_offset.set(u16::MAX);
