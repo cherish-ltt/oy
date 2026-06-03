@@ -46,6 +46,25 @@ struct TableAccum {
     in_head: bool,
 }
 
+/// Count wrapped visual lines for content lines with a fixed prefix width.
+fn count_wrapped_content_lines(lines: &[&str], prefix_w: usize, width: usize) -> usize {
+    if width == 0 || lines.is_empty() {
+        return lines.len().max(1);
+    }
+    let width = width.max(1);
+    let mut count = 0;
+    for line in lines {
+        let line_w = UnicodeWidthStr::width(*line);
+        let total_w = prefix_w + line_w;
+        count += if total_w == 0 {
+            1
+        } else {
+            total_w.div_ceil(width)
+        };
+    }
+    count.max(1)
+}
+
 impl Message {
     /// Build the styled lines for display.
     /// For Tool messages with a known function_name, content is truncated per tool type
@@ -553,117 +572,314 @@ impl Message {
                 }
             }
             Message::ToolCallMsg(state) => {
-                let mut count = 1; // header line
+                let width = width.max(1);
+                let mut count = 0usize;
+
+                // Header line width (built same as to_lines)
+                let icon = if state.result.is_some() { "✓" } else { "·" };
+                let duration = if let Some(end) = state.end_time {
+                    end.duration_since(state.start_time).as_secs_f64()
+                } else {
+                    state.start_time.elapsed().as_secs_f64()
+                };
+                let header = format!(
+                    "🔧 ToolCall {} {}: {} ({:.1}s)",
+                    icon,
+                    state.function_name,
+                    state.arguments.as_deref().unwrap_or("unknown arguments"),
+                    duration,
+                );
+                let header_w = UnicodeWidthStr::width(header.as_str());
+                count += if header_w == 0 {
+                    1
+                } else {
+                    header_w.div_ceil(width)
+                };
+
+                // Content lines with "  " prefix
                 if let Some(result) = &state.result
                     && let Some(content) = &result.content
                 {
                     let all_lines: Vec<&str> = content.lines().collect();
                     let total = all_lines.len();
+                    let content_prefix_w = UnicodeWidthStr::width("  ");
+
                     match state.function_name.as_str() {
                         "Read" => {
-                            if state.expanded || total <= MAX_READ_LINES {
-                                count += total;
+                            let display = if state.expanded || total <= MAX_READ_LINES {
+                                total
                             } else {
-                                count += MAX_READ_LINES + 1;
+                                MAX_READ_LINES
+                            };
+                            count += count_wrapped_content_lines(
+                                &all_lines[..display],
+                                content_prefix_w,
+                                width,
+                            );
+                            if !state.expanded && total > MAX_READ_LINES {
+                                let hint = format!(
+                                    "  ... ({} more lines, ctrl+o to expand) ",
+                                    total - MAX_READ_LINES
+                                );
+                                count += UnicodeWidthStr::width(hint.as_str()).div_ceil(width);
                             }
                         }
                         "Bash" => {
                             if state.expanded || total <= MAX_BASH_LINES {
-                                count += total;
+                                count += count_wrapped_content_lines(
+                                    &all_lines,
+                                    content_prefix_w,
+                                    width,
+                                );
                             } else {
-                                count += 1 + MAX_BASH_LINES;
+                                let hint = format!(
+                                    "  ... ({} earlier lines, ctrl+o to expand) ",
+                                    total - MAX_BASH_LINES
+                                );
+                                count += UnicodeWidthStr::width(hint.as_str()).div_ceil(width);
+                                count += count_wrapped_content_lines(
+                                    &all_lines[total - MAX_BASH_LINES..],
+                                    content_prefix_w,
+                                    width,
+                                );
                             }
                         }
                         _ => {
-                            count += total;
+                            count +=
+                                count_wrapped_content_lines(&all_lines, content_prefix_w, width);
                         }
                     }
                 }
                 count.max(1)
             }
             Message::AgentStatus(_) => 1,
-            Message::PromptQueued { .. } => 2,
+            Message::PromptQueued { text, .. } => {
+                let width = width.max(1);
+                let mut count = 0usize;
+
+                // Line 1: "[N] ⏳ Prompt queuing..." — always short, estimate 1 line
+                count += 1;
+
+                // Line 2: "    " + display_text (up to ~84 chars)
+                let display_text = if text.chars().count() > 80 {
+                    let cut = text
+                        .char_indices()
+                        .take(80)
+                        .last()
+                        .map(|(i, c)| i + c.len_utf8())
+                        .unwrap_or(80);
+                    format!("{}...", &text[..cut])
+                } else {
+                    text.clone()
+                };
+                let line2 = format!("    {}", display_text);
+                let line2_w = UnicodeWidthStr::width(line2.as_str());
+                count += if line2_w == 0 {
+                    1
+                } else {
+                    line2_w.div_ceil(width)
+                };
+
+                count.max(1)
+            }
         }
     }
 
-    fn visual_read_count(&self, chat: &ChatMessage, expanded: bool, _width: usize) -> usize {
+    fn visual_read_count(&self, chat: &ChatMessage, expanded: bool, width: usize) -> usize {
         let content = chat.content.as_deref().unwrap_or("");
         let all_lines: Vec<&str> = content.lines().collect();
         let total = all_lines.len();
 
-        let display_count = if expanded || total <= MAX_READ_LINES {
-            total
+        let display_lines: Vec<&str> = if expanded || total <= MAX_READ_LINES {
+            all_lines
         } else {
-            MAX_READ_LINES + 1 // +1 for the "... N more lines" hint
+            all_lines[..MAX_READ_LINES].to_vec()
         };
 
-        display_count.max(1)
-    }
+        let prefix_w = UnicodeWidthStr::width("[Tool - Read] ");
+        let mut count = count_wrapped_content_lines(&display_lines, prefix_w, width);
 
-    fn visual_bash_count(&self, chat: &ChatMessage, expanded: bool, _width: usize) -> usize {
-        let content = chat.content.as_deref().unwrap_or("");
-        let all_lines: Vec<&str> = content.lines().collect();
-        let total = all_lines.len();
-
-        if expanded || total <= MAX_BASH_LINES {
-            total.max(1)
-        } else {
-            1 + MAX_BASH_LINES // 1 for the "... N earlier lines" header + last 5
-        }
-    }
-
-    fn visual_edit_count(&self, chat: &ChatMessage, expanded: bool, _width: usize) -> usize {
-        let mut count = 0usize;
-
-        // result line
-        if chat.content.is_some() {
-            count += 1;
-        }
-
-        // old text lines (with truncation)
-        if let Some(args) = &chat.tool_call_arguments {
-            if let Some(old) = args.get("old_text").and_then(|v| v.as_str()) {
-                let old_lines: Vec<&str> = old.lines().collect();
-                let old_total = old_lines.len();
-                if expanded || old_total <= MAX_EDIT_LINES {
-                    count += old_total;
-                } else {
-                    count += MAX_EDIT_LINES + 1; // +1 for the hint
-                }
-            }
-            // new text lines (with truncation)
-            if let Some(new) = args.get("new_text").and_then(|v| v.as_str()) {
-                let new_lines: Vec<&str> = new.lines().collect();
-                let new_total = new_lines.len();
-                if expanded || new_total <= MAX_EDIT_LINES {
-                    count += new_total;
-                } else {
-                    count += MAX_EDIT_LINES + 1; // +1 for the hint
-                }
-            }
+        if !expanded && total > MAX_READ_LINES {
+            // hint line: "... (N more lines, ctrl+o to expand) "
+            let hint = format!(
+                "... ({} more lines, ctrl+o to expand) ",
+                total - MAX_READ_LINES
+            );
+            count += UnicodeWidthStr::width(hint.as_str()).div_ceil(width.max(1));
         }
 
         count.max(1)
     }
 
-    fn visual_write_count(&self, _chat: &ChatMessage, _width: usize) -> usize {
-        // result line + file path line
-        2
+    fn visual_bash_count(&self, chat: &ChatMessage, expanded: bool, width: usize) -> usize {
+        let content = chat.content.as_deref().unwrap_or("");
+        let all_lines: Vec<&str> = content.lines().collect();
+        let total = all_lines.len();
+        let prefix_w = UnicodeWidthStr::width("[Tool - Bash] ");
+
+        if expanded || total <= MAX_BASH_LINES {
+            return count_wrapped_content_lines(&all_lines, prefix_w, width).max(1);
+        }
+
+        // Collapsed: hint line + last MAX_BASH_LINES lines
+        let mut count = 0usize;
+        let hint = format!(
+            "... ({} earlier lines, ctrl+o to expand) ",
+            total - MAX_BASH_LINES
+        );
+        count += UnicodeWidthStr::width(hint.as_str()).div_ceil(width.max(1));
+        count += count_wrapped_content_lines(&all_lines[total - MAX_BASH_LINES..], prefix_w, width);
+        count.max(1)
     }
 
-    fn visual_default_count(&self, chat: &ChatMessage, _width: usize, theme: &Theme) -> usize {
+    fn visual_edit_count(&self, chat: &ChatMessage, expanded: bool, width: usize) -> usize {
+        let (old_text, new_text) = chat
+            .tool_call_arguments
+            .as_ref()
+            .map(|args| {
+                let old = args
+                    .get("old_text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let new = args
+                    .get("new_text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                (old, new)
+            })
+            .unwrap_or(("?".to_string(), "?".to_string()));
+        let width = width.max(1);
         let mut count = 0usize;
+
+        // result line
+        if let Some(result) = &chat.content {
+            let total_w =
+                UnicodeWidthStr::width("[Tool - Edit] ") + UnicodeWidthStr::width(result.as_str());
+            count += if total_w == 0 {
+                1
+            } else {
+                total_w.div_ceil(width)
+            };
+        }
+
+        // old text lines (with truncation)
+        let old_lines: Vec<&str> = old_text.lines().collect();
+        let old_total = old_lines.len();
+        let old_display_count = if expanded {
+            old_total
+        } else {
+            old_total.min(MAX_EDIT_LINES)
+        };
+        let old_prefix_w = UnicodeWidthStr::width("      - ");
+        count += count_wrapped_content_lines(&old_lines[..old_display_count], old_prefix_w, width);
+        if !expanded && old_total > MAX_EDIT_LINES {
+            let hint = format!(
+                "      ... ({} more lines, ctrl+o to expand) ",
+                old_total - MAX_EDIT_LINES
+            );
+            count += UnicodeWidthStr::width(hint.as_str()).div_ceil(width);
+        }
+
+        // new text lines (with truncation)
+        let new_lines: Vec<&str> = new_text.lines().collect();
+        let new_total = new_lines.len();
+        let new_display_count = if expanded {
+            new_total
+        } else {
+            new_total.min(MAX_EDIT_LINES)
+        };
+        let new_prefix_w = UnicodeWidthStr::width("      + ");
+        count += count_wrapped_content_lines(&new_lines[..new_display_count], new_prefix_w, width);
+        if !expanded && new_total > MAX_EDIT_LINES {
+            let hint = format!(
+                "      ... ({} more lines, ctrl+o to expand) ",
+                new_total - MAX_EDIT_LINES
+            );
+            count += UnicodeWidthStr::width(hint.as_str()).div_ceil(width);
+        }
+
+        count.max(1)
+    }
+
+    fn visual_write_count(&self, chat: &ChatMessage, width: usize) -> usize {
+        let width = width.max(1);
+        let mut count = 0usize;
+
+        // result line: "[Tool - Write] " + content
+        if let Some(result) = &chat.content {
+            let total_w =
+                UnicodeWidthStr::width("[Tool - Write] ") + UnicodeWidthStr::width(result.as_str());
+            count += if total_w == 0 {
+                1
+            } else {
+                total_w.div_ceil(width)
+            };
+        }
+
+        // file path line
+        let file_path = chat
+            .tool_call_arguments
+            .as_ref()
+            .and_then(|args| args.get("file_path").and_then(|v| v.as_str()))
+            .unwrap_or("?");
+        let line_count = chat
+            .tool_call_arguments
+            .as_ref()
+            .and_then(|args| args.get("content").and_then(|v| v.as_str()))
+            .map(|c| c.lines().count())
+            .unwrap_or(0);
+        let file_line = format!("      📄 {} ({} lines)", file_path, line_count);
+        let file_w = UnicodeWidthStr::width(file_line.as_str());
+        count += if file_w == 0 {
+            1
+        } else {
+            file_w.div_ceil(width)
+        };
+
+        count.max(1)
+    }
+
+    fn visual_default_count(&self, chat: &ChatMessage, width: usize, _theme: &Theme) -> usize {
+        let width = width.max(1);
+        let mut count = 0usize;
+
+        // reasoning content: to_lines puts all text in ONE Span (newlines preserved),
+        // ratatui renders each \n-separated sub-line independently, prefix on first only.
         if let Some(r) = &chat.reasoning_content {
-            count += Self::render_markdown(r, Style::default(), theme).len();
-        }
-        if let Some(c) = &chat.content {
-            count += Self::render_markdown(c, Style::default(), theme).len();
-        }
-        if let Some(tools) = &chat.tool_calls {
-            for _tool in tools {
-                count += 2;
+            let prefix = format!("[{:#?} - thinking] ", chat.role);
+            let prefix_w = UnicodeWidthStr::width(prefix.as_str());
+            let r_lines: Vec<&str> = r.trim_end().lines().collect();
+            for (i, line) in r_lines.iter().enumerate() {
+                let w = if i == 0 {
+                    UnicodeWidthStr::width(*line) + prefix_w
+                } else {
+                    UnicodeWidthStr::width(*line)
+                };
+                count += if w == 0 { 1 } else { w.div_ceil(width) };
             }
         }
+
+        // content: to_lines uses render_markdown and adds "[{:#?}] " prefix to first line
+        if let Some(c) = &chat.content {
+            let md_lines = Self::render_markdown(c, Style::default(), _theme);
+            let prefix = format!("[{:#?}] ", chat.role);
+            let prefix_w = UnicodeWidthStr::width(prefix.as_str());
+            for (i, line) in md_lines.iter().enumerate() {
+                let w = if i == 0 {
+                    line.width() + prefix_w
+                } else {
+                    line.width()
+                };
+                count += if w == 0 { 1 } else { w.div_ceil(width) };
+            }
+        }
+
+        if let Some(tools) = &chat.tool_calls {
+            count += tools.len() * 2;
+        }
+
         count
     }
 

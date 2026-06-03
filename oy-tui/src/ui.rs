@@ -54,9 +54,11 @@ fn wrap_input_text(input: &str, width: usize) -> Vec<String> {
         } else {
             // 非空白字符
             if col + w > width as u16 {
-                // 当前行放不下：丢弃暂存空白，换到新行
+                // 当前行放不下：先刷入暂存空白，再换到新行
+                for wc in pending_ws.drain(..) {
+                    current_line.push(wc);
+                }
                 lines.push(std::mem::take(&mut current_line));
-                pending_ws.clear();
                 col = w;
                 current_line.push(ch);
             } else {
@@ -271,6 +273,7 @@ impl Widget for &App {
                     .border_style(Style::default().fg(t.input_border)),
             )
             .scroll((input_scroll, 0))
+            .wrap(Wrap { trim: false })
             .style(Style::default().fg(t.surface_fg).bg(t.surface_bg));
 
         input_paragraph.render(chunks[1], buf);
