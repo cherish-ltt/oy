@@ -845,11 +845,20 @@ impl Message {
         let width = width.max(1);
         let mut count = 0usize;
 
-        // reasoning content: to_lines puts it on ONE line with "[{:#?} - thinking] " prefix
+        // reasoning content: to_lines puts all text in ONE Span (newlines preserved),
+        // ratatui renders each \n-separated sub-line independently, prefix on first only.
         if let Some(r) = &chat.reasoning_content {
-            let line = format!("[{:#?} - thinking] {}", chat.role, r.trim_end());
-            let w = UnicodeWidthStr::width(line.as_str());
-            count += if w == 0 { 1 } else { w.div_ceil(width) };
+            let prefix = format!("[{:#?} - thinking] ", chat.role);
+            let prefix_w = UnicodeWidthStr::width(prefix.as_str());
+            let r_lines: Vec<&str> = r.trim_end().lines().collect();
+            for (i, line) in r_lines.iter().enumerate() {
+                let w = if i == 0 {
+                    UnicodeWidthStr::width(*line) + prefix_w
+                } else {
+                    UnicodeWidthStr::width(*line)
+                };
+                count += if w == 0 { 1 } else { w.div_ceil(width) };
+            }
         }
 
         // content: to_lines uses render_markdown and adds "[{:#?}] " prefix to first line
