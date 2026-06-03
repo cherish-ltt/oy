@@ -16,10 +16,11 @@ use oy_agent::{
     Orchestrator, SkillSummary, TokenUsage,
     agent::{PromptKind, RequestAgent},
     format_token_count,
-    infrastructure::{agents::main_agent::MainAgent, tools::ToolRegistry},
-    oy_ai::OpenCodeGoProvider,
+    infrastructure::{agents::main_agent::MainAgent, persistence, tools::ToolRegistry},
+    oy_ai::{ChatMessage, OpenCodeGoProvider, Role},
 };
 use ratatui::DefaultTerminal;
+use std::path::PathBuf;
 use std::{
     cell::Cell,
     collections::{HashMap, VecDeque},
@@ -101,16 +102,8 @@ pub struct App {
 }
 
 impl App {
-    pub async fn new() -> Self {
+    pub async fn new(session_path: Option<PathBuf>) -> Self {
         let mut messages = VecDeque::new();
-        WELCOME_TIPS_VEC.iter().for_each(|tip| {
-            if tip.eq(&"OY") {
-                messages.push_back(Message::UiMessages(format!("{} {}", tip, VERSION)));
-            } else {
-                messages.push_back(Message::UiMessages(tip.to_string()));
-            }
-        });
-
         let global_toml_config = GlobalTomlConfig::load();
 
         // Load skills
@@ -119,6 +112,65 @@ impl App {
             .and_then(|c| c.read_claude_skills)
             .unwrap_or(true);
         let skills = oy_agent::domain::skill::discover_skills(read_claude);
+
+        let mut main_agent: Option<AgentManager> = None;
+
+        // ── Session restore path ──
+        if let Some(path) = &session_path {
+            match persistence::load_session_messages(path) {
+                Ok((session_uuid, history_msgs)) => {
+                    // Populate TUI messages from history (skip system prompt)
+                    for msg in &history_msgs {
+                        if msg.role != Role::System {
+                            messages.push_back(Message::AgentMessages(msg.clone(), false));
+                        }
+                    }
+
+                    // Start agent with session uuid + history
+                    if let Some(global_toml_config) = &global_toml_config {
+                        main_agent = Some(
+                            start_agent_with_session(
+                                global_toml_config,
+                                session_uuid,
+                                history_msgs,
+                            )
+                            .await,
+                        );
+                    }
+
+                    // Add a session restored indicator
+                    messages.push_back(Message::UiMessages(
+                        "Session restored. Continue the conversation below.".to_string(),
+                    ));
+                }
+                Err(e) => {
+                    messages.push_back(Message::UiMessages(format!(
+                        "Failed to load session: {}. Starting fresh.",
+                        e
+                    )));
+                }
+            }
+        }
+
+        // ── Fresh (non-session) path: add welcome tips ──
+        if session_path.is_none() {
+            WELCOME_TIPS_VEC.iter().for_each(|tip| {
+                if tip.eq(&"OY") {
+                    messages.push_back(Message::UiMessages(format!("{} {}", tip, VERSION)));
+                } else {
+                    messages.push_back(Message::UiMessages(tip.to_string()));
+                }
+            });
+        }
+
+        // ── Normal agent start (no session) ──
+        if session_path.is_none() {
+            if let Some(global_toml_config) = &global_toml_config {
+                main_agent = Some(start_main_agent_background(global_toml_config).await);
+            }
+        }
+
+        // Skills banner (append after session messages if any)
         if !skills.is_empty() {
             let skill_names: Vec<String> = skills
                 .iter()
@@ -128,11 +180,6 @@ impl App {
                 "[Available Skills] \n{}",
                 skill_names.join(", ")
             )));
-        }
-
-        let mut main_agent: Option<AgentManager> = None;
-        if let Some(global_toml_config) = &global_toml_config {
-            main_agent = Some(start_main_agent_background(global_toml_config).await);
         }
 
         // Pass skills to the agent
@@ -1600,6 +1647,33 @@ impl App {
     pub fn quit(&mut self) {
         self.running = false;
     }
+}
+
+pub async fn start_agent_with_session(
+    global_toml_config: &GlobalTomlConfig,
+    session_uuid: Uuid,
+    session_messages: Vec<ChatMessage>,
+) -> AgentManager {
+    let ai_config = build_provider_config(global_toml_config);
+    let provider = OpenCodeGoProvider::new(ai_config);
+    let mut tool_registry = ToolRegistry::new();
+    register_default_tools(&mut tool_registry);
+
+    let main_agent = MainAgent::new(None);
+    let (request_sender, response_receiver, join_handle) = Orchestrator::start_with_session(
+        main_agent,
+        provider,
+        tool_registry,
+        session_uuid,
+        session_messages,
+    );
+
+    AgentManager::new(
+        "MainAgent".to_owned(),
+        join_handle,
+        request_sender,
+        response_receiver,
+    )
 }
 
 pub async fn start_main_agent_background(global_toml_config: &GlobalTomlConfig) -> AgentManager {
