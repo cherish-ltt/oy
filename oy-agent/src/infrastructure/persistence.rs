@@ -141,7 +141,7 @@ pub fn load_session_messages(path: &Path) -> Result<(Uuid, Vec<ChatMessage>), Ag
     let file_name = path
         .file_stem()
         .ok_or_else(|| AgentError::SessionPersistenceError("Invalid file name".into()))?;
-    let uuid = Uuid::from_str(&file_name.to_string_lossy())?;
+    let uuid = Uuid::from_str(&file_name.to_string_lossy()).unwrap_or_else(|_| Uuid::now_v7());
 
     Ok((uuid, messages))
 }
@@ -187,7 +187,7 @@ pub fn load_session(path: &Path) -> Result<Box<dyn Agent>, AgentError> {
     let file_name = path
         .file_stem()
         .ok_or_else(|| AgentError::SessionPersistenceError("Invalid file name".into()))?;
-    let uuid = Uuid::from_str(&file_name.to_string_lossy())?;
+    let uuid = Uuid::from_str(&file_name.to_string_lossy()).unwrap_or_else(|_| Uuid::now_v7());
     let mut agent = Box::new(MainAgent::new(None));
     for msg in messages {
         let _ = agent.push_message_back(uuid, msg);
