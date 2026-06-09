@@ -71,6 +71,8 @@ pub struct App {
     pub scroll_offset: Cell<u16>,
     /// 是否自动滚动到底部（当用户手动向上翻页时为 false）
     pub auto_scroll: Cell<bool>,
+    /// 上一次渲染时聊天区域的宽度，用于检测 resize 后自动滚动到底部
+    pub last_chat_width: Cell<u16>,
     /// 粘贴片段存储（占位符 -> 原始内容）
     pub paste_snippets: HashMap<String, String>,
     /// 粘贴计数器
@@ -128,7 +130,9 @@ impl App {
                     }
 
                     // Start agent with session uuid + history
-                    if let Some(global_toml_config) = &global_toml_config {
+                    if let Some(global_toml_config) = &global_toml_config
+                        && config_is_complete(global_toml_config)
+                    {
                         main_agent = Some(
                             start_agent_with_session(
                                 global_toml_config,
@@ -166,8 +170,21 @@ impl App {
         }
 
         // ── Normal agent start (no session or session load failed) ──
-        if !session_loaded && let Some(global_toml_config) = &global_toml_config {
+        if !session_loaded
+            && let Some(global_toml_config) = &global_toml_config
+            && config_is_complete(global_toml_config)
+        {
             main_agent = Some(start_main_agent_background(global_toml_config).await);
+        }
+
+        // Show config hint if agent cannot start due to missing fields
+        if main_agent.is_none() && !session_loaded {
+            let has_config = global_toml_config.is_some();
+            if !has_config || !config_is_complete(global_toml_config.as_ref().unwrap()) {
+                messages.push_back(Message::UiMessages(
+                    "Welcome to OY! Please configure your API settings using /model command or /settings menu.".to_string()
+                ));
+            }
         }
 
         // Skills banner (append after session messages if any)
@@ -225,6 +242,7 @@ impl App {
             input_width: Cell::new(0),
             scroll_offset: Cell::new(initial_scroll_offset),
             auto_scroll: Cell::new(true),
+            last_chat_width: Cell::new(0),
             paste_snippets: HashMap::new(),
             paste_counter: 0,
             events,
@@ -457,9 +475,9 @@ impl App {
                     PromptKind::Enter
                 };
 
-                // Check for slash commands
-                if input.starts_with('/') {
-                    self.execute_command(&input).await;
+                // Check for slash commands — exact match only, otherwise send as prompt
+                if input.starts_with('/') && self.execute_command(&input).await {
+                    // Handled as a command
                 } else if let Some(main_agent) = &self.main_agent {
                     // Enforce max 9 queued prompts
                     if self.pending_prompts.len() >= 9 {
@@ -553,8 +571,12 @@ impl App {
             KeyCode::Char(c) => {
                 self.input.insert(self.cursor_pos, c);
                 self.cursor_pos += c.len_utf8();
-                // Enter command mode when input starts with "/"
-                if self.input == "/" || (self.input.starts_with('/') && self.input.len() > 1) {
+                // Enter command mode when input starts with "/" and matches known commands
+                if self.input == "/"
+                    || (self.input.starts_with('/')
+                        && self.input.len() > 1
+                        && !self.command_registry.search(&self.input).is_empty())
+                {
                     self.app_mode = AppMode::CommandSelector {
                         selected: 0,
                         scroll_offset: 0,
@@ -1124,6 +1146,7 @@ impl App {
                             step: 0,
                             values: [String::new(), String::new(), String::new(), String::new()],
                         };
+                        return;
                     }
                     Some(CommandId::SetApiKey) => {
                         self.input_title = "API Key:".to_string();
@@ -1131,6 +1154,7 @@ impl App {
                             step: 0,
                             values: [String::new(), String::new(), String::new(), String::new()],
                         };
+                        return;
                     }
                     Some(CommandId::SetModel) => {
                         self.input_title = "Model:".to_string();
@@ -1138,6 +1162,7 @@ impl App {
                             step: 0,
                             values: [String::new(), String::new(), String::new(), String::new()],
                         };
+                        return;
                     }
                     Some(CommandId::ReadClaudeSkills) => {
                         self.switch_claude_skills().await;
@@ -1195,6 +1220,7 @@ impl App {
                                     String::new(),
                                 ],
                             };
+                            return;
                         } else {
                             self.switch_context_capacity(capacity).await;
                         }
@@ -1216,40 +1242,47 @@ impl App {
         }
     }
 
-    async fn execute_command(&mut self, input: &str) {
+    /// Execute a slash command. Returns true if input was recognized as a command.
+    async fn execute_command(&mut self, input: &str) -> bool {
+        // Clear any residual input text (e.g. from CommandSelector auto-complete)
+        self.input.clear();
+        self.cursor_pos = 0;
+
         let trimmed = input.trim();
 
         // Check if any top-level command matches and has children → open submenu
-        if let Some(cmd) = self.command_registry.search(trimmed).first()
-            && !cmd.children.is_empty()
+        if let Some(cmd) = self
+            .command_registry
+            .commands
+            .iter()
+            .find(|c| c.name == trimmed)
         {
-            let items: Vec<(String, String)> = cmd
-                .children
-                .iter()
-                .map(|c| (c.name.to_string(), c.description.to_string()))
-                .collect();
-            let title = cmd.name.to_string();
-            self.app_mode = AppMode::SubMenu {
-                title,
-                items,
-                selected: 0,
-                scroll_offset: 0,
-            };
-            return;
+            if !cmd.children.is_empty() {
+                let items: Vec<(String, String)> = cmd
+                    .children
+                    .iter()
+                    .map(|c| (c.name.to_string(), c.description.to_string()))
+                    .collect();
+                let title = cmd.name.to_string();
+                self.app_mode = AppMode::SubMenu {
+                    title,
+                    items,
+                    selected: 0,
+                    scroll_offset: 0,
+                };
+            } else {
+                // Leaf command (currently only /model)
+                self.input_title = "API Base URL (step 1/4):".to_string();
+                self.app_mode = AppMode::ModelForm {
+                    step: 0,
+                    values: [String::new(), String::new(), String::new(), String::new()],
+                };
+            }
+            return true;
         }
 
-        if trimmed == "/model" || trimmed.starts_with("/model ") {
-            self.input_title = "API Base URL:".to_string();
-            self.app_mode = AppMode::ModelForm {
-                step: 0,
-                values: [String::new(), String::new(), String::new(), String::new()],
-            };
-        } else {
-            self.insert_before_queued(UiMessages(format!("Unknown command: {}", trimmed)));
-            if self.auto_scroll.get() {
-                self.scroll_offset.set(u16::MAX);
-            }
-        }
+        // Not a recognized command
+        false
     }
 
     fn switch_theme(&mut self, name: &str) {
@@ -1301,8 +1334,10 @@ impl App {
             global_config.reasoning_effort = Some(effort.to_string());
         }
 
-        // Build new provider with updated config
-        if let Some(ref global_config) = self.global_toml_config {
+        // Only restart agent if all required fields are configured
+        if let Some(ref global_config) = self.global_toml_config
+            && config_is_complete(global_config)
+        {
             let ai_config = build_provider_config(global_config);
             let provider = OpenCodeGoProvider::new(ai_config);
             if let Some(agent_manager) = &self.main_agent {
@@ -1347,8 +1382,10 @@ impl App {
             global_config.context_capacity = Some(capacity);
         }
 
-        // Build new provider with updated config
-        if let Some(ref global_config) = self.global_toml_config {
+        // Only restart agent if all required fields are configured
+        if let Some(ref global_config) = self.global_toml_config
+            && config_is_complete(global_config)
+        {
             let ai_config = build_provider_config(global_config);
             let provider = OpenCodeGoProvider::new(ai_config);
             if let Some(agent_manager) = &self.main_agent {
@@ -1407,9 +1444,11 @@ impl App {
         }
         self.global_toml_config = Some(config);
 
-        // Build new provider with updated config
-        if let Some(ref global_config) = self.global_toml_config {
-            let ai_config = build_provider_config(global_config);
+        // Check if config has all required fields before restarting the agent
+        let cfg = self.global_toml_config.as_ref().unwrap();
+        if config_is_complete(cfg) {
+            // All required fields present: restart agent with new provider
+            let ai_config = build_provider_config(cfg);
             let provider = OpenCodeGoProvider::new(ai_config);
             if let Some(agent_manager) = &self.main_agent {
                 let _ = agent_manager
@@ -1417,9 +1456,25 @@ impl App {
                     .send(RequestAgent::SetProvider(Box::new(provider)))
                     .await;
             }
+            self.insert_before_queued(UiMessages(format!("Updated {} to: {}", field, value)));
+        } else {
+            // Some fields missing: show helpful message instead of crashing
+            let mut missing = Vec::new();
+            if cfg.api_key.as_deref().is_none_or(str::is_empty) {
+                missing.push("api_key");
+            }
+            if cfg.base_url.as_deref().is_none_or(str::is_empty) {
+                missing.push("base_url");
+            }
+            if cfg.model.as_deref().is_none_or(str::is_empty) {
+                missing.push("model");
+            }
+            self.insert_before_queued(UiMessages(format!(
+                "Saved {}. Still need to configure: {}  (use /settings submenu or /model command)",
+                field,
+                missing.join(", ")
+            )));
         }
-
-        self.insert_before_queued(UiMessages(format!("Updated {} to: {}", field, value)));
         if self.auto_scroll.get() {
             self.scroll_offset.set(u16::MAX);
         }
@@ -1650,6 +1705,13 @@ impl App {
     pub fn quit(&mut self) {
         self.running = false;
     }
+}
+
+/// Check if the config has all required fields (api_key, base_url, model) to start an agent.
+pub fn config_is_complete(config: &GlobalTomlConfig) -> bool {
+    config.api_key.as_ref().is_some_and(|s| !s.is_empty())
+        && config.base_url.as_ref().is_some_and(|s| !s.is_empty())
+        && config.model.as_ref().is_some_and(|s| !s.is_empty())
 }
 
 pub async fn start_agent_with_session(

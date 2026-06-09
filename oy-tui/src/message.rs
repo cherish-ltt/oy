@@ -861,9 +861,10 @@ impl Message {
             }
         }
 
-        // content: to_lines uses render_markdown and adds "[{:#?}] " prefix to first line
+        // content: to_lines applies trim_end() then render_markdown; match exactly here
         if let Some(c) = &chat.content {
-            let md_lines = Self::render_markdown(c, Style::default(), _theme);
+            let trimmed = c.trim_end();
+            let md_lines = Self::render_markdown(trimmed, Style::default(), _theme);
             let prefix = format!("[{:#?}] ", chat.role);
             let prefix_w = UnicodeWidthStr::width(prefix.as_str());
             for (i, line) in md_lines.iter().enumerate() {
