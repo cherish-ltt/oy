@@ -1221,6 +1221,10 @@ impl App {
     }
 
     async fn execute_command(&mut self, input: &str) {
+        // Clear any residual input text (e.g. from CommandSelector auto-complete)
+        self.input.clear();
+        self.cursor_pos = 0;
+
         let trimmed = input.trim();
 
         // Check if any top-level command matches and has children → open submenu
@@ -1243,7 +1247,7 @@ impl App {
         }
 
         if trimmed == "/model" || trimmed.starts_with("/model ") {
-            self.input_title = "API Base URL:".to_string();
+            self.input_title = "API Base URL (step 1/4):".to_string();
             self.app_mode = AppMode::ModelForm {
                 step: 0,
                 values: [String::new(), String::new(), String::new(), String::new()],
