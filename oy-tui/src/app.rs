@@ -1335,16 +1335,7 @@ impl App {
 
         // Only restart agent if all required fields are configured
         if let Some(ref global_config) = self.global_toml_config {
-            let api_key_ok = global_config
-                .api_key
-                .as_ref()
-                .is_some_and(|s| !s.is_empty());
-            let base_url_ok = global_config
-                .base_url
-                .as_ref()
-                .is_some_and(|s| !s.is_empty());
-            let model_ok = global_config.model.as_ref().is_some_and(|s| !s.is_empty());
-            if api_key_ok && base_url_ok && model_ok {
+            if config_is_complete(global_config) {
                 let ai_config = build_provider_config(global_config);
                 let provider = OpenCodeGoProvider::new(ai_config);
                 if let Some(agent_manager) = &self.main_agent {
@@ -1392,16 +1383,7 @@ impl App {
 
         // Only restart agent if all required fields are configured
         if let Some(ref global_config) = self.global_toml_config {
-            let api_key_ok = global_config
-                .api_key
-                .as_ref()
-                .is_some_and(|s| !s.is_empty());
-            let base_url_ok = global_config
-                .base_url
-                .as_ref()
-                .is_some_and(|s| !s.is_empty());
-            let model_ok = global_config.model.as_ref().is_some_and(|s| !s.is_empty());
-            if api_key_ok && base_url_ok && model_ok {
+            if config_is_complete(global_config) {
                 let ai_config = build_provider_config(global_config);
                 let provider = OpenCodeGoProvider::new(ai_config);
                 if let Some(agent_manager) = &self.main_agent {
