@@ -472,9 +472,9 @@ impl App {
                     PromptKind::Enter
                 };
 
-                // Check for slash commands
-                if input.starts_with('/') {
-                    self.execute_command(&input).await;
+                // Check for slash commands — exact match only, otherwise send as prompt
+                if input.starts_with('/') && self.execute_command(&input).await {
+                    // Handled as a command
                 } else if let Some(main_agent) = &self.main_agent {
                     // Enforce max 9 queued prompts
                     if self.pending_prompts.len() >= 9 {
@@ -1235,7 +1235,8 @@ impl App {
         }
     }
 
-    async fn execute_command(&mut self, input: &str) {
+    /// Execute a slash command. Returns true if input was recognized as a command.
+    async fn execute_command(&mut self, input: &str) -> bool {
         // Clear any residual input text (e.g. from CommandSelector auto-complete)
         self.input.clear();
         self.cursor_pos = 0;
@@ -1243,36 +1244,37 @@ impl App {
         let trimmed = input.trim();
 
         // Check if any top-level command matches and has children → open submenu
-        if let Some(cmd) = self.command_registry.search(trimmed).first()
-            && !cmd.children.is_empty()
+        if let Some(cmd) = self.command_registry
+            .commands
+            .iter()
+            .find(|c| c.name == trimmed)
         {
-            let items: Vec<(String, String)> = cmd
-                .children
-                .iter()
-                .map(|c| (c.name.to_string(), c.description.to_string()))
-                .collect();
-            let title = cmd.name.to_string();
-            self.app_mode = AppMode::SubMenu {
-                title,
-                items,
-                selected: 0,
-                scroll_offset: 0,
-            };
-            return;
+            if !cmd.children.is_empty() {
+                let items: Vec<(String, String)> = cmd
+                    .children
+                    .iter()
+                    .map(|c| (c.name.to_string(), c.description.to_string()))
+                    .collect();
+                let title = cmd.name.to_string();
+                self.app_mode = AppMode::SubMenu {
+                    title,
+                    items,
+                    selected: 0,
+                    scroll_offset: 0,
+                };
+            } else {
+                // Leaf command (currently only /model)
+                self.input_title = "API Base URL (step 1/4):".to_string();
+                self.app_mode = AppMode::ModelForm {
+                    step: 0,
+                    values: [String::new(), String::new(), String::new(), String::new()],
+                };
+            }
+            return true;
         }
 
-        if trimmed == "/model" || trimmed.starts_with("/model ") {
-            self.input_title = "API Base URL (step 1/4):".to_string();
-            self.app_mode = AppMode::ModelForm {
-                step: 0,
-                values: [String::new(), String::new(), String::new(), String::new()],
-            };
-        } else {
-            self.insert_before_queued(UiMessages(format!("Unknown command: {}", trimmed)));
-            if self.auto_scroll.get() {
-                self.scroll_offset.set(u16::MAX);
-            }
-        }
+        // Not a recognized command
+        false
     }
 
     fn switch_theme(&mut self, name: &str) {
