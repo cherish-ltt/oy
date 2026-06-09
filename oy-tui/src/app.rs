@@ -71,6 +71,8 @@ pub struct App {
     pub scroll_offset: Cell<u16>,
     /// 是否自动滚动到底部（当用户手动向上翻页时为 false）
     pub auto_scroll: Cell<bool>,
+    /// 上一次渲染时聊天区域的宽度，用于检测 resize 后自动滚动到底部
+    pub last_chat_width: Cell<u16>,
     /// 粘贴片段存储（占位符 -> 原始内容）
     pub paste_snippets: HashMap<String, String>,
     /// 粘贴计数器
@@ -240,6 +242,7 @@ impl App {
             input_width: Cell::new(0),
             scroll_offset: Cell::new(initial_scroll_offset),
             auto_scroll: Cell::new(true),
+            last_chat_width: Cell::new(0),
             paste_snippets: HashMap::new(),
             paste_counter: 0,
             events,
