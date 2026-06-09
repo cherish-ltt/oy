@@ -1335,16 +1335,16 @@ impl App {
         }
 
         // Only restart agent if all required fields are configured
-        if let Some(ref global_config) = self.global_toml_config {
-            if config_is_complete(global_config) {
-                let ai_config = build_provider_config(global_config);
-                let provider = OpenCodeGoProvider::new(ai_config);
-                if let Some(agent_manager) = &self.main_agent {
-                    let _ = agent_manager
-                        .request_sender
-                        .send(RequestAgent::SetProvider(Box::new(provider)))
-                        .await;
-                }
+        if let Some(ref global_config) = self.global_toml_config
+            && config_is_complete(global_config)
+        {
+            let ai_config = build_provider_config(global_config);
+            let provider = OpenCodeGoProvider::new(ai_config);
+            if let Some(agent_manager) = &self.main_agent {
+                let _ = agent_manager
+                    .request_sender
+                    .send(RequestAgent::SetProvider(Box::new(provider)))
+                    .await;
             }
         }
 
@@ -1383,16 +1383,16 @@ impl App {
         }
 
         // Only restart agent if all required fields are configured
-        if let Some(ref global_config) = self.global_toml_config {
-            if config_is_complete(global_config) {
-                let ai_config = build_provider_config(global_config);
-                let provider = OpenCodeGoProvider::new(ai_config);
-                if let Some(agent_manager) = &self.main_agent {
-                    let _ = agent_manager
-                        .request_sender
-                        .send(RequestAgent::SetProvider(Box::new(provider)))
-                        .await;
-                }
+        if let Some(ref global_config) = self.global_toml_config
+            && config_is_complete(global_config)
+        {
+            let ai_config = build_provider_config(global_config);
+            let provider = OpenCodeGoProvider::new(ai_config);
+            if let Some(agent_manager) = &self.main_agent {
+                let _ = agent_manager
+                    .request_sender
+                    .send(RequestAgent::SetProvider(Box::new(provider)))
+                    .await;
             }
         }
 
@@ -1460,13 +1460,13 @@ impl App {
         } else {
             // Some fields missing: show helpful message instead of crashing
             let mut missing = Vec::new();
-            if cfg.api_key.as_deref().map_or(true, str::is_empty) {
+            if cfg.api_key.as_deref().is_none_or(str::is_empty) {
                 missing.push("api_key");
             }
-            if cfg.base_url.as_deref().map_or(true, str::is_empty) {
+            if cfg.base_url.as_deref().is_none_or(str::is_empty) {
                 missing.push("base_url");
             }
-            if cfg.model.as_deref().map_or(true, str::is_empty) {
+            if cfg.model.as_deref().is_none_or(str::is_empty) {
                 missing.push("model");
             }
             self.insert_before_queued(UiMessages(format!(
