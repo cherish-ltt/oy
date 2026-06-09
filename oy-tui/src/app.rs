@@ -571,10 +571,11 @@ impl App {
             KeyCode::Char(c) => {
                 self.input.insert(self.cursor_pos, c);
                 self.cursor_pos += c.len_utf8();
-                // Enter command mode only when input starts with "/" and matches known commands
-                if self.input.starts_with('/')
-                    && self.input.len() > 1
-                    && !self.command_registry.search(&self.input).is_empty()
+                // Enter command mode when input starts with "/" and matches known commands
+                if self.input == "/"
+                    || (self.input.starts_with('/')
+                        && self.input.len() > 1
+                        && !self.command_registry.search(&self.input).is_empty())
                 {
                     self.app_mode = AppMode::CommandSelector {
                         selected: 0,
