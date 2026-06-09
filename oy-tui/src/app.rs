@@ -128,7 +128,9 @@ impl App {
                     }
 
                     // Start agent with session uuid + history
-                    if let Some(global_toml_config) = &global_toml_config {
+                    if let Some(global_toml_config) = &global_toml_config
+                        && config_is_complete(global_toml_config)
+                    {
                         main_agent = Some(
                             start_agent_with_session(
                                 global_toml_config,
@@ -166,8 +168,21 @@ impl App {
         }
 
         // ── Normal agent start (no session or session load failed) ──
-        if !session_loaded && let Some(global_toml_config) = &global_toml_config {
+        if !session_loaded
+            && let Some(global_toml_config) = &global_toml_config
+            && config_is_complete(global_toml_config)
+        {
             main_agent = Some(start_main_agent_background(global_toml_config).await);
+        }
+
+        // Show config hint if agent cannot start due to missing fields
+        if main_agent.is_none() && !session_loaded {
+            let has_config = global_toml_config.is_some();
+            if !has_config || !config_is_complete(global_toml_config.as_ref().unwrap()) {
+                messages.push_back(Message::UiMessages(
+                    "Welcome to OY! Please configure your API settings using /model command or /settings menu.".to_string()
+                ));
+            }
         }
 
         // Skills banner (append after session messages if any)
@@ -1309,15 +1324,26 @@ impl App {
             global_config.reasoning_effort = Some(effort.to_string());
         }
 
-        // Build new provider with updated config
+        // Only restart agent if all required fields are configured
         if let Some(ref global_config) = self.global_toml_config {
-            let ai_config = build_provider_config(global_config);
-            let provider = OpenCodeGoProvider::new(ai_config);
-            if let Some(agent_manager) = &self.main_agent {
-                let _ = agent_manager
-                    .request_sender
-                    .send(RequestAgent::SetProvider(Box::new(provider)))
-                    .await;
+            let api_key_ok = global_config
+                .api_key
+                .as_ref()
+                .is_some_and(|s| !s.is_empty());
+            let base_url_ok = global_config
+                .base_url
+                .as_ref()
+                .is_some_and(|s| !s.is_empty());
+            let model_ok = global_config.model.as_ref().is_some_and(|s| !s.is_empty());
+            if api_key_ok && base_url_ok && model_ok {
+                let ai_config = build_provider_config(global_config);
+                let provider = OpenCodeGoProvider::new(ai_config);
+                if let Some(agent_manager) = &self.main_agent {
+                    let _ = agent_manager
+                        .request_sender
+                        .send(RequestAgent::SetProvider(Box::new(provider)))
+                        .await;
+                }
             }
         }
 
@@ -1355,15 +1381,26 @@ impl App {
             global_config.context_capacity = Some(capacity);
         }
 
-        // Build new provider with updated config
+        // Only restart agent if all required fields are configured
         if let Some(ref global_config) = self.global_toml_config {
-            let ai_config = build_provider_config(global_config);
-            let provider = OpenCodeGoProvider::new(ai_config);
-            if let Some(agent_manager) = &self.main_agent {
-                let _ = agent_manager
-                    .request_sender
-                    .send(RequestAgent::SetProvider(Box::new(provider)))
-                    .await;
+            let api_key_ok = global_config
+                .api_key
+                .as_ref()
+                .is_some_and(|s| !s.is_empty());
+            let base_url_ok = global_config
+                .base_url
+                .as_ref()
+                .is_some_and(|s| !s.is_empty());
+            let model_ok = global_config.model.as_ref().is_some_and(|s| !s.is_empty());
+            if api_key_ok && base_url_ok && model_ok {
+                let ai_config = build_provider_config(global_config);
+                let provider = OpenCodeGoProvider::new(ai_config);
+                if let Some(agent_manager) = &self.main_agent {
+                    let _ = agent_manager
+                        .request_sender
+                        .send(RequestAgent::SetProvider(Box::new(provider)))
+                        .await;
+                }
             }
         }
 
@@ -1415,9 +1452,15 @@ impl App {
         }
         self.global_toml_config = Some(config);
 
-        // Build new provider with updated config
-        if let Some(ref global_config) = self.global_toml_config {
-            let ai_config = build_provider_config(global_config);
+        // Check if config has all required fields before restarting the agent
+        let cfg = self.global_toml_config.as_ref().unwrap();
+        let api_key_ok = cfg.api_key.as_ref().is_some_and(|s| !s.is_empty());
+        let base_url_ok = cfg.base_url.as_ref().is_some_and(|s| !s.is_empty());
+        let model_ok = cfg.model.as_ref().is_some_and(|s| !s.is_empty());
+
+        if api_key_ok && base_url_ok && model_ok {
+            // All required fields present: restart agent with new provider
+            let ai_config = build_provider_config(cfg);
             let provider = OpenCodeGoProvider::new(ai_config);
             if let Some(agent_manager) = &self.main_agent {
                 let _ = agent_manager
@@ -1425,9 +1468,25 @@ impl App {
                     .send(RequestAgent::SetProvider(Box::new(provider)))
                     .await;
             }
+            self.insert_before_queued(UiMessages(format!("Updated {} to: {}", field, value)));
+        } else {
+            // Some fields missing: show helpful message instead of crashing
+            let mut missing = Vec::new();
+            if !api_key_ok {
+                missing.push("api_key");
+            }
+            if !base_url_ok {
+                missing.push("base_url");
+            }
+            if !model_ok {
+                missing.push("model");
+            }
+            self.insert_before_queued(UiMessages(format!(
+                "Saved {}. Still need to configure: {}  (use /settings submenu or /model command)",
+                field,
+                missing.join(", ")
+            )));
         }
-
-        self.insert_before_queued(UiMessages(format!("Updated {} to: {}", field, value)));
         if self.auto_scroll.get() {
             self.scroll_offset.set(u16::MAX);
         }
@@ -1658,6 +1717,13 @@ impl App {
     pub fn quit(&mut self) {
         self.running = false;
     }
+}
+
+/// Check if the config has all required fields (api_key, base_url, model) to start an agent.
+pub fn config_is_complete(config: &GlobalTomlConfig) -> bool {
+    config.api_key.as_ref().is_some_and(|s| !s.is_empty())
+        && config.base_url.as_ref().is_some_and(|s| !s.is_empty())
+        && config.model.as_ref().is_some_and(|s| !s.is_empty())
 }
 
 pub async fn start_agent_with_session(
