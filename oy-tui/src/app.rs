@@ -1124,6 +1124,7 @@ impl App {
                             step: 0,
                             values: [String::new(), String::new(), String::new(), String::new()],
                         };
+                        return;
                     }
                     Some(CommandId::SetApiKey) => {
                         self.input_title = "API Key:".to_string();
@@ -1131,6 +1132,7 @@ impl App {
                             step: 0,
                             values: [String::new(), String::new(), String::new(), String::new()],
                         };
+                        return;
                     }
                     Some(CommandId::SetModel) => {
                         self.input_title = "Model:".to_string();
@@ -1138,6 +1140,7 @@ impl App {
                             step: 0,
                             values: [String::new(), String::new(), String::new(), String::new()],
                         };
+                        return;
                     }
                     Some(CommandId::ReadClaudeSkills) => {
                         self.switch_claude_skills().await;
@@ -1195,6 +1198,7 @@ impl App {
                                     String::new(),
                                 ],
                             };
+                            return;
                         } else {
                             self.switch_context_capacity(capacity).await;
                         }
