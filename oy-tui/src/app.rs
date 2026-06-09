@@ -1445,11 +1445,7 @@ impl App {
 
         // Check if config has all required fields before restarting the agent
         let cfg = self.global_toml_config.as_ref().unwrap();
-        let api_key_ok = cfg.api_key.as_ref().is_some_and(|s| !s.is_empty());
-        let base_url_ok = cfg.base_url.as_ref().is_some_and(|s| !s.is_empty());
-        let model_ok = cfg.model.as_ref().is_some_and(|s| !s.is_empty());
-
-        if api_key_ok && base_url_ok && model_ok {
+        if config_is_complete(cfg) {
             // All required fields present: restart agent with new provider
             let ai_config = build_provider_config(cfg);
             let provider = OpenCodeGoProvider::new(ai_config);
@@ -1463,13 +1459,13 @@ impl App {
         } else {
             // Some fields missing: show helpful message instead of crashing
             let mut missing = Vec::new();
-            if !api_key_ok {
+            if cfg.api_key.as_deref().map_or(true, str::is_empty) {
                 missing.push("api_key");
             }
-            if !base_url_ok {
+            if cfg.base_url.as_deref().map_or(true, str::is_empty) {
                 missing.push("base_url");
             }
-            if !model_ok {
+            if cfg.model.as_deref().map_or(true, str::is_empty) {
                 missing.push("model");
             }
             self.insert_before_queued(UiMessages(format!(
