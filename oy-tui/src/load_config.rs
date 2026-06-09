@@ -1,4 +1,3 @@
-use std::env;
 use std::fs;
 use std::path::PathBuf;
 
@@ -95,28 +94,23 @@ mod tests {
 }
 
 pub fn build_provider_config(config: &GlobalTomlConfig) -> AiConfig {
-    let api_key = config
-        .api_key
-        .clone()
-        .or_else(|| env::var("OPENROUTER_API_KEY").ok())
-        .unwrap_or_else(|| {
-            eprintln!(
-                "OPENROUTER_API_KEY is not set. Set it in ~/.oy-ai-agent/config.toml \
-                 or the OPENROUTER_API_KEY environment variable."
-            );
-            std::process::exit(1);
-        });
+    let api_key = config.api_key.clone().unwrap_or_else(|| {
+        eprintln!(
+            "API key is not set. Set it in ~/.oy-ai-agent/config.toml:\n\n\
+             [api_key]\n\
+             api_key = \"sk-or-...\""
+        );
+        std::process::exit(1);
+    });
 
     let base_url = config
         .base_url
         .clone()
-        .or_else(|| env::var("OPENROUTER_BASE_URL").ok())
         .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
 
     let model = config
         .model
         .clone()
-        .or_else(|| env::var("OPENCODE_MODEL").ok())
         .unwrap_or_else(|| "deepseek-v4-flash".to_string());
 
     let mut ai_config = AiConfig::new(base_url, api_key, model);

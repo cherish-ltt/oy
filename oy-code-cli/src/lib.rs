@@ -8,7 +8,6 @@ use oy_agent::infrastructure::tools::write::WriteTool;
 use oy_agent::infrastructure::tools::{ToolRegistry, bash::BashTool};
 use oy_ai::AiConfig;
 use serde::Deserialize;
-use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::process::Command;
@@ -72,39 +71,33 @@ impl CliConfig {
     }
 }
 
-/// Build an `AiConfig` by merging CLI args, config file, env vars, and defaults.
+/// Build an `AiConfig` by merging CLI args, config file, and defaults.
 ///
 /// Priority (highest first):
 ///   1. CLI argument (`--model`)
 ///   2. Config file (`~/.oy-ai-agent/config.toml`)
-///   3. Environment variable (`OPENROUTER_*`)
-///   4. Hardcoded default
+///   3. Hardcoded default
 ///
 /// `api_key` is required: if none of the sources provide it, the process exits.
 pub fn build_provider_config(cli_config: &CliConfig, cli_args: &CliArgs) -> AiConfig {
-    let api_key = cli_config
-        .api_key
-        .clone()
-        .or_else(|| env::var("OPENROUTER_API_KEY").ok())
-        .unwrap_or_else(|| {
-            eprintln!(
-                "OPENROUTER_API_KEY is not set. Set it in ~/.oy-ai-agent/config.toml \
-                 or the OPENROUTER_API_KEY environment variable."
-            );
-            std::process::exit(1);
-        });
+    let api_key = cli_config.api_key.clone().unwrap_or_else(|| {
+        eprintln!(
+            "API key is not set. Set it in ~/.oy-ai-agent/config.toml:\n\n\
+             [api_key]\n\
+             api_key = \"sk-or-...\""
+        );
+        std::process::exit(1);
+    });
 
     let base_url = cli_config
         .base_url
         .clone()
-        .or_else(|| env::var("OPENROUTER_BASE_URL").ok())
         .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
 
     let model = cli_args
         .model
         .clone()
         .or_else(|| cli_config.model.clone())
-        .or_else(|| env::var("OPENROUTER_MODEL").ok())
         .unwrap_or_else(|| "anthropic/claude-haiku-4.5".to_string());
 
     AiConfig::new(base_url, api_key, model)
