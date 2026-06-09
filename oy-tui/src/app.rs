@@ -572,13 +572,14 @@ impl App {
                 self.input.insert(self.cursor_pos, c);
                 self.cursor_pos += c.len_utf8();
                 // Enter command mode only when input starts with "/" and matches known commands
-                if self.input.starts_with('/') && self.input.len() > 1 {
-                    if !self.command_registry.search(&self.input).is_empty() {
-                        self.app_mode = AppMode::CommandSelector {
-                            selected: 0,
-                            scroll_offset: 0,
-                        };
-                    }
+                if self.input.starts_with('/')
+                    && self.input.len() > 1
+                    && !self.command_registry.search(&self.input).is_empty()
+                {
+                    self.app_mode = AppMode::CommandSelector {
+                        selected: 0,
+                        scroll_offset: 0,
+                    };
                 }
             }
             _ => {}
@@ -1249,7 +1250,8 @@ impl App {
         let trimmed = input.trim();
 
         // Check if any top-level command matches and has children → open submenu
-        if let Some(cmd) = self.command_registry
+        if let Some(cmd) = self
+            .command_registry
             .commands
             .iter()
             .find(|c| c.name == trimmed)

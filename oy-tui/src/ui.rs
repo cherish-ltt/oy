@@ -110,9 +110,7 @@ impl Widget for &App {
         let visible_height = (chunks[0].height.saturating_sub(2)) as usize;
 
         // Detect terminal resize: if chat area width changed, auto-scroll to bottom
-        if self.last_chat_width.get() != content_width as u16
-            && self.last_chat_width.get() != 0
-        {
+        if self.last_chat_width.get() != content_width as u16 && self.last_chat_width.get() != 0 {
             self.auto_scroll.set(true);
             self.scroll_offset.set(u16::MAX);
         }
