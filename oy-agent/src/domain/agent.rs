@@ -2,6 +2,7 @@ use crate::AgentError;
 use crate::domain::skill::SkillSummary;
 use crate::domain::token_counter::TokenUsage;
 use oy_ai::{AiProvider, ChatMessage};
+use tokio::sync::oneshot;
 use uuid::Uuid;
 
 pub(crate) const CHANNEL_SIZE: usize = 64;
@@ -43,6 +44,8 @@ pub trait Agent: Send + Sync {
     fn get_front_message(&self) -> Option<&ChatMessage>;
     fn get_back_message(&self) -> Option<&ChatMessage>;
     fn set_skills(&mut self, _skills: Vec<SkillSummary>) {}
+    /// Replace internal message list (used when restoring history via channel).
+    fn replace_messages(&mut self, _msgs: Vec<ChatMessage>) {}
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +72,12 @@ pub enum RequestAgent {
     },
     SetProvider(Box<dyn AiProvider>),
     SetSkills(Vec<SkillSummary>),
+    /// Request the agent's current message list, sent back via the oneshot.
+    GetMessages {
+        tx: oneshot::Sender<Vec<ChatMessage>>,
+    },
+    /// Replace the agent's message list with this history.
+    SetMessages(Vec<ChatMessage>),
 }
 
 pub enum ResponseAgent {

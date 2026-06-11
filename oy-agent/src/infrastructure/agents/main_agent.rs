@@ -201,6 +201,13 @@ impl Agent for MainAgent {
     fn set_skills(&mut self, skills: Vec<SkillSummary>) {
         self.skills = skills;
     }
+
+    fn replace_messages(&mut self, msgs: Vec<ChatMessage>) {
+        self.messages.clear();
+        for msg in msgs {
+            self.messages.push_back(msg);
+        }
+    }
 }
 
 #[cfg(test)]

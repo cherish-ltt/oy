@@ -108,6 +108,13 @@ impl Agent for CommanderAgent {
     fn get_back_message(&self) -> Option<&ChatMessage> {
         self.messages.back()
     }
+
+    fn replace_messages(&mut self, msgs: Vec<ChatMessage>) {
+        self.messages.clear();
+        for msg in msgs {
+            self.messages.push_back(msg);
+        }
+    }
 }
 
 #[cfg(test)]

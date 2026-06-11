@@ -263,6 +263,17 @@ impl App {
             }
         }
 
+        // ── Fresh (session not loaded) path: add welcome tips ──
+        if !session_loaded {
+            WELCOME_TIPS_VEC.iter().for_each(|tip| {
+                if tip.eq(&"OY") {
+                    messages.push_back(Message::UiMessages(format!("{} {}", tip, VERSION)));
+                } else {
+                    messages.push_back(Message::UiMessages(tip.to_string()));
+                }
+            });
+        }
+
         // Show config hint if no agent can start due to missing fields
         if main_agent.is_none() && commander_agent.is_none() && !session_loaded {
             let has_config = global_toml_config.is_some();
@@ -526,9 +537,10 @@ impl App {
                             last.summary = chat_message.content.clone().unwrap_or_default();
                         }
                         if !success {
-                            sub_agent_error = chat_message.content.as_deref().map(|c| {
-                                c.lines().next().unwrap_or("unknown error").to_string()
-                            });
+                            sub_agent_error = chat_message
+                                .content
+                                .as_deref()
+                                .map(|c| c.lines().next().unwrap_or("unknown error").to_string());
                         }
                     }
                     state.result = Some(chat_message);
@@ -1882,52 +1894,66 @@ impl App {
 
     /// Switch between MainAgent and CommanderAgent.
     pub async fn switch_agent(&mut self) {
+        // 1. Get messages from the current (FROM) agent via channel
+        let history = match self.active_agent {
+            AgentType::MainAgent => self.get_agent_messages(&self.main_agent).await,
+            AgentType::CommanderAgent => self.get_agent_messages(&self.commander_agent).await,
+        };
+
+        // 2. Switch active agent
         self.active_agent = match self.active_agent {
             AgentType::MainAgent => AgentType::CommanderAgent,
             AgentType::CommanderAgent => AgentType::MainAgent,
         };
-        let name = match self.active_agent {
+        let to_name = match self.active_agent {
             AgentType::MainAgent => "MainAgent",
             AgentType::CommanderAgent => "CommanderAgent",
         };
 
-        // Reload session from disk to restore the full conversation history
-        if let Some(uuid) = self.session_uuid {
-            if let Ok(project_dir) = std::env::current_dir() {
-                let dir_name = project_dir.to_string_lossy().to_string().replace("/", "-");
-                if let Some(home) = dirs::home_dir() {
-                    let session_path = home
-                        .join(".oy-ai-agent")
-                        .join("sessions")
-                        .join(&dir_name)
-                        .join(format!("{}.json", uuid));
-                    if session_path.exists() {
-                        if let Ok((_, history_msgs)) =
-                            oy_agent::infrastructure::persistence::load_session_messages(
-                                &session_path,
-                            )
-                        {
-                            // Rebuild UI messages from session (skip System prompts)
-                            self.messages.clear();
-                            self.sub_agent_states.clear();
-                            for msg in history_msgs {
-                                if msg.role != oy_agent::oy_ai::Role::System {
-                                    self.messages
-                                        .push_back(Message::AgentMessages(msg, false));
-                                }
-                            }
-                        }
-                    }
+        // 3. Set messages on the TO agent via channel
+        if !history.is_empty() {
+            match self.active_agent {
+                AgentType::MainAgent => self.set_agent_messages(&self.main_agent, &history).await,
+                AgentType::CommanderAgent => {
+                    self.set_agent_messages(&self.commander_agent, &history)
+                        .await
                 }
             }
         }
 
-        self.insert_before_queued(UiMessages(format!(
-            "Switched to {}.",
-            name
-        )));
+        self.insert_before_queued(UiMessages(format!("Switched to {}.", to_name)));
         self.scroll_offset.set(u16::MAX);
         self.auto_scroll.set(true);
+    }
+
+    /// Get agent's messages via RequestAgent::GetMessages channel.
+    async fn get_agent_messages(&self, agent: &Option<AgentManager>) -> Vec<ChatMessage> {
+        let agent = match agent {
+            Some(a) => a,
+            None => return vec![],
+        };
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if agent
+            .request_sender
+            .send(RequestAgent::GetMessages { tx })
+            .await
+            .is_err()
+        {
+            return vec![];
+        }
+        rx.await.unwrap_or_default()
+    }
+
+    /// Set agent's messages via RequestAgent::SetMessages channel.
+    async fn set_agent_messages(&self, agent: &Option<AgentManager>, msgs: &[ChatMessage]) {
+        let agent = match agent {
+            Some(a) => a,
+            None => return,
+        };
+        let _ = agent
+            .request_sender
+            .send(RequestAgent::SetMessages(msgs.to_vec()))
+            .await;
     }
 
     pub fn tick(&self) {
@@ -1984,13 +2010,8 @@ pub async fn start_main_agent_background(
     register_default_tools(&mut tool_registry);
 
     let main_agent = MainAgent::new(None);
-    let (request_sender, response_receiver, join_handle) = Orchestrator::start_with_session(
-        main_agent,
-        provider,
-        tool_registry,
-        session_uuid,
-        vec![],
-    );
+    let (request_sender, response_receiver, join_handle) =
+        Orchestrator::start_with_session(main_agent, provider, tool_registry, session_uuid, vec![]);
 
     AgentManager::new(
         "MainAgent".to_owned(),

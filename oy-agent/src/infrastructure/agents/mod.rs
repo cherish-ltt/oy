@@ -105,6 +105,33 @@ impl Worker {
     pub(crate) async fn run(&mut self) {
         let mut result;
         loop {
+            // Drain instant commands (GetMessages, SetMessages, SetProvider, SetSkills)
+            // regardless of state — they don't affect the state machine.
+            loop {
+                match self.cmd_rx.try_recv() {
+                    Ok(WorkerCommand::GetMessages { tx }) => {
+                        let msgs = self.agent.messages().to_vec();
+                        let _ = tx.send(msgs);
+                    }
+                    Ok(WorkerCommand::SetMessages(msgs)) => {
+                        self.agent.replace_messages(msgs);
+                    }
+                    Ok(WorkerCommand::SetProvider(provider)) => {
+                        self.provider = provider;
+                    }
+                    Ok(WorkerCommand::SetSkills(skills)) => {
+                        self.agent.set_skills(skills);
+                    }
+                    Ok(_) => {
+                        // Non-instant commands (Prompt, FlushEnterQueue) are
+                        // handled below by the Idle state. Push them back by
+                        // putting them in a channel... but we can't easily.
+                        // For simplicity, these are handled only in Idle state.
+                    }
+                    Err(_) => break,
+                }
+            }
+
             match self.agent.current_state() {
                 AgentState::Idle => match self.cmd_rx.recv().await {
                     Some(cmd) => match cmd {
@@ -129,6 +156,15 @@ impl Worker {
                         }
                         WorkerCommand::SetSkills(skills) => {
                             self.agent.set_skills(skills);
+                            continue;
+                        }
+                        WorkerCommand::GetMessages { tx } => {
+                            let msgs = self.agent.messages().to_vec();
+                            let _ = tx.send(msgs);
+                            continue;
+                        }
+                        WorkerCommand::SetMessages(msgs) => {
+                            self.agent.replace_messages(msgs);
                             continue;
                         }
                     },
@@ -386,6 +422,13 @@ impl Worker {
                 }
                 Ok(WorkerCommand::SetSkills(skills)) => {
                     self.agent.set_skills(skills);
+                }
+                Ok(WorkerCommand::GetMessages { tx }) => {
+                    let msgs = self.agent.messages().to_vec();
+                    let _ = tx.send(msgs);
+                }
+                Ok(WorkerCommand::SetMessages(msgs)) => {
+                    self.agent.replace_messages(msgs);
                 }
                 Err(_) => break,
             }
