@@ -129,7 +129,7 @@ impl Worker {
     pub(crate) async fn run(&mut self) {
         let mut result;
         loop {
-            // Drain instant commands (GetMessages, SetMessages, SetProvider, SetSkills)
+            // Drain instant commands and inject user messages for Prompt/FlushEnterQueue
             // regardless of state — they don't affect the state machine.
             loop {
                 match self.cmd_rx.try_recv() {
@@ -146,11 +146,16 @@ impl Worker {
                     Ok(WorkerCommand::SetSkills(skills)) => {
                         self.agent.set_skills(skills);
                     }
-                    Ok(_) => {
-                        // Non-instant commands (Prompt, FlushEnterQueue) are
-                        // handled below by the Idle state. Push them back by
-                        // putting them in a channel... but we can't easily.
-                        // For simplicity, these are handled only in Idle state.
+                    Ok(WorkerCommand::Prompt { text, .. }) => {
+                        // Inject as user message immediately so nothing is lost.
+                        let _ = self.inject_user_message(&text).await;
+                    }
+                    Ok(WorkerCommand::FlushEnterQueue(requests)) => {
+                        for pr in &requests {
+                            if self.inject_user_message(&pr.text).await.is_err() {
+                                break;
+                            }
+                        }
                     }
                     Err(_) => break,
                 }

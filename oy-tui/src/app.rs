@@ -2085,10 +2085,12 @@ pub async fn start_commander_agent_background(
     ));
 
     let commander_agent = CommanderAgent::new(None);
-    let (request_sender, response_receiver, join_handle) = Orchestrator::start_commander(
+    let (request_sender, response_receiver, join_handle) = Orchestrator::start_commander_with_session(
         commander_agent,
         provider,
         commander_registry,
+        session_uuid,
+        vec![],
         provider_for_sub_agents,
         file_tools,
     );
