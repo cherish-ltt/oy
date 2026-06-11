@@ -9,32 +9,42 @@ license = "MIT"
 repository = "https://github.com/cherish-ltt/oy"
 
 [workspace.dependencies]
-# Internal crates (path deps)
-oy-ai = { path = "oy-ai", version = "0.6.0" }
-oy-agent = { path = "oy-agent", version = "0.6.0" }
-oy-tui = { path = "oy-tui", version = "0.6.0" }
+# ── Internal workspace crates ──
+oy-ai       = { path = "oy-ai", version = "0.6.0" }
+oy-agent    = { path = "oy-agent", version = "0.6.0" }
+oy-tui      = { path = "oy-tui", version = "0.6.0" }
 
-# Common third-party dependencies
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-thiserror = "2"
-dirs = "6"
-futures = "0.3"
-anyhow = "1"
-color-eyre = "0.6.3"
-toml = "=1.1.2"
-uuid = { version = "1.23.3", features = ["v7"] }
-tokio = { version = "1", features = ["full"] }
+# ── Async runtime & concurrency ──
+tokio       = { version = "1", features = ["rt-multi-thread", "macros", "sync", "process", "time"] }
+futures     = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 async-trait = "0.1"
-chrono = "0.4.45"
-tiktoken-rs = "0.12.0"
-async-openai = { version = "=0.41.0", features = ["byot", "chat-completion"] }
-clap = { version = "4", features = ["derive"] }
-crossterm = { version = "0.29.0", features = ["event-stream", "bracketed-paste"] }
-ratatui = "0.30.1"
+
+# ── Serialization ──
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+toml        = "=1.1.2"
+
+# ── CLI / TUI ──
+clap        = { version = "4", features = ["derive"] }
+crossterm   = { version = "0.29.0", features = ["event-stream", "bracketed-paste"] }
+ratatui     = "0.30.1"
 unicode-width = "0.2.2"
-pulldown-cmark = "0.13"
-tempfile = "3"
+pulldown-cmark = { version = "0.13", default-features = false }
+
+# ── Error handling ──
+thiserror   = "2"
+anyhow      = "1"
+color-eyre  = "0.6.3"
+
+# ── AI / LLM ──
+async-openai = { version = "=0.41.0", features = ["byot", "chat-completion"] }
+tiktoken-rs = "0.12.0"
+
+# ── Utilities ──
+dirs        = "6"
+chrono      = { version = "0.4.45", default-features = false, features = ["clock"] }
+uuid        = { version = "1.23.3", features = ["v7"] }
+tempfile    = "3"
 
 # Read the optimization guideline for more details: https://ratatui.rs/recipes/apps/release-your-app/#optimizations
 [profile.release]
