@@ -325,7 +325,7 @@ description: From OY
         }];
 
         let fragment = skills_to_prompt_fragment(&skills);
-        assert!(fragment.contains("## 7. Available Skills"));
+        assert!(fragment.contains("## Available Skills"));
         assert!(fragment.contains("test-folder"));
         assert!(fragment.contains("Test Skill"));
         assert!(fragment.contains("A test"));
