@@ -100,7 +100,7 @@ impl Widget for &App {
         // Calculate sub-agent panel height
         let has_sub_agents = !self.sub_agent_states.is_empty();
         let sub_agent_rows: u16 = if has_sub_agents {
-            (self.sub_agent_states.len() as u16).min(3) + 2 // header + items + border
+            (self.sub_agent_states.len() as u16).min(5) + 2 // header + items + border
         } else {
             0
         };
