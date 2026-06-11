@@ -63,10 +63,12 @@ impl AgentStateTransition for CommanderAgent {
 }
 
 impl Agent for CommanderAgent {
-    fn push_message_back(&mut self, _uuid: Uuid, msg: ChatMessage) -> Result<(), AgentError> {
+    fn push_message_back(&mut self, uuid: Uuid, msg: ChatMessage) -> Result<(), AgentError> {
         self.messages.push_back(msg);
-        // CommanderAgent does NOT persist to session file — session is managed at TUI level.
-        Ok(())
+        match self.save_session(uuid) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
     fn messages(&mut self) -> &[ChatMessage] {

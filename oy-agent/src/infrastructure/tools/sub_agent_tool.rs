@@ -100,9 +100,20 @@ impl Tool for CreateSubAgentTool {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
 
-        // We are inside a tokio::spawn task. Use block_on to run the async sub-agent loop.
-        let handle = tokio::runtime::Handle::current();
-        let result: SubAgentOutput = handle.block_on(run_sub_agent(
+        // Create a dedicated current_thread runtime for this sub-agent execution.
+        // Cannot use Handle::current().block_on() here because we may be inside a
+        // nested tokio::spawn where Handle::current() is unavailable or panics.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| {
+                crate::AgentError::ToolExecutionError(format!(
+                    "Failed to create sub-agent runtime: {}",
+                    e
+                ))
+            })?;
+
+        let result: SubAgentOutput = rt.block_on(run_sub_agent(
             agent_type,
             task.to_string(),
             context,
