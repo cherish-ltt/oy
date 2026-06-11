@@ -139,6 +139,7 @@ cargo test --workspace
 | `Alt+Enter` | 发送消息到等待队列，当前 agent 处理完后自动消费 |
 | `Ctrl+R` | 进入撤销选择模式，按数字键撤销对应队列中的提示词 |
 | `Ctrl+O` | 展开/折叠工具调用结果 |
+| `Shift+Tab` | 切换 MainAgent / CommanderAgent（子代理系统模式） |
 | `↑`/`↓` | 命令选择器导航 |
 | `Esc` | 取消/退出当前模式 |
 
@@ -196,6 +197,46 @@ AI 回复内容以 Markdown 格式渲染，支持：
 
 状态栏显示 agent 运行状态：`•` 空闲，`⠋⠙⠹…` 旋转动画表示工作中。
 
+## 子代理系统 (Sub-Agent System) 
+
+> 一个统筹调度 + 多角色子代理的智能体协作系统。
+
+CommanderAgent 是用户主入口，通过 **Shift+Tab** 与原有 MainAgent 切换。职责是意图识别 → 任务拆分 → 调度子代理 → 结果汇总。
+
+### 子代理类型
+
+| 代理 | 职责 | 迭代上限 | 创建方式 |
+|------|------|---------|---------|
+| **Planner** | 制定开发/测试计划，持久化到 `.oy-agent-output/plans/` | ≤25轮 | CommanderAgent 工具调用 |
+| **Worker** | 按计划实施，产出完整代码 | ≤50轮 | CommanderAgent 工具调用 |
+| **Reviewer** | 审计产出，输出通过/不通过及改进建议 | ≤15轮 | CommanderAgent 工具调用 |
+| **GitHelper** | 整理 git diff，提交 commit | ≤10轮 | CommanderAgent 工具调用 |
+
+### 工作流程
+
+```
+CommanderAgent 接收用户需求
+  ├─ 拆分为 sub-issue 1/2/3...
+  ├─ 对每个 sub-issue:
+  │   ├─ create_sub_agent("planner")    → 获得计划
+  │   ├─ create_sub_agent("worker")     → 获得代码产出
+  │   ├─ create_sub_agent("reviewer")   → 获得审查
+  │   └─ create_sub_agent("git_helper") → 提交 commit
+  └─ 汇总输出
+```
+
+### UI 展示
+
+- 底部 `Sub-Agents` 面板显示实时执行状态（▶ 运行中 / ✓ 完成 / ✗ 失败）
+- 每个子代理显示类型、任务摘要、耗时
+- 状态栏显示当前 active agent 名称
+
+### 约束
+
+- 各子代理达到推理轮次上限立即返回错误
+- 同一子问题 Review 最多重试 15 次
+- CommanderAgent 不直接执行文件操作，只通过 `create_sub_agent` 工具调度
+
 ## 可用工具
 
 | 工具 | 功能 | 输入 |
@@ -217,9 +258,10 @@ oy/
 ├── oy-agent/                      # 智能体编排
 │   ├── tests/integration_test.rs  # MockProvider 集成测试
 │   └── src/
-│       ├── domain/ (Agent trait, Tool trait, ToolRegistry, AgentError)
+│       ├── domain/ (Agent trait, Tool trait, ToolRegistry, AgentError, SubAgentType)
 │       ├── application/ (Orchestrator 主循环)
-│       └── infrastructure/ (ReadTool, WriteTool, EditTool, BashTool, 持久化)
+│       └── infrastructure/ (ReadTool, WriteTool, EditTool, BashTool,
+│               CommanderAgent, SubAgentRunner, create_sub_agent meta-tool, 持久化)
 ├── oy-code-cli/                   # CLI 二进制 `oy`
 │   └── src/ (CliArgs, run())
 └── oy-tui/                        # TUI 二进制
