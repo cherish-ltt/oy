@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::{
     domain::sub_agent::{SubAgentOutput, SubAgentStatus, SubAgentType},
-    infrastructure::tools::ToolRegistry,
+    infrastructure::{persistence::save_session, tools::ToolRegistry},
 };
 
 /// Events emitted during sub-agent execution for UI progress reporting.
@@ -37,7 +37,7 @@ pub async fn run_sub_agent(
     tool_registry: Arc<ToolRegistry>,
     progress_tx: Option<mpsc::UnboundedSender<SubAgentEvent>>,
 ) -> SubAgentOutput {
-    let _uuid = Uuid::now_v7();
+    let uuid = Uuid::now_v7();
     let max_rounds = agent_type.max_rounds();
     let mut messages: Vec<ChatMessage> = Vec::new();
 
@@ -104,6 +104,14 @@ pub async fn run_sub_agent(
                         err_msg.clone(),
                     )));
                 }
+                // Save sub-agent session for debugging
+                if let Ok(project_dir) = std::env::current_dir() {
+                    let dir_name = format!(
+                        "{}/sub_agents",
+                        project_dir.to_string_lossy().to_string().replace("/", "-")
+                    );
+                    let _ = save_session(uuid, messages.iter().collect(), &dir_name);
+                }
                 return SubAgentOutput {
                     agent_type,
                     success: false,
@@ -138,6 +146,15 @@ pub async fn run_sub_agent(
                     output.clone(),
                 )));
                 let _ = tx.send(SubAgentEvent::Output(final_output.clone()));
+            }
+
+            // Save sub-agent session for debugging
+            if let Ok(project_dir) = std::env::current_dir() {
+                let dir_name = format!(
+                    "{}/sub_agents",
+                    project_dir.to_string_lossy().to_string().replace("/", "-")
+                );
+                let _ = save_session(uuid, messages.iter().collect(), &dir_name);
             }
 
             return output;
@@ -194,6 +211,15 @@ pub async fn run_sub_agent(
         let _ = tx.send(SubAgentEvent::Status(SubAgentStatus::Failed(
             err_msg.clone(),
         )));
+    }
+
+    // Save sub-agent session for debugging
+    if let Ok(project_dir) = std::env::current_dir() {
+        let dir_name = format!(
+            "{}/sub_agents",
+            project_dir.to_string_lossy().to_string().replace("/", "-")
+        );
+        let _ = save_session(uuid, messages.iter().collect(), &dir_name);
     }
 
     SubAgentOutput {
