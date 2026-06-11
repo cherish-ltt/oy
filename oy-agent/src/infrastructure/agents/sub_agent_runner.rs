@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use futures::{StreamExt, stream::FuturesUnordered};
 use oy_ai::{AiProvider, ChatMessage};
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -137,48 +136,23 @@ pub async fn run_sub_agent(
             continue;
         }
 
-        // 3e. Execute tool calls
-        if let Some(tool_calls) = response.tool_calls.clone() {
-            let mut tasks = FuturesUnordered::new();
-
+        // 3e. Execute tool calls sequentially (no tokio::spawn inside block_on)
+        if let Some(tool_calls) = response.tool_calls {
             for tool_call in tool_calls {
-                match tool_registry.get_clone(&tool_call.function_name) {
-                    Some(tool) => {
-                        let args = tool_call.arguments.clone();
-                        tasks.push(tokio::spawn(async move {
-                            let result = match tool.execute(args) {
-                                Ok(r) => r,
-                                Err(e) => format!("Error: {}", e),
-                            };
-                            ChatMessage::tool(
-                                result,
-                                tool_call.id,
-                                Some(tool_call.function_name),
-                                Some(tool_call.arguments),
-                            )
-                        }));
-                    }
-                    None => {
-                        tasks.push(tokio::spawn(async move {
-                            ChatMessage::tool(
-                                format!("Error: Unknown tool: {}", tool_call.function_name),
-                                tool_call.id,
-                                Some(tool_call.function_name),
-                                Some(tool_call.arguments),
-                            )
-                        }));
-                    }
-                }
-            }
-
-            // Collect all tool results
-            while let Some(res) = tasks.next().await {
-                match res {
-                    Ok(chat_message) => {
-                        messages.push(chat_message);
-                    }
-                    Err(_e) => {}
-                }
+                let result = match tool_registry.get_clone(&tool_call.function_name) {
+                    Some(tool) => match tool.execute(tool_call.arguments.clone()) {
+                        Ok(r) => r,
+                        Err(e) => format!("Error: {}", e),
+                    },
+                    None => format!("Error: Unknown tool: {}", tool_call.function_name),
+                };
+                let tool_msg = ChatMessage::tool(
+                    result,
+                    tool_call.id,
+                    Some(tool_call.function_name),
+                    Some(tool_call.arguments),
+                );
+                messages.push(tool_msg);
             }
         }
 
