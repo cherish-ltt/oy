@@ -164,10 +164,9 @@ impl App {
                         let mut agent = start_agent_with_session(
                             global_toml_config,
                             session_uuid,
-                            history_msgs,
+                            history_msgs.clone(),
                         )
                         .await;
-                        // Forward responses to merged channel
                         let rx = agent.response_receiver.take();
                         if let Some(mut rx) = rx {
                             let tx = merged_response_tx.clone();
@@ -180,6 +179,26 @@ impl App {
                             });
                         }
                         main_agent = Some(agent);
+
+                        // Also start commander agent with the same session uuid + history
+                        let mut cmd_agent = start_commander_agent_with_session(
+                            global_toml_config,
+                            session_uuid,
+                            history_msgs,
+                        )
+                        .await;
+                        let rx = cmd_agent.response_receiver.take();
+                        if let Some(mut rx) = rx {
+                            let tx = merged_response_tx.clone();
+                            tokio::spawn(async move {
+                                while let Some(msg) = rx.recv().await {
+                                    if tx.send(msg).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            });
+                        }
+                        commander_agent = Some(cmd_agent);
                     }
 
                     // Add a session restored indicator
@@ -208,13 +227,17 @@ impl App {
             });
         }
 
+        // ── Generate shared session UUID for both agents ──
+        let shared_session_uuid = Uuid::now_v7();
+
         // ── Start agents (if config is complete) ──
         if let Some(global_toml_config) = &global_toml_config
             && config_is_complete(global_toml_config)
         {
-            // Start main agent
+            // Start main agent with shared uuid (no history for fresh start)
             if !session_loaded {
-                let mut agent = start_main_agent_background(global_toml_config).await;
+                let mut agent =
+                    start_main_agent_background(global_toml_config, shared_session_uuid).await;
                 let rx = agent.response_receiver.take();
                 if let Some(mut rx) = rx {
                     let tx = merged_response_tx.clone();
@@ -229,20 +252,23 @@ impl App {
                 main_agent = Some(agent);
             }
 
-            // Start commander agent (always start fresh, no session)
-            let mut cmd_agent = start_commander_agent_background(global_toml_config).await;
-            let rx = cmd_agent.response_receiver.take();
-            if let Some(mut rx) = rx {
-                let tx = merged_response_tx.clone();
-                tokio::spawn(async move {
-                    while let Some(msg) = rx.recv().await {
-                        if tx.send(msg).await.is_err() {
-                            break;
+            // Start commander agent with the SAME shared uuid
+            if commander_agent.is_none() {
+                let mut cmd_agent =
+                    start_commander_agent_background(global_toml_config, shared_session_uuid).await;
+                let rx = cmd_agent.response_receiver.take();
+                if let Some(mut rx) = rx {
+                    let tx = merged_response_tx.clone();
+                    tokio::spawn(async move {
+                        while let Some(msg) = rx.recv().await {
+                            if tx.send(msg).await.is_err() {
+                                break;
+                            }
                         }
-                    }
-                });
+                    });
+                }
+                commander_agent = Some(cmd_agent);
             }
-            commander_agent = Some(cmd_agent);
         }
 
         // Show config hint if no agent can start due to missing fields
@@ -1923,7 +1949,10 @@ pub async fn start_agent_with_session(
     )
 }
 
-pub async fn start_main_agent_background(global_toml_config: &GlobalTomlConfig) -> AgentManager {
+pub async fn start_main_agent_background(
+    global_toml_config: &GlobalTomlConfig,
+    session_uuid: Uuid,
+) -> AgentManager {
     let ai_config = build_provider_config(global_toml_config);
 
     let provider = OpenCodeGoProvider::new(ai_config);
@@ -1931,8 +1960,13 @@ pub async fn start_main_agent_background(global_toml_config: &GlobalTomlConfig) 
     register_default_tools(&mut tool_registry);
 
     let main_agent = MainAgent::new(None);
-    let (request_sender, response_receiver, join_handle) =
-        Orchestrator::start(main_agent, provider, tool_registry);
+    let (request_sender, response_receiver, join_handle) = Orchestrator::start_with_session(
+        main_agent,
+        provider,
+        tool_registry,
+        session_uuid,
+        vec![],
+    );
 
     AgentManager::new(
         "MainAgent".to_owned(),
@@ -1942,12 +1976,14 @@ pub async fn start_main_agent_background(global_toml_config: &GlobalTomlConfig) 
     )
 }
 
-/// Start the CommanderAgent in the background.
+/// Start the CommanderAgent in the background with a shared session UUID.
 ///
 /// CommanderAgent uses a tool registry that includes both regular file tools
 /// (for sub-agents to use) and the `create_sub_agent` meta-tool.
+/// Uses the same UUID as MainAgent so both agents persist to the same session file.
 pub async fn start_commander_agent_background(
     global_toml_config: &GlobalTomlConfig,
+    session_uuid: Uuid,
 ) -> AgentManager {
     let ai_config = build_provider_config(global_toml_config);
 
@@ -1972,8 +2008,53 @@ pub async fn start_commander_agent_background(
     commander_registry.register(sub_agent_tool);
 
     let commander_agent = CommanderAgent::new(None);
-    let (request_sender, response_receiver, join_handle) =
-        Orchestrator::start(commander_agent, provider, commander_registry);
+    let (request_sender, response_receiver, join_handle) = Orchestrator::start_with_session(
+        commander_agent,
+        provider,
+        commander_registry,
+        session_uuid,
+        vec![],
+    );
+
+    AgentManager::new(
+        "CommanderAgent".to_owned(),
+        join_handle,
+        request_sender,
+        response_receiver,
+    )
+}
+
+/// Start CommanderAgent with a pre-loaded session (same UUID + history as MainAgent).
+pub async fn start_commander_agent_with_session(
+    global_toml_config: &GlobalTomlConfig,
+    session_uuid: Uuid,
+    session_messages: Vec<ChatMessage>,
+) -> AgentManager {
+    let ai_config = build_provider_config(global_toml_config);
+
+    let provider = OpenCodeGoProvider::new(ai_config.clone());
+    let provider_for_sub_agents = Arc::new(OpenCodeGoProvider::new(ai_config));
+
+    let file_tools = Arc::new({
+        let mut r = ToolRegistry::new();
+        register_default_tools(&mut r);
+        r
+    });
+
+    let sub_agent_tool = CreateSubAgentTool::new(provider_for_sub_agents, file_tools);
+
+    let mut commander_registry = ToolRegistry::new();
+    register_default_tools(&mut commander_registry);
+    commander_registry.register(sub_agent_tool);
+
+    let commander_agent = CommanderAgent::new(None);
+    let (request_sender, response_receiver, join_handle) = Orchestrator::start_with_session(
+        commander_agent,
+        provider,
+        commander_registry,
+        session_uuid,
+        session_messages,
+    );
 
     AgentManager::new(
         "CommanderAgent".to_owned(),
