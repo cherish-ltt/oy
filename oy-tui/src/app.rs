@@ -13,7 +13,7 @@ use crate::{
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use oy_agent::{
-    Orchestrator, SkillSummary, TokenUsage,
+    CommanderAgent, CreateSubAgentTool, Orchestrator, SkillSummary, TokenUsage,
     agent::{PromptKind, RequestAgent},
     format_token_count,
     infrastructure::{agents::main_agent::MainAgent, persistence, tools::ToolRegistry},
@@ -24,11 +24,18 @@ use std::path::PathBuf;
 use std::{
     cell::Cell,
     collections::{HashMap, VecDeque},
+    sync::Arc,
     time::Instant,
 };
 use uuid::Uuid;
 
 const MAX_POPUP_ROWS: usize = 4;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AgentType {
+    MainAgent,
+    CommanderAgent,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppMode {
@@ -48,6 +55,19 @@ pub enum AppMode {
         step: usize,
         values: [String; 4],
     },
+}
+
+/// UI state for tracking sub-agent execution progress.
+#[derive(Debug, Clone)]
+pub struct SubAgentUiState {
+    pub agent_type: String,
+    pub task: String,
+    pub start_time: Instant,
+    pub completed: bool,
+    pub success: bool,
+    pub summary: String,
+    /// Frozen elapsed seconds when completed (None while running)
+    pub elapsed_secs: Option<f64>,
 }
 
 /// Application state
@@ -83,6 +103,10 @@ pub struct App {
     pub global_toml_config: Option<GlobalTomlConfig>,
     /// main-agent
     pub main_agent: Option<AgentManager>,
+    /// commander-agent (调度代理)
+    pub commander_agent: Option<AgentManager>,
+    /// 当前活动 agent
+    pub active_agent: AgentType,
     /// 命令注册器
     pub command_registry: CommandRegistry,
     /// 当前界面模式
@@ -101,6 +125,14 @@ pub struct App {
     pub skills: Vec<SkillSummary>,
     /// 等待被 Agent 消费的 Prompt IDs
     pub pending_prompts: Vec<Uuid>,
+    /// 子代理运行状态 (CommanderAgent 专用)
+    pub sub_agent_states: Vec<SubAgentUiState>,
+    /// 子代理面板滚动偏移
+    pub sub_agent_scroll: Cell<usize>,
+    /// 子代理面板在屏幕中的 Y 起始位置 (用于鼠标滚轮判定)
+    pub sub_agent_panel_y: Cell<u16>,
+    /// 共享 session UUID (MainAgent + CommanderAgent 共用)
+    pub session_uuid: Option<Uuid>,
 }
 
 impl App {
@@ -116,45 +148,124 @@ impl App {
         let skills = oy_agent::domain::skill::discover_skills(read_claude);
 
         let mut main_agent: Option<AgentManager> = None;
+        let mut commander_agent: Option<AgentManager> = None;
         let mut session_loaded = false;
 
-        // ── Session restore path ──
-        if let Some(path) = &session_path {
+        // We'll merge both agents' response receivers into one
+        let (merged_response_tx, merged_response_rx) = tokio::sync::mpsc::channel(128);
+
+        // ── Generate a session UUID: from loaded session or fresh ──
+        let shared_session_uuid = if let Some(path) = &session_path {
+            // Try to extract UUID from the loaded session path
             match persistence::load_session_messages(path) {
-                Ok((session_uuid, history_msgs)) => {
+                Ok((uuid, ref history_msgs)) => {
                     // Populate TUI messages from history (skip system prompt)
-                    for msg in &history_msgs {
+                    for msg in history_msgs {
                         if msg.role != Role::System {
                             messages.push_back(Message::AgentMessages(msg.clone(), false));
                         }
                     }
 
-                    // Start agent with session uuid + history
+                    // Start main agent with session uuid + history
                     if let Some(global_toml_config) = &global_toml_config
                         && config_is_complete(global_toml_config)
                     {
-                        main_agent = Some(
-                            start_agent_with_session(
-                                global_toml_config,
-                                session_uuid,
-                                history_msgs,
-                            )
-                            .await,
-                        );
+                        let mut agent = start_agent_with_session(
+                            global_toml_config,
+                            uuid,
+                            history_msgs.clone(),
+                        )
+                        .await;
+                        let rx = agent.response_receiver.take();
+                        if let Some(mut rx) = rx {
+                            let tx = merged_response_tx.clone();
+                            tokio::spawn(async move {
+                                while let Some(msg) = rx.recv().await {
+                                    if tx.send(msg).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            });
+                        }
+                        main_agent = Some(agent);
+
+                        // Also start commander agent with the same session
+                        let mut cmd_agent = start_commander_agent_with_session(
+                            global_toml_config,
+                            uuid,
+                            history_msgs.clone(),
+                        )
+                        .await;
+                        let rx = cmd_agent.response_receiver.take();
+                        if let Some(mut rx) = rx {
+                            let tx = merged_response_tx.clone();
+                            tokio::spawn(async move {
+                                while let Some(msg) = rx.recv().await {
+                                    if tx.send(msg).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            });
+                        }
+                        commander_agent = Some(cmd_agent);
                     }
 
-                    // Add a session restored indicator
                     messages.push_back(Message::UiMessages(
                         "Session restored. Continue the conversation below.".to_string(),
                     ));
                     session_loaded = true;
+                    uuid
                 }
                 Err(e) => {
                     messages.push_back(Message::UiMessages(format!(
                         "Failed to load session: {}. Starting fresh.",
                         e
                     )));
+                    Uuid::now_v7()
                 }
+            }
+        } else {
+            Uuid::now_v7()
+        };
+
+        // ── Start agents (if config is complete) ──
+        if let Some(global_toml_config) = &global_toml_config
+            && config_is_complete(global_toml_config)
+        {
+            // Start main agent with shared uuid (no history for fresh start)
+            if !session_loaded {
+                let mut agent =
+                    start_main_agent_background(global_toml_config, shared_session_uuid).await;
+                let rx = agent.response_receiver.take();
+                if let Some(mut rx) = rx {
+                    let tx = merged_response_tx.clone();
+                    tokio::spawn(async move {
+                        while let Some(msg) = rx.recv().await {
+                            if tx.send(msg).await.is_err() {
+                                break;
+                            }
+                        }
+                    });
+                }
+                main_agent = Some(agent);
+            }
+
+            // Start commander agent with the SAME shared uuid
+            if commander_agent.is_none() {
+                let mut cmd_agent =
+                    start_commander_agent_background(global_toml_config, shared_session_uuid).await;
+                let rx = cmd_agent.response_receiver.take();
+                if let Some(mut rx) = rx {
+                    let tx = merged_response_tx.clone();
+                    tokio::spawn(async move {
+                        while let Some(msg) = rx.recv().await {
+                            if tx.send(msg).await.is_err() {
+                                break;
+                            }
+                        }
+                    });
+                }
+                commander_agent = Some(cmd_agent);
             }
         }
 
@@ -169,16 +280,8 @@ impl App {
             });
         }
 
-        // ── Normal agent start (no session or session load failed) ──
-        if !session_loaded
-            && let Some(global_toml_config) = &global_toml_config
-            && config_is_complete(global_toml_config)
-        {
-            main_agent = Some(start_main_agent_background(global_toml_config).await);
-        }
-
-        // Show config hint if agent cannot start due to missing fields
-        if main_agent.is_none() && !session_loaded {
+        // Show config hint if no agent can start due to missing fields
+        if main_agent.is_none() && commander_agent.is_none() && !session_loaded {
             let has_config = global_toml_config.is_some();
             if !has_config || !config_is_complete(global_toml_config.as_ref().unwrap()) {
                 messages.push_back(Message::UiMessages(
@@ -199,7 +302,7 @@ impl App {
             )));
         }
 
-        // Pass skills to the agent
+        // Pass skills to both agents
         if let Some(ref agent_manager) = main_agent {
             let _ = agent_manager
                 .request_sender
@@ -207,15 +310,10 @@ impl App {
                 .await;
         }
 
-        let events = if let Some(agent_manager) = &mut main_agent {
-            if let Some(response_receiver) = agent_manager.response_receiver.take() {
-                EventHandler::new_with_receiver(response_receiver)
-            } else {
-                EventHandler::new()
-            }
-        } else {
-            EventHandler::new()
-        };
+        // Drop the original merged_tx so the receiver closes when all forwarders stop
+        drop(merged_response_tx);
+
+        let events = EventHandler::new_with_receiver(merged_response_rx);
 
         let command_registry = CommandRegistry::new();
 
@@ -248,6 +346,8 @@ impl App {
             events,
             global_toml_config,
             main_agent,
+            commander_agent,
+            active_agent: AgentType::MainAgent,
             command_registry,
             app_mode: AppMode::Normal,
             input_title: String::new(),
@@ -257,6 +357,10 @@ impl App {
             token_usage: TokenUsage::new(),
             skills,
             pending_prompts: Vec::new(),
+            sub_agent_states: Vec::new(),
+            sub_agent_scroll: Cell::new(0),
+            sub_agent_panel_y: Cell::new(u16::MAX),
+            session_uuid: Some(shared_session_uuid),
         }
     }
 
@@ -279,14 +383,28 @@ impl App {
                     }
                     crossterm::event::Event::Mouse(mouse_event) => match mouse_event.kind {
                         MouseEventKind::ScrollDown => {
-                            self.scroll_offset
-                                .set(self.scroll_offset.get().saturating_add(3));
+                            let in_sub_area = !self.sub_agent_states.is_empty()
+                                && mouse_event.row >= self.sub_agent_panel_y.get();
+                            if in_sub_area {
+                                let max = self.sub_agent_states.len().saturating_sub(1);
+                                let current = self.sub_agent_scroll.get();
+                                self.sub_agent_scroll.set((current + 1).min(max));
+                            } else {
+                                self.scroll_offset
+                                    .set(self.scroll_offset.get().saturating_add(3));
+                            }
                         }
                         MouseEventKind::ScrollUp => {
-                            self.scroll_offset
-                                .set(self.scroll_offset.get().saturating_sub(3));
-                            // 用户手动向上翻页（看旧消息），禁用自动滚动到底部
-                            self.auto_scroll.set(false);
+                            let in_sub_area = !self.sub_agent_states.is_empty()
+                                && mouse_event.row >= self.sub_agent_panel_y.get();
+                            if in_sub_area {
+                                let current = self.sub_agent_scroll.get();
+                                self.sub_agent_scroll.set(current.saturating_sub(1));
+                            } else {
+                                self.scroll_offset
+                                    .set(self.scroll_offset.get().saturating_sub(3));
+                                self.auto_scroll.set(false);
+                            }
                         }
                         _ => {}
                     },
@@ -354,6 +472,31 @@ impl App {
             }
             // Push a ToolCallMsg for each tool call
             for tc in tool_calls {
+                // Track sub-agent tool calls for the status panel
+                if tc.function_name == "create_sub_agent" {
+                    let task = tc
+                        .arguments
+                        .get("task")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let agent_type = tc
+                        .arguments
+                        .get("agent_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("sub-agent")
+                        .to_string();
+                    self.sub_agent_states.push(SubAgentUiState {
+                        agent_type,
+                        task,
+                        start_time: Instant::now(),
+                        completed: false,
+                        success: false,
+                        summary: String::new(),
+                        elapsed_secs: None,
+                    });
+                }
+
                 self.insert_before_queued(ToolCallMsg(ToolCallState {
                     function_name: tc.function_name.clone(),
                     arguments: if tc.function_name.eq("Read")
@@ -367,6 +510,11 @@ impl App {
                     } else if tc.function_name.eq("Bash") {
                         tc.arguments
                             .get("command")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                    } else if tc.function_name.eq("create_sub_agent") {
+                        tc.arguments
+                            .get("agent_type")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string())
                     } else {
@@ -389,15 +537,48 @@ impl App {
         if chat_message.role == Role::Tool
             && let Some(call_id) = &chat_message.tool_call_id
         {
+            let mut sub_agent_error: Option<String> = None;
             for msg in self.messages.iter_mut().rev() {
                 if let ToolCallMsg(state) = msg
                     && state.result.is_none()
                     && state.tool_call_id == *call_id
                 {
+                    // Mark sub-agent as completed if applicable
+                    if state.function_name == "create_sub_agent" {
+                        let success = chat_message
+                            .content
+                            .as_deref()
+                            .map(|c| {
+                                !c.contains("失败")
+                                    && !c.contains("Internal error")
+                                    && !c.contains("Error:")
+                            })
+                            .unwrap_or(false);
+                        if let Some(last) = self
+                            .sub_agent_states
+                            .iter_mut()
+                            .rev()
+                            .find(|s| !s.completed)
+                        {
+                            last.completed = true;
+                            last.success = success;
+                            last.summary = chat_message.content.clone().unwrap_or_default();
+                            last.elapsed_secs = Some(last.start_time.elapsed().as_secs_f64());
+                        }
+                        if !success {
+                            sub_agent_error = chat_message
+                                .content
+                                .as_deref()
+                                .map(|c| c.lines().next().unwrap_or("unknown error").to_string());
+                        }
+                    }
                     state.result = Some(chat_message);
                     state.end_time = Some(Instant::now());
                     break;
                 }
+            }
+            if let Some(err) = sub_agent_error {
+                self.insert_before_queued(UiMessages(format!("⚠ Sub-agent error: {}", err)));
             }
             if self.auto_scroll.get() {
                 self.scroll_offset.set(u16::MAX);
@@ -478,37 +659,68 @@ impl App {
                 // Check for slash commands — exact match only, otherwise send as prompt
                 if input.starts_with('/') && self.execute_command(&input).await {
                     // Handled as a command
-                } else if let Some(main_agent) = &self.main_agent {
-                    // Enforce max 9 queued prompts
-                    if self.pending_prompts.len() >= 9 {
-                        self.insert_before_queued(UiMessages(
-                            "Maximum 9 prompts can be queued. Press Ctrl+R then 1..9 to revoke a queued prompt first.".to_string()
-                        ));
-                        if self.auto_scroll.get() {
-                            self.scroll_offset.set(u16::MAX);
+                } else if self.active_agent == AgentType::MainAgent {
+                    // ── Route to MainAgent ──
+                    if let Some(main_agent) = &self.main_agent {
+                        if self.pending_prompts.len() >= 9 {
+                            self.insert_before_queued(UiMessages(
+                                "Maximum 9 prompts can be queued. Press Ctrl+R then 1..9 to revoke a queued prompt first.".to_string()
+                            ));
+                            if self.auto_scroll.get() {
+                                self.scroll_offset.set(u16::MAX);
+                            }
+                            return Ok(());
                         }
-                        return Ok(());
-                    }
 
-                    let id = Uuid::now_v7();
-
-                    let _ = main_agent
-                        .request_sender
-                        .send(RequestAgent::Prompt {
-                            text: input.clone(),
-                            id,
-                            kind,
-                        })
-                        .await;
-                    self.pending_prompts.push(id);
-                    self.insert_before_queued(Message::PromptQueued { id, text: input });
-                    if self.auto_scroll.get() {
-                        self.scroll_offset.set(u16::MAX);
+                        let id = Uuid::now_v7();
+                        let _ = main_agent
+                            .request_sender
+                            .send(RequestAgent::Prompt {
+                                text: input.clone(),
+                                id,
+                                kind,
+                            })
+                            .await;
+                        self.pending_prompts.push(id);
+                        self.insert_before_queued(Message::PromptQueued { id, text: input });
+                    } else {
+                        self.insert_before_queued(UiMessages(
+                            "MainAgent not initialized. Please use /model to configure your API key and model first.".to_string()
+                        ));
                     }
                 } else {
-                    self.insert_before_queued(UiMessages(
-                        "Agent not initialized. Please use /model to configure your API key and model first.".to_string()
-                    ));
+                    // ── Route to CommanderAgent ──
+                    if let Some(cmd_agent) = &self.commander_agent {
+                        if self.pending_prompts.len() >= 9 {
+                            self.insert_before_queued(UiMessages(
+                                "Maximum 9 prompts can be queued. Press Ctrl+R then 1..9 to revoke a queued prompt first.".to_string()
+                            ));
+                            if self.auto_scroll.get() {
+                                self.scroll_offset.set(u16::MAX);
+                            }
+                            return Ok(());
+                        }
+
+                        let id = Uuid::now_v7();
+                        let _ = cmd_agent
+                            .request_sender
+                            .send(RequestAgent::Prompt {
+                                text: input.clone(),
+                                id,
+                                kind,
+                            })
+                            .await;
+                        self.pending_prompts.push(id);
+                        self.insert_before_queued(Message::PromptQueued { id, text: input });
+                    } else {
+                        self.insert_before_queued(UiMessages(
+                            "CommanderAgent not initialized.".to_string(),
+                        ));
+                    }
+                }
+
+                if self.auto_scroll.get() {
+                    self.scroll_offset.set(u16::MAX);
                 }
             }
             KeyCode::Backspace if self.cursor_pos > 0 && !self.delete_paste_placeholder() => {
@@ -566,6 +778,13 @@ impl App {
             }
             KeyCode::Insert if key_event.modifiers == KeyModifiers::SHIFT => {
                 self.paste_from_clipboard();
+            }
+            // Shift+Tab (BackTab) — switch between MainAgent and CommanderAgent
+            KeyCode::BackTab => {
+                self.switch_agent().await;
+            }
+            KeyCode::Tab if key_event.modifiers == KeyModifiers::SHIFT => {
+                self.switch_agent().await;
             }
             // Ctrl+O is handled at top-level handle_key_events; do not re-handle here.
             KeyCode::Char(c) => {
@@ -1681,9 +1900,13 @@ impl App {
         // Remove from pending_prompts
         self.pending_prompts.retain(|x| *x != id);
 
-        // Cancel on the agent side
-        if let Some(main_agent) = &self.main_agent {
-            let _ = main_agent
+        // Cancel on the active agent
+        let active_sender = match self.active_agent {
+            AgentType::MainAgent => self.main_agent.as_ref(),
+            AgentType::CommanderAgent => self.commander_agent.as_ref(),
+        };
+        if let Some(agent) = active_sender {
+            let _ = agent
                 .request_sender
                 .send(RequestAgent::CancelPrompt { id })
                 .await;
@@ -1696,6 +1919,70 @@ impl App {
         }
         self.input.push_str(&text);
         self.cursor_pos = self.input.len();
+    }
+
+    /// Switch between MainAgent and CommanderAgent.
+    pub async fn switch_agent(&mut self) {
+        // 1. Get messages from the current (FROM) agent via channel
+        let history = match self.active_agent {
+            AgentType::MainAgent => self.get_agent_messages(&self.main_agent).await,
+            AgentType::CommanderAgent => self.get_agent_messages(&self.commander_agent).await,
+        };
+
+        // 2. Switch active agent
+        self.active_agent = match self.active_agent {
+            AgentType::MainAgent => AgentType::CommanderAgent,
+            AgentType::CommanderAgent => AgentType::MainAgent,
+        };
+        let to_name = match self.active_agent {
+            AgentType::MainAgent => "MainAgent",
+            AgentType::CommanderAgent => "CommanderAgent",
+        };
+
+        // 3. Set messages on the TO agent via channel
+        if !history.is_empty() {
+            match self.active_agent {
+                AgentType::MainAgent => self.set_agent_messages(&self.main_agent, &history).await,
+                AgentType::CommanderAgent => {
+                    self.set_agent_messages(&self.commander_agent, &history)
+                        .await
+                }
+            }
+        }
+
+        self.insert_before_queued(UiMessages(format!("Switched to {}.", to_name)));
+        self.scroll_offset.set(u16::MAX);
+        self.auto_scroll.set(true);
+    }
+
+    /// Get agent's messages via RequestAgent::GetMessages channel.
+    async fn get_agent_messages(&self, agent: &Option<AgentManager>) -> Vec<ChatMessage> {
+        let agent = match agent {
+            Some(a) => a,
+            None => return vec![],
+        };
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if agent
+            .request_sender
+            .send(RequestAgent::GetMessages { tx })
+            .await
+            .is_err()
+        {
+            return vec![];
+        }
+        rx.await.unwrap_or_default()
+    }
+
+    /// Set agent's messages via RequestAgent::SetMessages channel.
+    async fn set_agent_messages(&self, agent: &Option<AgentManager>, msgs: &[ChatMessage]) {
+        let agent = match agent {
+            Some(a) => a,
+            None => return,
+        };
+        let _ = agent
+            .request_sender
+            .send(RequestAgent::SetMessages(msgs.to_vec()))
+            .await;
     }
 
     pub fn tick(&self) {
@@ -1741,7 +2028,10 @@ pub async fn start_agent_with_session(
     )
 }
 
-pub async fn start_main_agent_background(global_toml_config: &GlobalTomlConfig) -> AgentManager {
+pub async fn start_main_agent_background(
+    global_toml_config: &GlobalTomlConfig,
+    session_uuid: Uuid,
+) -> AgentManager {
     let ai_config = build_provider_config(global_toml_config);
 
     let provider = OpenCodeGoProvider::new(ai_config);
@@ -1750,10 +2040,108 @@ pub async fn start_main_agent_background(global_toml_config: &GlobalTomlConfig) 
 
     let main_agent = MainAgent::new(None);
     let (request_sender, response_receiver, join_handle) =
-        Orchestrator::start(main_agent, provider, tool_registry);
+        Orchestrator::start_with_session(main_agent, provider, tool_registry, session_uuid, vec![]);
 
     AgentManager::new(
         "MainAgent".to_owned(),
+        join_handle,
+        request_sender,
+        response_receiver,
+    )
+}
+
+/// Start the CommanderAgent in the background with a shared session UUID.
+///
+/// CommanderAgent uses a tool registry that includes both regular file tools
+/// (for sub-agents to use) and the `create_sub_agent` meta-tool.
+/// Uses the same UUID as MainAgent so both agents persist to the same session file.
+pub async fn start_commander_agent_background(
+    global_toml_config: &GlobalTomlConfig,
+    session_uuid: Uuid,
+) -> AgentManager {
+    let ai_config = build_provider_config(global_toml_config);
+
+    // Create two provider instances: one for CommanderAgent's own LLM calls,
+    // one for sub-agents' LLM calls (shared via Arc).
+    let provider = OpenCodeGoProvider::new(ai_config.clone());
+    let provider_for_sub_agents = Arc::new(OpenCodeGoProvider::new(ai_config));
+
+    // Create file tool registry for sub-agents (shared via Arc)
+    let file_tools = Arc::new({
+        let mut r = ToolRegistry::new();
+        register_default_tools(&mut r);
+        r
+    });
+
+    // Create CommanderAgent's tool registry (file tools + create_sub_agent for schema)
+    let mut commander_registry = ToolRegistry::new();
+    register_default_tools(&mut commander_registry);
+    // Register a minimal CreateSubAgentTool so LLM sees the schema.
+    // Its execute() is NOT called — acting() handles create_sub_agent directly.
+    commander_registry.register(CreateSubAgentTool::new(
+        provider_for_sub_agents.clone(),
+        file_tools.clone(),
+    ));
+
+    let commander_agent = CommanderAgent::new(None);
+    let (request_sender, response_receiver, join_handle) =
+        Orchestrator::start_commander_with_session(
+            commander_agent,
+            provider,
+            commander_registry,
+            session_uuid,
+            vec![],
+            provider_for_sub_agents,
+            file_tools,
+        );
+
+    AgentManager::new(
+        "CommanderAgent".to_owned(),
+        join_handle,
+        request_sender,
+        response_receiver,
+    )
+}
+
+/// Start CommanderAgent with a pre-loaded session (same UUID + history as MainAgent).
+pub async fn start_commander_agent_with_session(
+    global_toml_config: &GlobalTomlConfig,
+    session_uuid: Uuid,
+    session_messages: Vec<ChatMessage>,
+) -> AgentManager {
+    let ai_config = build_provider_config(global_toml_config);
+
+    let provider = OpenCodeGoProvider::new(ai_config.clone());
+    let provider_for_sub_agents = Arc::new(OpenCodeGoProvider::new(ai_config));
+
+    let file_tools = Arc::new({
+        let mut r = ToolRegistry::new();
+        register_default_tools(&mut r);
+        r
+    });
+
+    // Register a minimal CreateSubAgentTool so LLM sees the schema
+    let mut commander_registry = ToolRegistry::new();
+    register_default_tools(&mut commander_registry);
+    commander_registry.register(CreateSubAgentTool::new(
+        provider_for_sub_agents.clone(),
+        file_tools.clone(),
+    ));
+
+    let commander_agent = CommanderAgent::new(None);
+    let (request_sender, response_receiver, join_handle) =
+        Orchestrator::start_commander_with_session(
+            commander_agent,
+            provider,
+            commander_registry,
+            session_uuid,
+            session_messages,
+            provider_for_sub_agents,
+            file_tools,
+        );
+
+    AgentManager::new(
+        "CommanderAgent".to_owned(),
         join_handle,
         request_sender,
         response_receiver,

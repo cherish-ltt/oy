@@ -7,6 +7,8 @@ use crate::Tool;
 pub mod bash;
 pub mod edit;
 pub mod read;
+pub mod sub_agent_tool;
+pub mod uuid_tool;
 pub mod write;
 
 pub struct ToolRegistry {

@@ -11,7 +11,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
-    app::{App, AppMode, visual_cursor_pos},
+    app::{App, AppMode, SubAgentUiState, visual_cursor_pos},
     command::CommandInfo,
     message::{Message, Status},
 };
@@ -97,11 +97,20 @@ impl Widget for &App {
         );
         let popup_rows: u16 = if has_popup { 7 } else { 0 };
 
+        // Calculate sub-agent panel height
+        let has_sub_agents = !self.sub_agent_states.is_empty();
+        let sub_agent_rows: u16 = if has_sub_agents {
+            (self.sub_agent_states.len() as u16).min(5) + 2 // header + items + border
+        } else {
+            0
+        };
+
         let chunks = Layout::vertical([
             Constraint::Min(5),
             Constraint::Length(input_height),
             Constraint::Length(popup_rows),
-            Constraint::Length(3),
+            Constraint::Length(3),              // status bar
+            Constraint::Length(sub_agent_rows), // sub-agent panel
         ])
         .split(area);
 
@@ -324,10 +333,10 @@ impl Widget for &App {
             format!(" {}/{} ({}%)", used_str, cap_str, pct)
         };
 
-        let mut agent_label = "<Current Agent>".to_string();
-        if let Some(main_agent) = &self.main_agent {
-            agent_label = format!("<{}>", &main_agent.name);
-        }
+        let agent_label = match self.active_agent {
+            crate::app::AgentType::MainAgent => "<MainAgent>",
+            crate::app::AgentType::CommanderAgent => "<CommanderAgent>",
+        };
 
         let revoke_hint = if !self.pending_prompts.is_empty() {
             " | Ctrl+R revoke"
@@ -368,6 +377,77 @@ impl Widget for &App {
             .style(Style::default().fg(t.status_fg).bg(t.status_bg));
 
         status_right_para.render(chunks[3], buf);
+
+        // ── Sub-Agent Status Panel ──
+        // Only rendered when CommanderAgent is active and has sub-agent states
+        if !self.sub_agent_states.is_empty() && chunks[4].height >= 3 {
+            let panel_area = chunks[4];
+            let max_items = panel_area.height.saturating_sub(2) as usize; // content rows
+            let total = self.sub_agent_states.len();
+            let scroll = self.sub_agent_scroll.get().min(total.saturating_sub(1));
+
+            // Store panel Y position for mouse scroll detection
+            self.sub_agent_panel_y.set(panel_area.y);
+
+            let has_more_up = scroll > 0;
+            let has_more_down = scroll + max_items < total;
+
+            let indicator_lines = has_more_up as usize + has_more_down as usize;
+            let visible_max = max_items.saturating_sub(indicator_lines);
+            let visible: Vec<&SubAgentUiState> = self
+                .sub_agent_states
+                .iter()
+                .skip(scroll)
+                .take(visible_max)
+                .collect();
+
+            let mut panel_lines = Vec::new();
+            if has_more_up {
+                panel_lines.push(Line::from(Span::styled(
+                    "  \u{2191} more...",
+                    Style::default().fg(t.subtle),
+                )));
+            }
+            for state in &visible {
+                let icon = if state.completed {
+                    if state.success { "✓" } else { "✗" }
+                } else {
+                    "▶"
+                };
+                let task_preview: String = state.task.chars().take(35).collect();
+                let elapsed = state
+                    .elapsed_secs
+                    .unwrap_or_else(|| state.start_time.elapsed().as_secs_f64());
+                let line_str = format!(
+                    " {} {}  {}  {:.1}s",
+                    icon, state.agent_type, task_preview, elapsed
+                );
+                panel_lines.push(Line::from(Span::styled(
+                    line_str,
+                    Style::default().fg(t.info_fg),
+                )));
+            }
+            if has_more_down {
+                panel_lines.push(Line::from(Span::styled(
+                    "  \u{2193} more...",
+                    Style::default().fg(t.subtle),
+                )));
+            }
+
+            let panel = Paragraph::new(Text::from(panel_lines))
+                .block(
+                    Block::bordered()
+                        .title("Sub-Agents")
+                        .title_alignment(Alignment::Left)
+                        .border_type(BorderType::Rounded)
+                        .border_style(Style::default().fg(t.accent)),
+                )
+                .style(Style::default().bg(t.surface_bg));
+            panel.render(panel_area, buf);
+        } else {
+            // No sub-agents — reset panel Y to avoid stale detection
+            self.sub_agent_panel_y.set(u16::MAX);
+        }
 
         // ── SubMenu / Command Selector Popup ──
         // Render into chunks[2] (reserved popup area)

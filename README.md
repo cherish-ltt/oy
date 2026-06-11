@@ -139,6 +139,7 @@ cargo test --workspace
 | `Alt+Enter` | 发送消息到等待队列，当前 agent 处理完后自动消费 |
 | `Ctrl+R` | 进入撤销选择模式，按数字键撤销对应队列中的提示词 |
 | `Ctrl+O` | 展开/折叠工具调用结果 |
+| `Shift+Tab` | 切换 MainAgent / CommanderAgent（子代理系统模式） |
 | `↑`/`↓` | 命令选择器导航 |
 | `Esc` | 取消/退出当前模式 |
 
@@ -196,6 +197,55 @@ AI 回复内容以 Markdown 格式渲染，支持：
 
 状态栏显示 agent 运行状态：`•` 空闲，`⠋⠙⠹…` 旋转动画表示工作中。
 
+## 子代理系统 (Sub-Agent System)
+
+> 一个统筹调度 + 多角色子代理的智能体协作系统。
+
+CommanderAgent 是用户主入口，通过 **Shift+Tab** 与 MainAgent 切换。职责是意图识别 → 任务拆分 → 调度子代理 → 结果汇总。
+
+### 子代理类型
+
+| 代理 | 职责 | 迭代上限 | 最终能力 |
+|------|------|---------|---------|
+| **CommanderAgent** | 意图识别、任务拆分、调度子代理、结果汇总 | N/A | 可使用 Read/Bash 探索代码库，不直接 Write/Edit 代码；与 MainAgent 共享 session UUID，切换保留完整上下文 |
+| **Planner** | 制定开发+测试计划，输出到 `.oy-agent-output/plans/` | ≤50轮 | 输出完整 Plan 模板（影响范围/验收标准/风险防御），"建筑设计师般严谨" |
+| **Worker** | 按计划产出完整可编译代码 | ≤100轮 | "外科手术刀般精准"，严格遵循 Plan，不偏离、不引入未要求特性、不留 TODO |
+| **Reviewer** | 审计产出，输出通过/不通过及改进建议 | ≤75轮 | 问题分三级（严重/中度/轻度），结果写入 `.oy-agent-output/reviews/`；中度及以上不通过 |
+| **GitHelper** | 整理 git diff，提交 commit | ≤15轮 | 输出含 commit-hash-id |
+
+### 工作流程
+
+```
+CommanderAgent 接收用户需求
+  ├─ 拆分为 sub-issue 1/2/3...
+  ├─ 对每个 sub-issue:
+  │   ├─ create_sub_agent("planner")    → 获得计划
+  │   ├─ create_sub_agent("worker")     → 获得代码产出
+  │   ├─ create_sub_agent("reviewer")   → 获得审查
+  │   └─ create_sub_agent("git_helper") → 提交 commit
+  └─ 汇总输出
+```
+
+### 核心运行机制
+
+- **System Prompt**：自动注入工作目录和当前时间，子代理具备完整上下文
+- **Session**：MainAgent 与 CommanderAgent 共用同一 UUID 和 session 文件，切换 agent 自动通过 channel 恢复对话历史；子代理 session 自动保存用于调试
+- **独立 Runtime**：子代理在独立 tokio runtime 中运行，不阻塞主循环
+- **UUID 工具**：子代理可调用 `uuid` 工具生成 v4/v7 标识符
+- **错误处理**：tool 执行 panic 在 UI 展示，不静默丢失；Worker drain loop 不丢弃 prompt
+
+### UI 展示
+
+- 底部 `Sub-Agents` 面板显示实时执行状态（▶ 运行中 / ✓ 完成 / ✗ 失败），最多显示 5 行，支持鼠标滚轮滚动
+- 每个 toolcall 显示对应 agent 名称，带实时计时器和冻结计时
+- 状态栏显示当前 active agent 名称
+
+### 约束
+
+- 各子代理达到推理轮次上限立即返回错误
+- 同一子问题 Review 最多重试 15 次
+- CommanderAgent 不直接执行文件操作，主要通过 `create_sub_agent` 工具调度
+
 ## 可用工具
 
 | 工具 | 功能 | 输入 |
@@ -217,9 +267,10 @@ oy/
 ├── oy-agent/                      # 智能体编排
 │   ├── tests/integration_test.rs  # MockProvider 集成测试
 │   └── src/
-│       ├── domain/ (Agent trait, Tool trait, ToolRegistry, AgentError)
+│       ├── domain/ (Agent trait, Tool trait, ToolRegistry, AgentError, SubAgentType)
 │       ├── application/ (Orchestrator 主循环)
-│       └── infrastructure/ (ReadTool, WriteTool, EditTool, BashTool, 持久化)
+│       └── infrastructure/ (ReadTool, WriteTool, EditTool, BashTool,
+│               CommanderAgent, SubAgentRunner, create_sub_agent meta-tool, 持久化)
 ├── oy-code-cli/                   # CLI 二进制 `oy`
 │   └── src/ (CliArgs, run())
 └── oy-tui/                        # TUI 二进制

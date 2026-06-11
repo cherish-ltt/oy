@@ -117,7 +117,7 @@ pub fn discover_skills(read_claude: bool) -> Vec<SkillSummary> {
 /// Build a system prompt fragment listing available skills.
 /// Format:
 /// ```ignore
-/// ## 7. Available Skills
+/// ## Available Skills
 /// - folder_name: <folder>
 ///   name: <name>
 ///   description: <description>
@@ -128,7 +128,7 @@ pub fn skills_to_prompt_fragment(skills: &[SkillSummary]) -> String {
         return String::new();
     }
 
-    let mut result = String::from("\n## 7. Available Skills\n");
+    let mut result = String::from("\n## Available Skills\n");
     result.push_str(
         "Skills can assist you in your work. Corresponding skills are automatically loaded and applied according to the hints provided in the skill description. Unrelated skills do not need to be loaded..\nYou may use any of the following skills by reading their file with the `Read` tool:\n",
     );
@@ -325,7 +325,7 @@ description: From OY
         }];
 
         let fragment = skills_to_prompt_fragment(&skills);
-        assert!(fragment.contains("## 7. Available Skills"));
+        assert!(fragment.contains("## Available Skills"));
         assert!(fragment.contains("test-folder"));
         assert!(fragment.contains("Test Skill"));
         assert!(fragment.contains("A test"));

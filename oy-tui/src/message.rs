@@ -88,15 +88,23 @@ impl Message {
                 let mut lines = Vec::new();
 
                 // reasoning content (e.g. thinking)
+                // NOTE: Must split into individual Lines per \n, because ratatui's WordWrapper
+                // treats \n within a single Line's Span as zero-width whitespace (not a line
+                // break). Without splitting, the entire thinking block renders as one wrapped
+                // text blob while visual_line_count allocates N lines of height, causing
+                // trailing blank rows.
                 if let Some(reasoning_content) = &chat_message.reasoning_content {
-                    lines.push(Line::from(Span::styled(
-                        format!(
-                            "[{:#?} - thinking] {}",
-                            chat_message.role,
-                            reasoning_content.trim_end()
-                        ),
-                        role_style.add_modifier(Modifier::ITALIC),
-                    )));
+                    for (i, r_line) in reasoning_content.trim_end().lines().enumerate() {
+                        let text = if i == 0 {
+                            format!("[{:#?} - thinking] {}", chat_message.role, r_line)
+                        } else {
+                            r_line.to_string()
+                        };
+                        lines.push(Line::from(Span::styled(
+                            text,
+                            role_style.add_modifier(Modifier::ITALIC),
+                        )));
+                    }
                 }
 
                 // ----- Tool result: per-tool-type formatting -----
@@ -145,7 +153,9 @@ impl Message {
                         let content = content.trim_end();
                         let prefix = format!("[{:#?}] ", chat_message.role);
                         let md_lines = Self::render_markdown(content, role_style, theme);
-                        for (i, line) in md_lines.into_iter().enumerate() {
+                        // Flatten: split any Line whose spans still contain \n into multiple
+                        // Lines. Same ratatui WordWrapper limitation as reasoning_content.
+                        for (i, line) in Self::flatten_lines(md_lines).into_iter().enumerate() {
                             if i == 0 {
                                 let mut spans = vec![Span::styled(prefix.clone(), role_style)];
                                 spans.extend(line.spans);
@@ -845,8 +855,8 @@ impl Message {
         let width = width.max(1);
         let mut count = 0usize;
 
-        // reasoning content: to_lines puts all text in ONE Span (newlines preserved),
-        // ratatui renders each \n-separated sub-line independently, prefix on first only.
+        // reasoning content: to_lines now creates one Line per \n-separated segment,
+        // each with the prefix on the first line only. Count each line with proper prefix width.
         if let Some(r) = &chat.reasoning_content {
             let prefix = format!("[{:#?} - thinking] ", chat.role);
             let prefix_w = UnicodeWidthStr::width(prefix.as_str());
@@ -1070,6 +1080,50 @@ impl Message {
         trim_trailing_lines(&mut lines);
 
         lines.into_iter().map(Line::from).collect()
+    }
+
+    /// Flatten Lines that have embedded `\n` in their spans into multiple Lines.
+    ///
+    /// ratatui's `WordWrapper` treats `\n` within a single `Line` as zero-width whitespace
+    /// (not a line break), which causes visual_line_count vs rendered-line mismatch.
+    /// This ensures every Line is `\n`-free by splitting any span that contains `\n`.
+    fn flatten_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+        let mut result = Vec::new();
+        for line in lines {
+            let mut spans_out: Vec<Span<'static>> = Vec::new();
+            let mut has_newline = false;
+            for span in line.spans {
+                if let Some(_pos) = span.content.find('\n') {
+                    has_newline = true;
+                    // Split the span's content at \n boundaries
+                    let content = span.content.as_ref();
+                    let mut start = 0;
+                    for (end, _) in content.match_indices('\n') {
+                        let segment = &content[start..end];
+                        if !segment.is_empty() {
+                            spans_out.push(Span::styled(segment.to_string(), span.style));
+                        }
+                        // Push the current spans_out as a completed line
+                        if !spans_out.is_empty() {
+                            result.push(Line::from(std::mem::take(&mut spans_out)));
+                        }
+                        start = end + 1;
+                    }
+                    // Remaining text after last \n
+                    let remaining = &content[start..];
+                    if !remaining.is_empty() {
+                        spans_out.push(Span::styled(remaining.to_string(), span.style));
+                    }
+                } else {
+                    spans_out.push(span);
+                }
+            }
+            // Push remaining spans as one line (if any)
+            if !spans_out.is_empty() || !has_newline {
+                result.push(Line::from(spans_out));
+            }
+        }
+        result
     }
 }
 

@@ -1,6 +1,10 @@
 use std::collections::VecDeque;
 
-use tokio::sync::mpsc::{Receiver, Sender};
+use oy_ai::ChatMessage;
+use tokio::sync::{
+    mpsc::{Receiver, Sender},
+    oneshot,
+};
 
 use crate::agent::{AgentState, PromptKind, PromptRequest, RequestAgent, ResponseAgent};
 
@@ -17,6 +21,12 @@ pub(crate) enum WorkerCommand {
     FlushEnterQueue(Vec<PromptRequest>),
     SetProvider(Box<dyn oy_ai::AiProvider + Send + Sync>),
     SetSkills(Vec<crate::domain::skill::SkillSummary>),
+    /// Worker replies with its agent's messages via the oneshot.
+    GetMessages {
+        tx: oneshot::Sender<Vec<ChatMessage>>,
+    },
+    /// Replace the worker's agent message list.
+    SetMessages(Vec<ChatMessage>),
 }
 
 /// Event sent from Worker to Reactor.
@@ -177,6 +187,18 @@ impl Reactor {
                 let _ = self
                     .worker_cmd_tx
                     .send(WorkerCommand::SetSkills(skills))
+                    .await;
+            }
+            RequestAgent::GetMessages { tx } => {
+                let _ = self
+                    .worker_cmd_tx
+                    .send(WorkerCommand::GetMessages { tx })
+                    .await;
+            }
+            RequestAgent::SetMessages(msgs) => {
+                let _ = self
+                    .worker_cmd_tx
+                    .send(WorkerCommand::SetMessages(msgs))
                     .await;
             }
         }
