@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use chrono::Utc;
 use oy_ai::{AiProvider, ChatMessage};
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -45,8 +46,8 @@ pub async fn run_sub_agent(
         let _ = tx.send(SubAgentEvent::Status(SubAgentStatus::Pending));
     }
 
-    // 2. Build messages: [System(prompt + tool_desc), User(task + context)]
-    // Match MainAgent's pattern exactly — some providers reject missing User message.
+    // 2. Build messages: [System(prompt + tool_desc + env), User(task + context)]
+    // Match MainAgent's pattern exactly — inject workspace dir and current time.
     let mut system_prompt = agent_type.system_prompt().to_string();
 
     // Append tool descriptions so LLM knows how to use the available tools
@@ -55,6 +56,17 @@ pub async fn run_sub_agent(
         system_prompt.push_str("\n\n## 可用工具\n");
         system_prompt.push_str(&tools_desc);
     }
+
+    // Append environment context (workspace dir + current time) — same as MainAgent
+    system_prompt.push_str("\n\n## 环境上下文\n");
+    if let Ok(path) = std::env::current_dir() {
+        system_prompt.push_str(&format!("- 工作目录: {}\n", path.to_string_lossy()));
+    }
+    let now = Utc::now();
+    system_prompt.push_str(&format!(
+        "- 当前时间 (UTC): {}\n",
+        now.format("%Y-%m-%d %H:%M")
+    ));
 
     messages.push(ChatMessage::system(system_prompt));
 
