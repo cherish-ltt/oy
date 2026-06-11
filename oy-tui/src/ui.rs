@@ -11,7 +11,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
-    app::{App, AppMode, visual_cursor_pos},
+    app::{App, AppMode, SubAgentUiState, visual_cursor_pos},
     command::CommandInfo,
     message::{Message, Status},
 };
@@ -100,7 +100,7 @@ impl Widget for &App {
         // Calculate sub-agent panel height
         let has_sub_agents = !self.sub_agent_states.is_empty();
         let sub_agent_rows: u16 = if has_sub_agents {
-            (self.sub_agent_states.len() as u16).min(4) + 2 // header + items + border
+            (self.sub_agent_states.len() as u16).min(3) + 2 // header + items + border
         } else {
             0
         };
@@ -382,24 +382,55 @@ impl Widget for &App {
         // Only rendered when CommanderAgent is active and has sub-agent states
         if !self.sub_agent_states.is_empty() && chunks[4].height >= 3 {
             let panel_area = chunks[4];
-            let mut panel_lines = Vec::new();
+            let max_items = panel_area.height.saturating_sub(2) as usize; // content rows
+            let total = self.sub_agent_states.len();
+            let scroll = self.sub_agent_scroll.get().min(total.saturating_sub(1));
 
-            for state in &self.sub_agent_states {
+            // Store panel Y position for mouse scroll detection
+            self.sub_agent_panel_y.set(panel_area.y);
+
+            let has_more_up = scroll > 0;
+            let has_more_down = scroll + max_items < total;
+
+            let indicator_lines = has_more_up as usize + has_more_down as usize;
+            let visible_max = max_items.saturating_sub(indicator_lines);
+            let visible: Vec<&SubAgentUiState> = self
+                .sub_agent_states
+                .iter()
+                .skip(scroll)
+                .take(visible_max)
+                .collect();
+
+            let mut panel_lines = Vec::new();
+            if has_more_up {
+                panel_lines.push(Line::from(Span::styled(
+                    "  \u{2191} more...",
+                    Style::default().fg(t.subtle),
+                )));
+            }
+            for state in &visible {
                 let icon = if state.completed {
                     if state.success { "✓" } else { "✗" }
                 } else {
                     "▶"
                 };
-                let task_preview: String = state.task.chars().take(40).collect();
-                let elapsed = state.start_time.elapsed().as_secs_f64();
-                let status_str = format!("{:.1}s", elapsed);
+                let task_preview: String = state.task.chars().take(35).collect();
+                let elapsed = state
+                    .elapsed_secs
+                    .unwrap_or_else(|| state.start_time.elapsed().as_secs_f64());
                 let line_str = format!(
-                    " {} {}  {}  {}",
-                    icon, state.agent_type, task_preview, status_str
+                    " {} {}  {}  {:.1}s",
+                    icon, state.agent_type, task_preview, elapsed
                 );
                 panel_lines.push(Line::from(Span::styled(
                     line_str,
                     Style::default().fg(t.info_fg),
+                )));
+            }
+            if has_more_down {
+                panel_lines.push(Line::from(Span::styled(
+                    "  \u{2193} more...",
+                    Style::default().fg(t.subtle),
                 )));
             }
 
@@ -413,6 +444,9 @@ impl Widget for &App {
                 )
                 .style(Style::default().bg(t.surface_bg));
             panel.render(panel_area, buf);
+        } else {
+            // No sub-agents — reset panel Y to avoid stale detection
+            self.sub_agent_panel_y.set(u16::MAX);
         }
 
         // ── SubMenu / Command Selector Popup ──

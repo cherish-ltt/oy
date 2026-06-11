@@ -66,6 +66,8 @@ pub struct SubAgentUiState {
     pub completed: bool,
     pub success: bool,
     pub summary: String,
+    /// Frozen elapsed seconds when completed (None while running)
+    pub elapsed_secs: Option<f64>,
 }
 
 /// Application state
@@ -125,6 +127,10 @@ pub struct App {
     pub pending_prompts: Vec<Uuid>,
     /// 子代理运行状态 (CommanderAgent 专用)
     pub sub_agent_states: Vec<SubAgentUiState>,
+    /// 子代理面板滚动偏移
+    pub sub_agent_scroll: Cell<usize>,
+    /// 子代理面板在屏幕中的 Y 起始位置 (用于鼠标滚轮判定)
+    pub sub_agent_panel_y: Cell<u16>,
     /// 共享 session UUID (MainAgent + CommanderAgent 共用)
     pub session_uuid: Option<Uuid>,
 }
@@ -352,6 +358,8 @@ impl App {
             skills,
             pending_prompts: Vec::new(),
             sub_agent_states: Vec::new(),
+            sub_agent_scroll: Cell::new(0),
+            sub_agent_panel_y: Cell::new(u16::MAX),
             session_uuid: Some(shared_session_uuid),
         }
     }
@@ -375,14 +383,29 @@ impl App {
                     }
                     crossterm::event::Event::Mouse(mouse_event) => match mouse_event.kind {
                         MouseEventKind::ScrollDown => {
-                            self.scroll_offset
-                                .set(self.scroll_offset.get().saturating_add(3));
+                            let in_sub_area = !self.sub_agent_states.is_empty()
+                                && mouse_event.row >= self.sub_agent_panel_y.get();
+                            if in_sub_area {
+                                let max = self.sub_agent_states.len().saturating_sub(1);
+                                let current = self.sub_agent_scroll.get();
+                                self.sub_agent_scroll
+                                    .set((current + 1).min(max));
+                            } else {
+                                self.scroll_offset
+                                    .set(self.scroll_offset.get().saturating_add(3));
+                            }
                         }
                         MouseEventKind::ScrollUp => {
-                            self.scroll_offset
-                                .set(self.scroll_offset.get().saturating_sub(3));
-                            // 用户手动向上翻页（看旧消息），禁用自动滚动到底部
-                            self.auto_scroll.set(false);
+                            let in_sub_area = !self.sub_agent_states.is_empty()
+                                && mouse_event.row >= self.sub_agent_panel_y.get();
+                            if in_sub_area {
+                                let current = self.sub_agent_scroll.get();
+                                self.sub_agent_scroll.set(current.saturating_sub(1));
+                            } else {
+                                self.scroll_offset
+                                    .set(self.scroll_offset.get().saturating_sub(3));
+                                self.auto_scroll.set(false);
+                            }
                         }
                         _ => {}
                     },
@@ -471,6 +494,7 @@ impl App {
                         completed: false,
                         success: false,
                         summary: String::new(),
+                        elapsed_secs: None,
                     });
                 }
 
@@ -487,6 +511,11 @@ impl App {
                     } else if tc.function_name.eq("Bash") {
                         tc.arguments
                             .get("command")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                    } else if tc.function_name.eq("create_sub_agent") {
+                        tc.arguments
+                            .get("agent_type")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string())
                     } else {
@@ -535,6 +564,7 @@ impl App {
                             last.completed = true;
                             last.success = success;
                             last.summary = chat_message.content.clone().unwrap_or_default();
+                            last.elapsed_secs = Some(last.start_time.elapsed().as_secs_f64());
                         }
                         if !success {
                             sub_agent_error = chat_message
