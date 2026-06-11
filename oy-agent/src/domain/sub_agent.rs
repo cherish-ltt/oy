@@ -246,10 +246,10 @@ mod tests {
 
     #[test]
     fn test_max_rounds() {
-        assert_eq!(SubAgentType::Planner.max_rounds(), 25);
-        assert_eq!(SubAgentType::Worker.max_rounds(), 50);
-        assert_eq!(SubAgentType::Reviewer.max_rounds(), 15);
-        assert_eq!(SubAgentType::GitHelper.max_rounds(), 10);
+        assert_eq!(SubAgentType::Planner.max_rounds(), 50);
+        assert_eq!(SubAgentType::Worker.max_rounds(), 100);
+        assert_eq!(SubAgentType::Reviewer.max_rounds(), 75);
+        assert_eq!(SubAgentType::GitHelper.max_rounds(), 15);
     }
 
     #[test]

@@ -251,16 +251,38 @@ impl Worker {
                     for tool_call in chat_message.tool_calls.clone().unwrap() {
                         match self.tool_registry.get_clone(&tool_call.function_name) {
                             Some(t) => {
+                                // Clone metadata BEFORE the async move so we can
+                                // produce a ChatMessage::tool even if the task panics.
+                                let tc_id = tool_call.id.clone();
+                                let tc_name = tool_call.function_name.clone();
+                                let tc_args = tool_call.arguments.clone();
                                 tasks.push(tokio::spawn(async move {
-                                    let result = match t.execute(tool_call.arguments.clone()) {
-                                        Ok(r) => r,
-                                        Err(e) => format!("Error: {}", e),
+                                    // catch_unwind prevents panics from becoming
+                                    // JoinErrors that would lose the tool_call metadata.
+                                    let result = std::panic::catch_unwind(
+                                        std::panic::AssertUnwindSafe(|| {
+                                            t.execute(tc_args.clone())
+                                        }),
+                                    );
+                                    let output = match result {
+                                        Ok(Ok(r)) => r,
+                                        Ok(Err(e)) => format!("Error: {}", e),
+                                        Err(panic) => {
+                                            let msg = panic
+                                                .downcast_ref::<String>()
+                                                .map(|s| s.as_str())
+                                                .or_else(|| {
+                                                    panic.downcast_ref::<&str>().copied()
+                                                })
+                                                .unwrap_or("unknown panic");
+                                            format!("Internal error: {}", msg)
+                                        }
                                     };
                                     ChatMessage::tool(
-                                        result,
-                                        tool_call.id,
-                                        Some(tool_call.function_name),
-                                        Some(tool_call.arguments),
+                                        output,
+                                        tc_id,
+                                        Some(tc_name),
+                                        Some(tc_args),
                                     )
                                 }));
                             }
@@ -298,12 +320,25 @@ impl Worker {
                     Ok(chat_message) => {
                         self.agent
                             .push_message_back(self.uuid, chat_message.clone())?;
-                        self.send_event_async(WorkerEvent::Response(ResponseAgent::ChatMessage(
-                            chat_message,
-                        )))
+                        self.send_event_async(WorkerEvent::Response(
+                            ResponseAgent::ChatMessage(chat_message),
+                        ))
                         .await;
                     }
-                    Err(_e) => {}
+                    Err(e) => {
+                        // JoinError: spawned task panicked despite catch_unwind.
+                        // This should be rare, but don't silently swallow it.
+                        let err_msg = format!(
+                            "Tool execution task panicked and could not be recovered: {}",
+                            e
+                        );
+                        self.send_event_async(WorkerEvent::Response(
+                            ResponseAgent::AgentError(AgentError::ToolExecutionError(
+                                err_msg,
+                            )),
+                        ))
+                        .await;
+                    }
                 }
             }
         }

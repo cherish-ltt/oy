@@ -479,6 +479,7 @@ impl App {
         if chat_message.role == Role::Tool
             && let Some(call_id) = &chat_message.tool_call_id
         {
+            let mut sub_agent_error: Option<String> = None;
             for msg in self.messages.iter_mut().rev() {
                 if let ToolCallMsg(state) = msg
                     && state.result.is_none()
@@ -489,7 +490,11 @@ impl App {
                         let success = chat_message
                             .content
                             .as_deref()
-                            .map(|c| !c.contains("失败"))
+                            .map(|c| {
+                                !c.contains("失败")
+                                    && !c.contains("Internal error")
+                                    && !c.contains("Error:")
+                            })
                             .unwrap_or(false);
                         if let Some(last) = self
                             .sub_agent_states
@@ -501,11 +506,19 @@ impl App {
                             last.success = success;
                             last.summary = chat_message.content.clone().unwrap_or_default();
                         }
+                        if !success {
+                            sub_agent_error = chat_message.content.as_deref().map(|c| {
+                                c.lines().next().unwrap_or("unknown error").to_string()
+                            });
+                        }
                     }
                     state.result = Some(chat_message);
                     state.end_time = Some(Instant::now());
                     break;
                 }
+            }
+            if let Some(err) = sub_agent_error {
+                self.insert_before_queued(UiMessages(format!("⚠ Sub-agent error: {}", err)));
             }
             if self.auto_scroll.get() {
                 self.scroll_offset.set(u16::MAX);
