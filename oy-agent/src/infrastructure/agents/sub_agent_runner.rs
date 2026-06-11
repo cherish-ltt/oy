@@ -46,18 +46,29 @@ pub async fn run_sub_agent(
         let _ = tx.send(SubAgentEvent::Status(SubAgentStatus::Pending));
     }
 
-    // 2. Build system prompt + user task
+    // 2. Build messages: [System(prompt + tool_desc), User(task + context)]
+    // Match MainAgent's pattern exactly — some providers reject missing User message.
     let mut system_prompt = agent_type.system_prompt().to_string();
-    // Append context if provided
-    if let Some(ctx) = &context {
-        system_prompt.push_str("\n\n## 附加上下文\n");
-        system_prompt.push_str(ctx);
+
+    // Append tool descriptions so LLM knows how to use the available tools
+    let tools_desc = tool_registry.get_tools_system_prompt();
+    if !tools_desc.is_empty() {
+        system_prompt.push_str("\n\n## 可用工具\n");
+        system_prompt.push_str(&tools_desc);
     }
-    // Append task
-    system_prompt.push_str("\n\n## 任务\n");
-    system_prompt.push_str(&task);
 
     messages.push(ChatMessage::system(system_prompt));
+
+    // Build the user message: context + task (separate from system prompt)
+    let mut user_content = String::new();
+    if let Some(ctx) = &context {
+        user_content.push_str("## 附加上下文\n");
+        user_content.push_str(ctx);
+        user_content.push_str("\n\n");
+    }
+    user_content.push_str("## 任务\n");
+    user_content.push_str(&task);
+    messages.push(ChatMessage::user(user_content));
 
     // 3. Bounded LLM loop
     let mut final_output = String::new();

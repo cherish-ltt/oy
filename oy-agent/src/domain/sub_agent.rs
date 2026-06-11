@@ -129,7 +129,7 @@ const REVIEWER_SYSTEM_PROMPT: &str = r#"
 - 输出通过/不通过及改进建议。
 
 ## 约束
-- 同一子问题最多重试 15 次（由 CommanderAgent 控制重试，你只需给出评审意见）。
+- 由 CommanderAgent 控制重试，你只需给出评审意见。
 - 问题按优先级排序：严重 > 中度 > 轻度。
 
 ## 最终输出模板
