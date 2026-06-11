@@ -15,8 +15,10 @@ use crate::{
 
 use self::reactor::{WorkerCommand, WorkerEvent};
 
+pub mod commander_agent;
 pub mod main_agent;
 pub mod reactor;
+pub mod sub_agent_runner;
 
 pub(crate) struct Worker {
     uuid: Uuid,

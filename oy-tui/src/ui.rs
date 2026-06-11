@@ -97,11 +97,20 @@ impl Widget for &App {
         );
         let popup_rows: u16 = if has_popup { 7 } else { 0 };
 
+        // Calculate sub-agent panel height
+        let has_sub_agents = !self.sub_agent_states.is_empty();
+        let sub_agent_rows: u16 = if has_sub_agents {
+            (self.sub_agent_states.len() as u16).min(4) + 2 // header + items + border
+        } else {
+            0
+        };
+
         let chunks = Layout::vertical([
             Constraint::Min(5),
             Constraint::Length(input_height),
             Constraint::Length(popup_rows),
-            Constraint::Length(3),
+            Constraint::Length(3),              // status bar
+            Constraint::Length(sub_agent_rows), // sub-agent panel
         ])
         .split(area);
 
@@ -324,10 +333,10 @@ impl Widget for &App {
             format!(" {}/{} ({}%)", used_str, cap_str, pct)
         };
 
-        let mut agent_label = "<Current Agent>".to_string();
-        if let Some(main_agent) = &self.main_agent {
-            agent_label = format!("<{}>", &main_agent.name);
-        }
+        let agent_label = match self.active_agent {
+            crate::app::AgentType::MainAgent => "<MainAgent>",
+            crate::app::AgentType::CommanderAgent => "<CommanderAgent>",
+        };
 
         let revoke_hint = if !self.pending_prompts.is_empty() {
             " | Ctrl+R revoke"
@@ -368,6 +377,43 @@ impl Widget for &App {
             .style(Style::default().fg(t.status_fg).bg(t.status_bg));
 
         status_right_para.render(chunks[3], buf);
+
+        // ── Sub-Agent Status Panel ──
+        // Only rendered when CommanderAgent is active and has sub-agent states
+        if !self.sub_agent_states.is_empty() && chunks[4].height >= 3 {
+            let panel_area = chunks[4];
+            let mut panel_lines = Vec::new();
+
+            for state in &self.sub_agent_states {
+                let icon = if state.completed {
+                    if state.success { "✓" } else { "✗" }
+                } else {
+                    "▶"
+                };
+                let task_preview: String = state.task.chars().take(40).collect();
+                let elapsed = state.start_time.elapsed().as_secs_f64();
+                let status_str = format!("{:.1}s", elapsed);
+                let line_str = format!(
+                    " {} {}  {}  {}",
+                    icon, state.agent_type, task_preview, status_str
+                );
+                panel_lines.push(Line::from(Span::styled(
+                    line_str,
+                    Style::default().fg(t.info_fg),
+                )));
+            }
+
+            let panel = Paragraph::new(Text::from(panel_lines))
+                .block(
+                    Block::bordered()
+                        .title("Sub-Agents")
+                        .title_alignment(Alignment::Left)
+                        .border_type(BorderType::Rounded)
+                        .border_style(Style::default().fg(t.accent)),
+                )
+                .style(Style::default().bg(t.surface_bg));
+            panel.render(panel_area, buf);
+        }
 
         // ── SubMenu / Command Selector Popup ──
         // Render into chunks[2] (reserved popup area)
