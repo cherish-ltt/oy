@@ -125,6 +125,8 @@ pub struct App {
     pub pending_prompts: Vec<Uuid>,
     /// 子代理运行状态 (CommanderAgent 专用)
     pub sub_agent_states: Vec<SubAgentUiState>,
+    /// 共享 session UUID (MainAgent + CommanderAgent 共用)
+    pub session_uuid: Option<Uuid>,
 }
 
 impl App {
@@ -146,12 +148,13 @@ impl App {
         // We'll merge both agents' response receivers into one
         let (merged_response_tx, merged_response_rx) = tokio::sync::mpsc::channel(128);
 
-        // ── Session restore path ──
-        if let Some(path) = &session_path {
+        // ── Generate a session UUID: from loaded session or fresh ──
+        let shared_session_uuid = if let Some(path) = &session_path {
+            // Try to extract UUID from the loaded session path
             match persistence::load_session_messages(path) {
-                Ok((session_uuid, history_msgs)) => {
+                Ok((uuid, ref history_msgs)) => {
                     // Populate TUI messages from history (skip system prompt)
-                    for msg in &history_msgs {
+                    for msg in history_msgs {
                         if msg.role != Role::System {
                             messages.push_back(Message::AgentMessages(msg.clone(), false));
                         }
@@ -163,7 +166,7 @@ impl App {
                     {
                         let mut agent = start_agent_with_session(
                             global_toml_config,
-                            session_uuid,
+                            uuid,
                             history_msgs.clone(),
                         )
                         .await;
@@ -180,11 +183,11 @@ impl App {
                         }
                         main_agent = Some(agent);
 
-                        // Also start commander agent with the same session uuid + history
+                        // Also start commander agent with the same session
                         let mut cmd_agent = start_commander_agent_with_session(
                             global_toml_config,
-                            session_uuid,
-                            history_msgs,
+                            uuid,
+                            history_msgs.clone(),
                         )
                         .await;
                         let rx = cmd_agent.response_receiver.take();
@@ -201,34 +204,23 @@ impl App {
                         commander_agent = Some(cmd_agent);
                     }
 
-                    // Add a session restored indicator
                     messages.push_back(Message::UiMessages(
                         "Session restored. Continue the conversation below.".to_string(),
                     ));
                     session_loaded = true;
+                    uuid
                 }
                 Err(e) => {
                     messages.push_back(Message::UiMessages(format!(
                         "Failed to load session: {}. Starting fresh.",
                         e
                     )));
+                    Uuid::now_v7()
                 }
             }
-        }
-
-        // ── Fresh (session not loaded) path: add welcome tips ──
-        if !session_loaded {
-            WELCOME_TIPS_VEC.iter().for_each(|tip| {
-                if tip.eq(&"OY") {
-                    messages.push_back(Message::UiMessages(format!("{} {}", tip, VERSION)));
-                } else {
-                    messages.push_back(Message::UiMessages(tip.to_string()));
-                }
-            });
-        }
-
-        // ── Generate shared session UUID for both agents ──
-        let shared_session_uuid = Uuid::now_v7();
+        } else {
+            Uuid::now_v7()
+        };
 
         // ── Start agents (if config is complete) ──
         if let Some(global_toml_config) = &global_toml_config
@@ -349,6 +341,7 @@ impl App {
             skills,
             pending_prompts: Vec::new(),
             sub_agent_states: Vec::new(),
+            session_uuid: Some(shared_session_uuid),
         }
     }
 
@@ -1897,13 +1890,44 @@ impl App {
             AgentType::MainAgent => "MainAgent",
             AgentType::CommanderAgent => "CommanderAgent",
         };
+
+        // Reload session from disk to restore the full conversation history
+        if let Some(uuid) = self.session_uuid {
+            if let Ok(project_dir) = std::env::current_dir() {
+                let dir_name = project_dir.to_string_lossy().to_string().replace("/", "-");
+                if let Some(home) = dirs::home_dir() {
+                    let session_path = home
+                        .join(".oy-ai-agent")
+                        .join("sessions")
+                        .join(&dir_name)
+                        .join(format!("{}.json", uuid));
+                    if session_path.exists() {
+                        if let Ok((_, history_msgs)) =
+                            oy_agent::infrastructure::persistence::load_session_messages(
+                                &session_path,
+                            )
+                        {
+                            // Rebuild UI messages from session (skip System prompts)
+                            self.messages.clear();
+                            self.sub_agent_states.clear();
+                            for msg in history_msgs {
+                                if msg.role != oy_agent::oy_ai::Role::System {
+                                    self.messages
+                                        .push_back(Message::AgentMessages(msg, false));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         self.insert_before_queued(UiMessages(format!(
-            "Switched to {}. (press Shift+Tab to switch back)",
+            "Switched to {}.",
             name
         )));
-        if self.auto_scroll.get() {
-            self.scroll_offset.set(u16::MAX);
-        }
+        self.scroll_offset.set(u16::MAX);
+        self.auto_scroll.set(true);
     }
 
     pub fn tick(&self) {
