@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, env};
 use uuid::Uuid;
 
 use oy_ai::ChatMessage;
@@ -6,7 +6,7 @@ use oy_ai::ChatMessage;
 use crate::{
     Agent, AgentError,
     agent::{AgentCore, AgentEvent, AgentState, AgentStateTransition},
-    domain::sub_agent::COMMANDER_SYSTEM_PROMPT,
+    domain::sub_agent::COMMANDER_SYSTEM_PROMPT, infrastructure::persistence::save_session,
 };
 
 /// CommanderAgent — the top-level orchestration agent.
@@ -90,10 +90,13 @@ impl Agent for CommanderAgent {
     }
 
     fn save_session(&mut self, uuid: Uuid) -> Result<String, AgentError> {
-        // CommanderAgent doesn't persist sessions independently;
-        // session handling is shared at the TUI/message level.
-        let _ = uuid;
-        Ok(String::new())
+        match env::current_dir() {
+            Ok(path) => {
+                let path = path.to_string_lossy().to_string().replace("/", "-");
+                save_session(uuid, self.messages().iter().collect(), &path)
+            }
+            Err(e) => Err(AgentError::ToolExecutionError(e.to_string())),
+        }
     }
 
     fn get_front_message(&self) -> Option<&ChatMessage> {

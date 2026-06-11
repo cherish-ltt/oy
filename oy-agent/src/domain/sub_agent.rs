@@ -13,10 +13,10 @@ pub enum SubAgentType {
 impl SubAgentType {
     pub fn max_rounds(&self) -> u32 {
         match self {
-            Self::Planner => 25,
-            Self::Worker => 50,
-            Self::Reviewer => 15,
-            Self::GitHelper => 10,
+            Self::Planner => 50,
+            Self::Worker => 100,
+            Self::Reviewer => 75,
+            Self::GitHelper => 15,
         }
     }
 
@@ -131,6 +131,7 @@ const REVIEWER_SYSTEM_PROMPT: &str = r#"
 ## 约束
 - 由 CommanderAgent 控制重试，你只需给出评审意见。
 - 问题按优先级排序：严重 > 中度 > 轻度。
+- 存在中度及中度以上问题，则review不通过。
 
 ## 最终输出模板
 存在的问题/完美:
@@ -152,7 +153,7 @@ const GIT_HELPER_SYSTEM_PROMPT: &str = r#"
 
 ## 约束
 - 使用 Bash 工具执行 `git add`、`git commit` 等操作。
-- commit message 应清晰描述改动内容和原因。
+- commit message 应清晰描述改动内容和原因，且符合标准 message 语句。
 
 ## 最终输出模板
 ```
@@ -176,7 +177,7 @@ pub const COMMANDER_SYSTEM_PROMPT: &str = r#"
    b. 调用 `create_sub_agent(agent_type="worker", task="...", context="plan文件路径")` 实施计划
    c. 调用 `create_sub_agent(agent_type="reviewer", task="...")` 审查产出
    d. 如审查通过，调用 `create_sub_agent(agent_type="git_helper", task="...")` 提交 commit
-   e. 如审查不通过，重复步骤 b-d（最多重试 15 次）
+   e. 如审查不通过，重复步骤 b-d（最多重试 10 次）
 3. 完成所有 sub-issue 后汇总结果
 
 ## 子问题拆分原则

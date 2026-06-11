@@ -14,11 +14,6 @@ use oy_ai::AiProvider;
 /// The unified meta-tool for creating and running sub-agents.
 ///
 /// CommanderAgent uses only this tool to delegate work to sub-agents.
-/// The `agent_type` parameter selects which sub-agent to run:
-/// - `planner` (≤25 rounds)
-/// - `worker` (≤50 rounds)
-/// - `reviewer` (≤15 rounds)
-/// - `git_helper` (≤10 rounds)
 pub struct CreateSubAgentTool {
     provider: Arc<dyn AiProvider + Send + Sync>,
     tool_registry: Arc<ToolRegistry>,
@@ -140,12 +135,8 @@ impl Tool for CreateSubAgentTool {
     }
 
     fn get_system_prompt(&self) -> &str {
-        "## create_sub_agent\n\n\
-         Create a sub-agent to execute a task.\n\n\
-         Parameters:\n\
-         - agent_type: \"planner\" | \"worker\" | \"reviewer\" | \"git_helper\"\n\
-         - task: Description of the task for the sub-agent\n\
-         - context: (Optional) Additional context (e.g., plan file path)\n\n\
+        "## create_sub_agent\n
+         Create a sub-agent to execute a task.\n
          The sub-agent runs with its own system prompt and iteration limit, and returns the result."
     }
 
