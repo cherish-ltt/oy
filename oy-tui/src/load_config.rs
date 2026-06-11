@@ -3,7 +3,8 @@ use std::path::PathBuf;
 
 use oy_agent::{
     infrastructure::tools::{
-        ToolRegistry, bash::BashTool, edit::EditTool, read::ReadTool, write::WriteTool,
+        ToolRegistry, bash::BashTool, edit::EditTool, read::ReadTool, uuid_tool::UuidTool,
+        write::WriteTool,
     },
     oy_ai::AiConfig,
 };
@@ -129,10 +130,11 @@ pub fn build_provider_config(config: &GlobalTomlConfig) -> AiConfig {
     ai_config
 }
 
-/// Register the default set of tools (Read, Write, Bash).
+/// Register the default set of tools (Read, Write, Bash, Edit, Uuid).
 pub fn register_default_tools(registry: &mut ToolRegistry) {
     registry.register(ReadTool);
     registry.register(WriteTool);
     registry.register(EditTool);
     registry.register(BashTool);
+    registry.register(UuidTool);
 }
