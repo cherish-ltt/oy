@@ -30,10 +30,7 @@ impl Tool for UuidTool {
     }
 
     fn execute(&self, args: Value) -> Result<String, crate::AgentError> {
-        let version = args
-            .get("version")
-            .and_then(|v| v.as_str())
-            .unwrap_or("v7");
+        let version = args.get("version").and_then(|v| v.as_str()).unwrap_or("v7");
 
         let uuid = match version.trim().to_lowercase().as_str() {
             "v4" => Uuid::new_v4().to_string(),
@@ -90,7 +87,11 @@ mod tests {
         let uuid = Uuid::parse_str(&result).unwrap();
         // v7 UUID has version nibble = 7 at position 14 (0-indexed 12th hex char, i.e. bytes[6] >> 4)
         let version_byte = uuid.as_bytes()[6] >> 4;
-        assert_eq!(version_byte, 7, "expected v7 UUID, got version {}", version_byte);
+        assert_eq!(
+            version_byte, 7,
+            "expected v7 UUID, got version {}",
+            version_byte
+        );
     }
 
     #[test]
@@ -110,7 +111,11 @@ mod tests {
         let result = tool.execute(args).unwrap();
         let uuid = Uuid::parse_str(&result).unwrap();
         let version_byte = uuid.as_bytes()[6] >> 4;
-        assert_eq!(version_byte, 4, "expected v4 UUID, got version {}", version_byte);
+        assert_eq!(
+            version_byte, 4,
+            "expected v4 UUID, got version {}",
+            version_byte
+        );
     }
 
     #[test]

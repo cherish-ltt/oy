@@ -13,13 +13,16 @@ use crate::{
     AgentError,
     agent::{AgentCore, AgentEvent, AgentState, ResponseAgent},
     domain::{
-        sub_agent::{SubAgentType},
+        sub_agent::SubAgentType,
         token_counter::{TokenUsage, count_input_side_tokens, count_output_side_tokens},
     },
     infrastructure::tools::ToolRegistry,
 };
 
-use self::{reactor::{WorkerCommand, WorkerEvent}, sub_agent_runner::run_sub_agent};
+use self::{
+    reactor::{WorkerCommand, WorkerEvent},
+    sub_agent_runner::run_sub_agent,
+};
 
 pub mod commander_agent;
 pub mod main_agent;
@@ -331,18 +334,16 @@ impl Worker {
                                     .get("agent_type")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("planner");
-                                let task = tc_args
-                                    .get("task")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
+                                let task =
+                                    tc_args.get("task").and_then(|v| v.as_str()).unwrap_or("");
                                 let context = tc_args
                                     .get("context")
                                     .and_then(|v| v.as_str())
                                     .filter(|s| !s.is_empty())
                                     .map(|s| s.to_string());
 
-                                let agent_type =
-                                    SubAgentType::from_str(agent_type_str).unwrap_or(SubAgentType::Planner);
+                                let agent_type = SubAgentType::from_str(agent_type_str)
+                                    .unwrap_or(SubAgentType::Planner);
 
                                 let output = run_sub_agent(
                                     agent_type,
@@ -361,9 +362,11 @@ impl Worker {
                                         output.rounds_used,
                                         output.summary,
                                         match agent_type {
-                                            SubAgentType::Planner => "计划已创建，Worker 可引用此计划文件。",
+                                            SubAgentType::Planner =>
+                                                "计划已创建，Worker 可引用此计划文件。",
                                             SubAgentType::Worker => "代码已产出，Reviewer 可审查。",
-                                            SubAgentType::Reviewer => "审查完成，请检查 '通过: 是/否' 决定下一步。",
+                                            SubAgentType::Reviewer =>
+                                                "审查完成，请检查 '通过: 是/否' 决定下一步。",
                                             SubAgentType::GitHelper => "代码已提交。",
                                         }
                                     )
@@ -388,11 +391,10 @@ impl Worker {
                                     tasks.push(tokio::spawn(async move {
                                         // catch_unwind prevents panics from becoming
                                         // JoinErrors that would lose the tool_call metadata.
-                                        let result = std::panic::catch_unwind(
-                                            std::panic::AssertUnwindSafe(|| {
-                                                t.execute(tc_args.clone())
-                                            }),
-                                        );
+                                        let result =
+                                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                                                || t.execute(tc_args.clone()),
+                                            ));
                                         let output = match result {
                                             Ok(Ok(r)) => r,
                                             Ok(Err(e)) => format!("Error: {}", e),
@@ -453,9 +455,9 @@ impl Worker {
                     Ok(chat_message) => {
                         self.agent
                             .push_message_back(self.uuid, chat_message.clone())?;
-                        self.send_event_async(WorkerEvent::Response(
-                            ResponseAgent::ChatMessage(chat_message),
-                        ))
+                        self.send_event_async(WorkerEvent::Response(ResponseAgent::ChatMessage(
+                            chat_message,
+                        )))
                         .await;
                     }
                     Err(e) => {
@@ -465,11 +467,9 @@ impl Worker {
                             "Tool execution task panicked and could not be recovered: {}",
                             e
                         );
-                        self.send_event_async(WorkerEvent::Response(
-                            ResponseAgent::AgentError(AgentError::ToolExecutionError(
-                                err_msg,
-                            )),
-                        ))
+                        self.send_event_async(WorkerEvent::Response(ResponseAgent::AgentError(
+                            AgentError::ToolExecutionError(err_msg),
+                        )))
                         .await;
                     }
                 }

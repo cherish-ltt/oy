@@ -125,7 +125,13 @@ impl Orchestrator {
                 uuid,
                 msgs,
             ),
-            _ => Worker::new(agent, provider, tool_registry, worker_cmd_rx, worker_event_tx),
+            _ => Worker::new(
+                agent,
+                provider,
+                tool_registry,
+                worker_cmd_rx,
+                worker_event_tx,
+            ),
         };
 
         // Set sub-agent dependencies if provided (CommanderAgent only)

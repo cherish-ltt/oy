@@ -1,7 +1,10 @@
 use std::collections::VecDeque;
 
 use oy_ai::ChatMessage;
-use tokio::sync::{mpsc::{Receiver, Sender}, oneshot};
+use tokio::sync::{
+    mpsc::{Receiver, Sender},
+    oneshot,
+};
 
 use crate::agent::{AgentState, PromptKind, PromptRequest, RequestAgent, ResponseAgent};
 

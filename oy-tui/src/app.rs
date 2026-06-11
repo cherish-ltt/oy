@@ -388,8 +388,7 @@ impl App {
                             if in_sub_area {
                                 let max = self.sub_agent_states.len().saturating_sub(1);
                                 let current = self.sub_agent_scroll.get();
-                                self.sub_agent_scroll
-                                    .set((current + 1).min(max));
+                                self.sub_agent_scroll.set((current + 1).min(max));
                             } else {
                                 self.scroll_offset
                                     .set(self.scroll_offset.get().saturating_add(3));
@@ -2085,15 +2084,16 @@ pub async fn start_commander_agent_background(
     ));
 
     let commander_agent = CommanderAgent::new(None);
-    let (request_sender, response_receiver, join_handle) = Orchestrator::start_commander_with_session(
-        commander_agent,
-        provider,
-        commander_registry,
-        session_uuid,
-        vec![],
-        provider_for_sub_agents,
-        file_tools,
-    );
+    let (request_sender, response_receiver, join_handle) =
+        Orchestrator::start_commander_with_session(
+            commander_agent,
+            provider,
+            commander_registry,
+            session_uuid,
+            vec![],
+            provider_for_sub_agents,
+            file_tools,
+        );
 
     AgentManager::new(
         "CommanderAgent".to_owned(),
@@ -2129,15 +2129,16 @@ pub async fn start_commander_agent_with_session(
     ));
 
     let commander_agent = CommanderAgent::new(None);
-    let (request_sender, response_receiver, join_handle) = Orchestrator::start_commander_with_session(
-        commander_agent,
-        provider,
-        commander_registry,
-        session_uuid,
-        session_messages,
-        provider_for_sub_agents,
-        file_tools,
-    );
+    let (request_sender, response_receiver, join_handle) =
+        Orchestrator::start_commander_with_session(
+            commander_agent,
+            provider,
+            commander_registry,
+            session_uuid,
+            session_messages,
+            provider_for_sub_agents,
+            file_tools,
+        );
 
     AgentManager::new(
         "CommanderAgent".to_owned(),

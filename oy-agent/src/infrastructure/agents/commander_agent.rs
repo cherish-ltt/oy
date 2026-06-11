@@ -6,7 +6,8 @@ use oy_ai::ChatMessage;
 use crate::{
     Agent, AgentError,
     agent::{AgentCore, AgentEvent, AgentState, AgentStateTransition},
-    domain::sub_agent::COMMANDER_SYSTEM_PROMPT, infrastructure::persistence::save_session,
+    domain::sub_agent::COMMANDER_SYSTEM_PROMPT,
+    infrastructure::persistence::save_session,
 };
 
 /// CommanderAgent — the top-level orchestration agent.
