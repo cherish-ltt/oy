@@ -1,3 +1,6 @@
+use std::str::FromStr;
+use std::sync::Arc;
+
 use futures::{StreamExt, stream::FuturesUnordered};
 use oy_ai::{AiProvider, ChatMessage};
 use tokio::{
@@ -9,11 +12,14 @@ use uuid::Uuid;
 use crate::{
     AgentError,
     agent::{AgentCore, AgentEvent, AgentState, ResponseAgent},
-    domain::token_counter::{TokenUsage, count_input_side_tokens, count_output_side_tokens},
+    domain::{
+        sub_agent::{SubAgentType},
+        token_counter::{TokenUsage, count_input_side_tokens, count_output_side_tokens},
+    },
     infrastructure::tools::ToolRegistry,
 };
 
-use self::reactor::{WorkerCommand, WorkerEvent};
+use self::{reactor::{WorkerCommand, WorkerEvent}, sub_agent_runner::run_sub_agent};
 
 pub mod commander_agent;
 pub mod main_agent;
@@ -31,6 +37,10 @@ pub(crate) struct Worker {
     event_tx: Sender<WorkerEvent>,
     /// Cumulative token usage across the entire session
     token_usage: TokenUsage,
+    /// Provider for sub-agent execution (Arc'd for sharing, None for MainAgent)
+    sub_provider: Option<Arc<dyn AiProvider + Send + Sync>>,
+    /// File-only tool registry for sub-agents (None for MainAgent)
+    sub_tool_registry: Option<Arc<ToolRegistry>>,
 }
 
 impl Worker {
@@ -52,6 +62,8 @@ impl Worker {
             cmd_rx,
             event_tx,
             token_usage: TokenUsage::new(),
+            sub_provider: None,
+            sub_tool_registry: None,
         }
     }
 
@@ -77,6 +89,8 @@ impl Worker {
             cmd_rx,
             event_tx,
             token_usage: TokenUsage::new(),
+            sub_provider: None,
+            sub_tool_registry: None,
         };
         // Pre-load historical messages — push_message_back handles
         // persisting to the session file with the correct uuid.
@@ -100,6 +114,16 @@ impl Worker {
     ) -> Result<AgentEvent, AgentError> {
         self.provider = provider;
         Ok(AgentEvent::StartOver)
+    }
+
+    /// Set sub-agent dependencies (provider + file tools) for CommanderAgent.
+    pub(crate) fn set_sub_agent_deps(
+        &mut self,
+        provider: Arc<dyn AiProvider + Send + Sync>,
+        registry: Arc<ToolRegistry>,
+    ) {
+        self.sub_provider = Some(provider);
+        self.sub_tool_registry = Some(registry);
     }
 
     pub(crate) async fn run(&mut self) {
@@ -285,54 +309,122 @@ impl Worker {
                 {
                     let tasks = FuturesUnordered::new();
                     for tool_call in chat_message.tool_calls.clone().unwrap() {
-                        match self.tool_registry.get_clone(&tool_call.function_name) {
-                            Some(t) => {
-                                // Clone metadata BEFORE the async move so we can
-                                // produce a ChatMessage::tool even if the task panics.
-                                let tc_id = tool_call.id.clone();
-                                let tc_name = tool_call.function_name.clone();
-                                let tc_args = tool_call.arguments.clone();
-                                tasks.push(tokio::spawn(async move {
-                                    // catch_unwind prevents panics from becoming
-                                    // JoinErrors that would lose the tool_call metadata.
-                                    let result = std::panic::catch_unwind(
-                                        std::panic::AssertUnwindSafe(|| {
-                                            t.execute(tc_args.clone())
-                                        }),
-                                    );
-                                    let output = match result {
-                                        Ok(Ok(r)) => r,
-                                        Ok(Err(e)) => format!("Error: {}", e),
-                                        Err(panic) => {
-                                            let msg = panic
-                                                .downcast_ref::<String>()
-                                                .map(|s| s.as_str())
-                                                .or_else(|| {
-                                                    panic.downcast_ref::<&str>().copied()
-                                                })
-                                                .unwrap_or("unknown panic");
-                                            format!("Internal error: {}", msg)
+                        // Special handling: create_sub_agent runs as async sub-agent
+                        // via tokio::spawn + .await, not via sync Tool::execute.
+                        if tool_call.function_name == "create_sub_agent"
+                            && self.sub_provider.is_some()
+                        {
+                            let tc_id = tool_call.id.clone();
+                            let tc_name = tool_call.function_name.clone();
+                            let tc_args = tool_call.arguments.clone();
+                            let provider = self.sub_provider.clone().unwrap();
+                            let registry = self.sub_tool_registry.clone().unwrap();
+
+                            tasks.push(tokio::spawn(async move {
+                                // Parse arguments
+                                let agent_type_str = tc_args
+                                    .get("agent_type")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("planner");
+                                let task = tc_args
+                                    .get("task")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let context = tc_args
+                                    .get("context")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.is_empty())
+                                    .map(|s| s.to_string());
+
+                                let agent_type =
+                                    SubAgentType::from_str(agent_type_str).unwrap_or(SubAgentType::Planner);
+
+                                let output = run_sub_agent(
+                                    agent_type,
+                                    task.to_string(),
+                                    context,
+                                    provider,
+                                    registry,
+                                    None,
+                                )
+                                .await;
+
+                                let result_str = if output.success {
+                                    format!(
+                                        "[{} 完成 - {} 轮]\n{}\n{}",
+                                        agent_type,
+                                        output.rounds_used,
+                                        output.summary,
+                                        match agent_type {
+                                            SubAgentType::Planner => "计划已创建，Worker 可引用此计划文件。",
+                                            SubAgentType::Worker => "代码已产出，Reviewer 可审查。",
+                                            SubAgentType::Reviewer => "审查完成，请检查 '通过: 是/否' 决定下一步。",
+                                            SubAgentType::GitHelper => "代码已提交。",
                                         }
-                                    };
-                                    ChatMessage::tool(
-                                        output,
-                                        tc_id,
-                                        Some(tc_name),
-                                        Some(tc_args),
                                     )
-                                }));
-                            }
-                            None => {
-                                tasks.push(tokio::spawn(async move {
-                                    ChatMessage::tool(
-                                        format!("Error: Unknown tool: {}", tool_call.function_name),
-                                        tool_call.id,
-                                        Some(tool_call.function_name),
-                                        Some(tool_call.arguments),
+                                } else {
+                                    let err = output.error.unwrap_or_default();
+                                    format!(
+                                        "[{} 失败 - {} 轮]\n错误: {}",
+                                        agent_type, output.rounds_used, err
                                     )
-                                }));
-                            }
-                        };
+                                };
+
+                                ChatMessage::tool(result_str, tc_id, Some(tc_name), Some(tc_args))
+                            }));
+                        } else {
+                            match self.tool_registry.get_clone(&tool_call.function_name) {
+                                Some(t) => {
+                                    // Clone metadata BEFORE the async move so we can
+                                    // produce a ChatMessage::tool even if the task panics.
+                                    let tc_id = tool_call.id.clone();
+                                    let tc_name = tool_call.function_name.clone();
+                                    let tc_args = tool_call.arguments.clone();
+                                    tasks.push(tokio::spawn(async move {
+                                        // catch_unwind prevents panics from becoming
+                                        // JoinErrors that would lose the tool_call metadata.
+                                        let result = std::panic::catch_unwind(
+                                            std::panic::AssertUnwindSafe(|| {
+                                                t.execute(tc_args.clone())
+                                            }),
+                                        );
+                                        let output = match result {
+                                            Ok(Ok(r)) => r,
+                                            Ok(Err(e)) => format!("Error: {}", e),
+                                            Err(panic) => {
+                                                let msg = panic
+                                                    .downcast_ref::<String>()
+                                                    .map(|s| s.as_str())
+                                                    .or_else(|| {
+                                                        panic.downcast_ref::<&str>().copied()
+                                                    })
+                                                    .unwrap_or("unknown panic");
+                                                format!("Internal error: {}", msg)
+                                            }
+                                        };
+                                        ChatMessage::tool(
+                                            output,
+                                            tc_id,
+                                            Some(tc_name),
+                                            Some(tc_args),
+                                        )
+                                    }));
+                                }
+                                None => {
+                                    tasks.push(tokio::spawn(async move {
+                                        ChatMessage::tool(
+                                            format!(
+                                                "Error: Unknown tool: {}",
+                                                tool_call.function_name
+                                            ),
+                                            tool_call.id,
+                                            Some(tool_call.function_name),
+                                            Some(tool_call.arguments),
+                                        )
+                                    }));
+                                }
+                            };
+                        }
                     }
                     self.tool_tasks = Some(tasks);
                     return Ok(AgentEvent::ToolCallsRequired);

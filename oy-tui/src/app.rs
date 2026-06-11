@@ -2044,21 +2044,23 @@ pub async fn start_commander_agent_background(
         r
     });
 
-    // Create the meta-tool with the sub-agent provider + file tool registry
-    let sub_agent_tool = CreateSubAgentTool::new(provider_for_sub_agents, file_tools);
-
-    // Create CommanderAgent's tool registry (file tools + meta-tool)
+    // Create CommanderAgent's tool registry (file tools + create_sub_agent for schema)
     let mut commander_registry = ToolRegistry::new();
     register_default_tools(&mut commander_registry);
-    commander_registry.register(sub_agent_tool);
+    // Register a minimal CreateSubAgentTool so LLM sees the schema.
+    // Its execute() is NOT called — acting() handles create_sub_agent directly.
+    commander_registry.register(CreateSubAgentTool::new(
+        provider_for_sub_agents.clone(),
+        file_tools.clone(),
+    ));
 
     let commander_agent = CommanderAgent::new(None);
-    let (request_sender, response_receiver, join_handle) = Orchestrator::start_with_session(
+    let (request_sender, response_receiver, join_handle) = Orchestrator::start_commander(
         commander_agent,
         provider,
         commander_registry,
-        session_uuid,
-        vec![],
+        provider_for_sub_agents,
+        file_tools,
     );
 
     AgentManager::new(
@@ -2086,19 +2088,23 @@ pub async fn start_commander_agent_with_session(
         r
     });
 
-    let sub_agent_tool = CreateSubAgentTool::new(provider_for_sub_agents, file_tools);
-
+    // Register a minimal CreateSubAgentTool so LLM sees the schema
     let mut commander_registry = ToolRegistry::new();
     register_default_tools(&mut commander_registry);
-    commander_registry.register(sub_agent_tool);
+    commander_registry.register(CreateSubAgentTool::new(
+        provider_for_sub_agents.clone(),
+        file_tools.clone(),
+    ));
 
     let commander_agent = CommanderAgent::new(None);
-    let (request_sender, response_receiver, join_handle) = Orchestrator::start_with_session(
+    let (request_sender, response_receiver, join_handle) = Orchestrator::start_commander_with_session(
         commander_agent,
         provider,
         commander_registry,
         session_uuid,
         session_messages,
+        provider_for_sub_agents,
+        file_tools,
     );
 
     AgentManager::new(
