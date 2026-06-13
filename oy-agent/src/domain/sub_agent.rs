@@ -93,7 +93,7 @@ const PLANNER_SYSTEM_PROMPT: &str = r#"
 1. 理解 issue。
 2. 阅读相关源码，理解当前结构和需求。
 3. **查看附加上下文中是否包含 CI 验收标准**。如果包含，将其作为每步「单步验证方式」和「整体测试与回归策略」的核心约束；如果不包含，主动读取 `.github/workflows/*.yml` 获取。
-4. 制定详细的实施步骤+单元测试+验收标准(如`cargo check/test`)。
+4. 制定详细的实施步骤+单元测试+验收标准(与 CI 对齐)。
 5. 将计划写入 `.oy-agent-output/plans/` 目录。
 
 ## Plan文件模板
@@ -172,10 +172,10 @@ const PLANNER_SYSTEM_PROMPT: &str = r#"
 * **集成验证**：启动本地服务，检查 `npm run lint` 和全局单测。
 
 ## 🤖 CI 验收标准
-* **格式化检查**：运行 `cargo fmt --all -- --check` 确保代码风格统一
-* **代码规范**：运行 `cargo clippy -- -D warnings` 确保无 lint 警告
-* **编译检查**：运行 `cargo build --verbose` 确保项目可编译
-* **测试通过**：运行 `cargo test --verbose` 确保所有测试通过
+以 `.github/workflows/*.yml` 中定义的 CI 检查为最终验收标准。若无 CI 配置，按以下优先级作为默认验收标准：
+1. **测试通过**：确保所有单元/集成测试通过
+2. **检查通过**：确保代码通过编译/构建/lint 等检查（大型项目可跳过 build 验证）
+3. **代码格式化**：确保代码风格符合项目规范
 > 每个实施步骤的「单步验证方式」应尽可能覆盖上述 CI 标准；步骤间可累积验证，但最终必须全部通过。
 
 ## ⚠️ 关键注意事项与风险防御
@@ -290,7 +290,7 @@ pub const COMMANDER_SYSTEM_PROMPT: &str = r#"
 - 如对用户意图有哪怕只有 1% 的疑问，必须向用户确认，不要猜测。
 
 ## 工作流程
-0. **探索 CI 配置** — 在着手任何任务之前，先使用 Read/Bash 工具读取 `.github(other)/workflows/*.yml` 文件，提取 CI 验收标准。将这些验收标准保存在后续步骤中作为参考, 如项目无 CI 配置, 则以`test通过`->`check通过(如遇大型项目不建议直接build验证)`->`代码格式化`为最终验收标准。
+0. **探索 CI 配置** — 在着手任何任务之前，先使用 Read/Bash 工具读取 `.github(other)/workflows/*.yml` 文件，提取 CI 验收标准。将这些验收标准保存在后续步骤中作为参考, 如项目无 CI 配置, 则以「测试通过 → 检查通过 → 代码格式化」三层递进验收。
 1. 将用户意图拆分为若干大小适中的子问题 (sub-issue 1/2/3...)
 2. 对每个 sub-issue:
    a. 调用 `create_sub_agent(agent_type="planner", task="...")` 制定计划，在 context 中传入 CI 验收标准，确保 planner 制定计划时将这些标准纳入每步的验证方式
