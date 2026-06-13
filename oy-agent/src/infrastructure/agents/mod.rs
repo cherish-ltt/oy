@@ -213,7 +213,7 @@ impl Worker {
                     // They get injected as user messages alongside tool results,
                     // before the next Thinking (LLM call).
                     if result.is_ok() {
-                        self.drain_pending_enter_prompts().await;
+                        self.drain_pending_commands().await;
                     }
                 }
                 AgentState::Observing => result = self.observing().await,
@@ -502,9 +502,10 @@ impl Worker {
         Ok(())
     }
 
-    /// After tool_call, drain any queued Enter prompts from cmd_rx and inject
-    /// them as user messages so they're included in the next LLM call.
-    async fn drain_pending_enter_prompts(&mut self) {
+    /// After tool_call, drain any queued commands from cmd_rx (Prompt, FlushEnterQueue,
+    /// SetProvider, SetSkills, GetMessages, SetMessages) and process them so they are
+    /// included before the next state transition.
+    async fn drain_pending_commands(&mut self) {
         loop {
             match self.cmd_rx.try_recv() {
                 Ok(WorkerCommand::Prompt { text, .. }) => {
