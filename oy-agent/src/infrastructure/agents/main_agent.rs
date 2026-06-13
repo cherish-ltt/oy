@@ -384,4 +384,46 @@ mod tests {
             Some("assistant reply")
         );
     }
+
+    #[test]
+    fn test_insert_message_front() {
+        let mut agent = new_agent();
+        let uuid = Uuid::now_v7();
+
+        // 先 push 一条 system 消息到末尾
+        let _ = agent.push_message_back(uuid, ChatMessage::system("system prompt"));
+        assert_eq!(agent.messages().len(), 1);
+        assert_eq!(agent.messages()[0].role, oy_ai::Role::System);
+
+        // 在开头插入一条 user 消息
+        let _ = agent.insert_message_front(uuid, ChatMessage::user("front user"));
+        assert_eq!(agent.messages().len(), 2);
+        assert_eq!(
+            agent.messages()[0].role,
+            oy_ai::Role::User,
+            "user message should be at index 0 after insert_front"
+        );
+        assert_eq!(agent.messages()[0].content.as_deref(), Some("front user"));
+        assert_eq!(
+            agent.messages()[1].role,
+            oy_ai::Role::System,
+            "system message should be pushed to index 1"
+        );
+        assert_eq!(
+            agent.messages()[1].content.as_deref(),
+            Some("system prompt")
+        );
+    }
+
+    #[test]
+    fn test_insert_message_front_empty() {
+        let mut agent = new_agent();
+        let uuid = Uuid::now_v7();
+
+        // 空列表中 insert_front
+        let _ = agent.insert_message_front(uuid, ChatMessage::user("only message"));
+        assert_eq!(agent.messages().len(), 1);
+        assert_eq!(agent.messages()[0].role, oy_ai::Role::User);
+        assert_eq!(agent.messages()[0].content.as_deref(), Some("only message"));
+    }
 }
