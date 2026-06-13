@@ -94,6 +94,84 @@ pub fn list_all_sessions() -> Result<Vec<SessionEntry>, AgentError> {
     Ok(entries)
 }
 
+/// List all sub-agent session files across all project directories,
+/// sorted by modification time (newest first).
+pub fn list_sub_agent_sessions() -> Result<Vec<SessionEntry>, AgentError> {
+    let home = dirs::home_dir().ok_or_else(|| {
+        AgentError::SessionPersistenceError("Cannot find home directory".into())
+    })?;
+    let sessions_root = home.join(".oy-ai-agent").join("sessions");
+
+    if !sessions_root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut entries = Vec::new();
+    let read_dir = std::fs::read_dir(&sessions_root).map_err(|e| {
+        AgentError::SessionPersistenceError(format!("Cannot read sessions dir: {}", e))
+    })?;
+
+    for project_dir in read_dir {
+        let project_dir = project_dir.map_err(|e| {
+            AgentError::SessionPersistenceError(format!("Cannot read entry: {}", e))
+        })?;
+        let project_path = project_dir.path();
+        if !project_path.is_dir() {
+            continue;
+        }
+        let project_name = project_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let sub_agents_path = project_path.join("sub_agents");
+        if !sub_agents_path.exists() || !sub_agents_path.is_dir() {
+            continue;
+        }
+
+        let session_dir = std::fs::read_dir(&sub_agents_path).map_err(|e| {
+            AgentError::SessionPersistenceError(format!(
+                "Cannot read sub_agents dir: {}",
+                e
+            ))
+        })?;
+
+        for session_file in session_dir {
+            let session_file = session_file.map_err(|e| {
+                AgentError::SessionPersistenceError(format!("Cannot read entry: {}", e))
+            })?;
+            let path = session_file.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            if let Ok(uuid) = Uuid::from_str(file_stem) {
+                entries.push(SessionEntry {
+                    path,
+                    uuid,
+                    project_name: format!("{}/sub_agents", project_name),
+                });
+            }
+        }
+    }
+
+    // Sort by mtime descending (newest first)
+    let mut entries_with_mtime: Vec<(SessionEntry, std::time::SystemTime)> = entries
+        .into_iter()
+        .map(|entry| {
+            let mtime = std::fs::metadata(&entry.path)
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            (entry, mtime)
+        })
+        .collect();
+
+    entries_with_mtime.sort_by_key(|b| std::cmp::Reverse(b.1));
+    let entries: Vec<SessionEntry> = entries_with_mtime.into_iter().map(|(e, _)| e).collect();
+
+    Ok(entries)
+}
+
 /// Extract the first user message from a session file for preview purposes.
 /// Returns `None` if no user message is found.
 ///
