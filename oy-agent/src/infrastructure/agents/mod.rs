@@ -409,6 +409,7 @@ impl Worker {
     }
 
     /// Spawn a tokio task that runs a sub-agent for the create_sub_agent tool call.
+    #[allow(clippy::too_many_lines)]
     fn spawn_sub_agent_task(
         &self,
         tool_call: oy_ai::ToolCall,
@@ -419,33 +420,62 @@ impl Worker {
         let provider = self.sub_provider.clone().unwrap();
         let registry = self.sub_tool_registry.clone().unwrap();
 
+        // Sub-agent 默认超时 900 秒
+        let timeout_secs = tc_args
+            .get("timeout")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(900);
+        let timeout_duration = std::time::Duration::from_secs(timeout_secs);
+
+        // Clone for timeout error path
+        let tc_id2 = tc_id.clone();
+        let tc_name2 = tc_name.clone();
+
         tokio::spawn(async move {
-            // Parse arguments
-            let agent_type_str = tc_args
-                .get("agent_type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("planner");
-            let task = tc_args.get("task").and_then(|v| v.as_str()).unwrap_or("");
-            let context = tc_args
-                .get("context")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string());
+            let result = tokio::time::timeout(timeout_duration, async {
+                // Parse arguments
+                let agent_type_str = tc_args
+                    .get("agent_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("planner");
+                let task = tc_args.get("task").and_then(|v| v.as_str()).unwrap_or("");
+                let context = tc_args
+                    .get("context")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string());
 
-            let agent_type =
-                SubAgentType::from_str(agent_type_str).unwrap_or(SubAgentType::Planner);
+                let agent_type =
+                    SubAgentType::from_str(agent_type_str).unwrap_or(SubAgentType::Planner);
 
-            let output = run_sub_agent(SubAgentConfig {
-                agent_type,
-                task: task.to_string(),
-                context,
-                provider,
-                tool_registry: registry,
-                progress_tx: None,
+                let output = run_sub_agent(SubAgentConfig {
+                    agent_type,
+                    task: task.to_string(),
+                    context,
+                    provider,
+                    tool_registry: registry,
+                    progress_tx: None,
+                })
+                .await;
+
+                Self::format_sub_agent_result(tc_id, tc_name, tc_args, output, agent_type)
             })
             .await;
 
-            Self::format_sub_agent_result(tc_id, tc_name, tc_args, output, agent_type)
+            match result {
+                Ok(chat_msg) => chat_msg,
+                Err(_) => {
+                    ChatMessage::tool(
+                        format!(
+                            "[Timeout] Sub-agent execution exceeded {} seconds",
+                            timeout_secs
+                        ),
+                        tc_id2,
+                        Some(tc_name2),
+                        None,
+                    )
+                },
+            }
         })
     }
 
@@ -474,16 +504,68 @@ impl Worker {
     }
 
     /// Spawn a tokio task that executes a regular tool call.
+    #[allow(clippy::too_many_lines)]
     fn spawn_regular_tool_task(
         &self,
         tool_call: oy_ai::ToolCall,
     ) -> tokio::task::JoinHandle<ChatMessage> {
         match self.tool_registry.get_clone(&tool_call.function_name) {
             Some(t) => {
+                // Get default timeout BEFORE moving t into the closure
+                let default_timeout = t.default_timeout();
                 let tc_id = tool_call.id.clone();
                 let tc_name = tool_call.function_name.clone();
                 let tc_args = tool_call.arguments.clone();
-                tokio::spawn(async move { Self::execute_tool(t, tc_args, tc_id, tc_name) })
+
+                // Parse optional timeout from LLM args, fallback to default
+                let timeout_secs = tc_args
+                    .get("timeout")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(default_timeout);
+                let timeout_duration = std::time::Duration::from_secs(timeout_secs);
+
+                // Clone id/name again for timeout error path
+                let tc_id2 = tc_id.clone();
+                let tc_name2 = tc_name.clone();
+
+                tokio::spawn(async move {
+                    // Run sync tool in blocking thread with timeout
+                    let result = tokio::time::timeout(
+                        timeout_duration,
+                        tokio::task::spawn_blocking(move || {
+                            Self::execute_tool(t, tc_args, tc_id, tc_name)
+                        }),
+                    )
+                    .await;
+
+                    match result {
+                        Ok(Ok(chat_msg)) => chat_msg,
+                        Ok(Err(join_err)) => {
+                            // spawn_blocking panicked (should be rare due to catch_unwind inside)
+                            ChatMessage::tool(
+                                format!(
+                                    "Internal error: tool execution failed: {}",
+                                    join_err
+                                ),
+                                tc_id2,
+                                Some(tc_name2),
+                                None,
+                            )
+                        },
+                        Err(_elapsed) => {
+                            // Timeout — NOT an error, return timeout info to LLM
+                            ChatMessage::tool(
+                                format!(
+                                    "[Timeout] Tool execution exceeded {} seconds",
+                                    timeout_secs
+                                ),
+                                tc_id2,
+                                Some(tc_name2),
+                                None,
+                            )
+                        },
+                    }
+                })
             },
             None => {
                 let tc_id = tool_call.id.clone();
