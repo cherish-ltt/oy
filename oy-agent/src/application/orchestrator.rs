@@ -9,6 +9,14 @@ use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+/// Configuration for `Orchestrator::start_inner` with optional session and sub-agent dependencies.
+pub(crate) struct OrchestratorConfig {
+    pub session_uuid: Option<Uuid>,
+    pub session_messages: Option<Vec<ChatMessage>>,
+    pub sub_provider: Option<Arc<dyn AiProvider + Send + Sync>>,
+    pub sub_tool_registry: Option<Arc<ToolRegistry>>,
+}
+
 pub struct Orchestrator;
 
 impl Orchestrator {
@@ -21,7 +29,17 @@ impl Orchestrator {
         Receiver<ResponseAgent>,
         JoinHandle<()>,
     ) {
-        Self::start_inner(agent, provider, tool_registry, None, None, None, None)
+        Self::start_inner(
+            agent,
+            provider,
+            tool_registry,
+            OrchestratorConfig {
+                session_uuid: None,
+                session_messages: None,
+                sub_provider: None,
+                sub_tool_registry: None,
+            },
+        )
     }
 
     /// Start an orchestrator that resumes an existing session with a specific UUID
@@ -41,10 +59,12 @@ impl Orchestrator {
             agent,
             provider,
             tool_registry,
-            Some(session_uuid),
-            Some(session_messages),
-            None,
-            None,
+            OrchestratorConfig {
+                session_uuid: Some(session_uuid),
+                session_messages: Some(session_messages),
+                sub_provider: None,
+                sub_tool_registry: None,
+            },
         )
     }
 
@@ -64,10 +84,12 @@ impl Orchestrator {
             agent,
             provider,
             tool_registry,
-            None,
-            None,
-            Some(sub_provider),
-            Some(sub_tool_registry),
+            OrchestratorConfig {
+                session_uuid: None,
+                session_messages: None,
+                sub_provider: Some(sub_provider),
+                sub_tool_registry: Some(sub_tool_registry),
+            },
         )
     }
 
@@ -90,23 +112,21 @@ impl Orchestrator {
             agent,
             provider,
             tool_registry,
-            Some(session_uuid),
-            Some(session_messages),
-            Some(sub_provider),
-            Some(sub_tool_registry),
+            OrchestratorConfig {
+                session_uuid: Some(session_uuid),
+                session_messages: Some(session_messages),
+                sub_provider: Some(sub_provider),
+                sub_tool_registry: Some(sub_tool_registry),
+            },
         )
     }
 
     /// Internal: create Worker (optionally with session and/or sub-agent deps).
-    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     fn start_inner(
         agent: impl AgentCore + 'static,
         provider: impl AiProvider + 'static,
         tool_registry: ToolRegistry,
-        session_uuid: Option<Uuid>,
-        session_messages: Option<Vec<ChatMessage>>,
-        sub_provider: Option<Arc<dyn AiProvider + Send + Sync>>,
-        sub_tool_registry: Option<Arc<ToolRegistry>>,
+        config: OrchestratorConfig,
     ) -> (
         Sender<RequestAgent>,
         Receiver<ResponseAgent>,
@@ -117,29 +137,14 @@ impl Orchestrator {
         let (worker_cmd_tx, worker_cmd_rx) = channel::<WorkerCommand>(CHANNEL_SIZE);
         let (worker_event_tx, worker_event_rx) = channel::<WorkerEvent>(CHANNEL_SIZE);
 
-        let mut worker = match (session_uuid, session_messages) {
-            (Some(uuid), Some(msgs)) => Worker::with_session(
-                agent,
-                provider,
-                tool_registry,
-                worker_cmd_rx,
-                worker_event_tx,
-                uuid,
-                msgs,
-            ),
-            _ => Worker::new(
-                agent,
-                provider,
-                tool_registry,
-                worker_cmd_rx,
-                worker_event_tx,
-            ),
-        };
-
-        // Set sub-agent dependencies if provided (CommanderAgent only)
-        if let (Some(sp), Some(str)) = (sub_provider, sub_tool_registry) {
-            worker.set_sub_agent_deps(sp, str);
-        }
+        let worker = Self::create_worker(
+            agent,
+            provider,
+            tool_registry,
+            &config,
+            worker_cmd_rx,
+            worker_event_tx,
+        );
 
         let reactor = Reactor::new(request_rx, response_tx, worker_cmd_tx, worker_event_rx);
 
@@ -157,5 +162,42 @@ impl Orchestrator {
         });
 
         (request_tx, response_rx, join_handle)
+    }
+
+    /// Extract Worker creation into a separate function to reduce `start_inner` line count.
+    #[allow(clippy::too_many_arguments)]
+    fn create_worker(
+        agent: impl AgentCore + 'static,
+        provider: impl AiProvider + 'static,
+        tool_registry: ToolRegistry,
+        config: &OrchestratorConfig,
+        worker_cmd_rx: Receiver<WorkerCommand>,
+        worker_event_tx: Sender<WorkerEvent>,
+    ) -> Worker {
+        let mut worker = match (&config.session_uuid, &config.session_messages) {
+            (Some(uuid), Some(msgs)) => Worker::with_session(
+                agent,
+                provider,
+                tool_registry,
+                worker_cmd_rx,
+                worker_event_tx,
+                *uuid,
+                msgs.clone(),
+            ),
+            _ => Worker::new(
+                agent,
+                provider,
+                tool_registry,
+                worker_cmd_rx,
+                worker_event_tx,
+            ),
+        };
+
+        // Set sub-agent dependencies if provided (CommanderAgent only)
+        if let (Some(sp), Some(str)) = (&config.sub_provider, &config.sub_tool_registry) {
+            worker.set_sub_agent_deps(sp.clone(), str.clone());
+        }
+
+        worker
     }
 }
