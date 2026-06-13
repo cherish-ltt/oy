@@ -1,7 +1,6 @@
 use clap::Parser;
 use oy_agent::infrastructure::persistence::{
-    find_latest_session, get_session_preview, list_all_sessions,
-    list_sub_agent_sessions,
+    find_latest_session, get_session_preview, list_all_sessions, list_sub_agent_sessions,
 };
 use oy_agent::infrastructure::tools::edit::EditTool;
 use oy_agent::infrastructure::tools::read::ReadTool;
@@ -354,7 +353,10 @@ async fn run_sub_sessions() -> Result<(), anyhow::Error> {
             return Ok(());
         }
         let entry = &sessions[num - 1];
-        eprintln!("📂 Restoring sub-agent session: {} (project: {})", entry.uuid, entry.project_name);
+        eprintln!(
+            "📂 Restoring sub-agent session: {} (project: {})",
+            entry.uuid, entry.project_name
+        );
         oy_tui::run_tui(Some(entry.path.clone()))
             .await
             .map_err(|e| anyhow::Error::msg(format!("{}", e)))?;

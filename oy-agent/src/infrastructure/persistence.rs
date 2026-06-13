@@ -97,9 +97,8 @@ pub fn list_all_sessions() -> Result<Vec<SessionEntry>, AgentError> {
 /// List all sub-agent session files across all project directories,
 /// sorted by modification time (newest first).
 pub fn list_sub_agent_sessions() -> Result<Vec<SessionEntry>, AgentError> {
-    let home = dirs::home_dir().ok_or_else(|| {
-        AgentError::SessionPersistenceError("Cannot find home directory".into())
-    })?;
+    let home = dirs::home_dir()
+        .ok_or_else(|| AgentError::SessionPersistenceError("Cannot find home directory".into()))?;
     let sessions_root = home.join(".oy-ai-agent").join("sessions");
 
     if !sessions_root.exists() {
@@ -130,10 +129,7 @@ pub fn list_sub_agent_sessions() -> Result<Vec<SessionEntry>, AgentError> {
         }
 
         let session_dir = std::fs::read_dir(&sub_agents_path).map_err(|e| {
-            AgentError::SessionPersistenceError(format!(
-                "Cannot read sub_agents dir: {}",
-                e
-            ))
+            AgentError::SessionPersistenceError(format!("Cannot read sub_agents dir: {}", e))
         })?;
 
         for session_file in session_dir {

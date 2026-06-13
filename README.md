@@ -99,6 +99,9 @@ oy -r
 # 加载指定路径的 session 文件
 oy -s /path/to/session.json
 
+# 查看并恢复子代理 session
+oy sub-sessions
+
 # 更新 CLI 工具到最新版本
 oy update
 ```
@@ -106,6 +109,7 @@ oy update
 > `oy -c`：自动扫描 `~/.oy-ai-agent/sessions/` 下的最新 session 并加载历史消息。
 > `oy -r`：列出所有 session（按时间降序），显示 uuid 前缀 + 项目目录 + 首条消息摘要，用户选择后恢复。
 > `oy -s <path>` 或 `oy --session <path>`：直接加载指定文件作为 session（不限位置）。
+> `oy sub-sessions`：列出所有子代理 session 文件（按时间降序），交互选择后通过 TUI 加载查看。
 
 ### 本地开发
 
