@@ -24,6 +24,7 @@ pub struct ToolCallState {
     pub start_time: Instant,
     pub end_time: Option<Instant>,
     pub expanded: bool,
+    pub timeout_secs: u64,
 }
 
 #[derive(Debug)]
@@ -246,7 +247,7 @@ impl Message {
                 )
             },
             Span::styled(
-                format!(" ({:.1}s)", duration),
+                format!(" ({:.1}s/{}s)", duration, state.timeout_secs),
                 Style::default().fg(theme.subtle),
             ),
         ]));
@@ -615,11 +616,12 @@ impl Message {
                     state.start_time.elapsed().as_secs_f64()
                 };
                 let header = format!(
-                    "🔧 ToolCall {} {}: {} ({:.1}s)",
+                    "🔧 ToolCall {} {}: {} ({:.1}s/{}s)",
                     icon,
                     state.function_name,
                     state.arguments.as_deref().unwrap_or("unknown arguments"),
                     duration,
+                    state.timeout_secs,
                 );
                 let header_w = UnicodeWidthStr::width(header.as_str());
                 count += if header_w == 0 {
@@ -1359,6 +1361,7 @@ mod tests {
             start_time: Instant::now(),
             end_time: None,
             expanded: false,
+            timeout_secs: 150,
         };
         let msg = Message::ToolCallMsg(state);
         assert_eq!(msg.message_bg(&LIGHT_THEME), LIGHT_THEME.tool_bg);
@@ -1394,6 +1397,7 @@ mod tests {
             start_time: Instant::now(),
             end_time: None,
             expanded: true,
+            timeout_secs: 150,
         };
         let debug = format!("{:?}", state);
         assert!(debug.contains("Bash"));
