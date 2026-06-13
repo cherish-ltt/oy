@@ -308,10 +308,14 @@ impl Worker {
         self.send_event_async(WorkerEvent::Response(ResponseAgent::Running))
             .await;
 
-        let response = self
+        let mut response = self
             .provider
             .chat(self.agent.messages(), &self.tool_registry.get_schemas())
             .await?;
+
+        // Inject default_timeout into each tool call's arguments so the TUI
+        // can display the correct timeout (instead of a hardcoded fallback).
+        self.inject_tool_default_timeouts(&mut response);
 
         // Push response to messages first so all counts are accurate
         self.agent.push_message_back(self.uuid, response.clone())?;
@@ -475,6 +479,22 @@ impl Worker {
                 ),
             }
         })
+    }
+
+    /// Inject each tool's `default_timeout()` into tool call arguments if not
+    /// already set by the LLM. This lets the TUI display the correct timeout
+    /// for every tool instead of falling back to a hardcoded value.
+    fn inject_tool_default_timeouts(&self, response: &mut ChatMessage) {
+        let Some(tool_calls) = &mut response.tool_calls else {
+            return;
+        };
+        for tc in tool_calls {
+            if tc.arguments.get("timeout").and_then(|v| v.as_u64()).is_none()
+                && let Some(tool) = self.tool_registry.get_clone(&tc.function_name)
+            {
+                tc.arguments["timeout"] = serde_json::json!(tool.default_timeout());
+            }
+        }
     }
 
     /// Execute a tool synchronously (via catch_unwind) and produce a ChatMessage.
