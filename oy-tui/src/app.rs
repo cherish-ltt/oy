@@ -530,6 +530,11 @@ impl App {
                             .get("agent_type")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string())
+                    } else if tc.function_name.eq("grep") {
+                        tc.arguments
+                            .get("pattern")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
                     } else {
                         None
                     },

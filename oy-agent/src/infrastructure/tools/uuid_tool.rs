@@ -15,6 +15,10 @@ impl Tool for UuidTool {
         "Generate a UUID. Specify version: \"v4\" (random) or \"v7\" (time-ordered, default)."
     }
 
+    fn default_timeout(&self) -> u64 {
+        10
+    }
+
     fn schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
