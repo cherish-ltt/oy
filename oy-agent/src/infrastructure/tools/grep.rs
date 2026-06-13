@@ -3,6 +3,9 @@ use serde_json::Value;
 use crate::Tool;
 
 /// A tool that searches file contents via the system `grep` command.
+///
+/// Only available on Unix platforms (macOS, Linux). On Windows, the tool still
+/// exists but returns a helpful message directing users to alternatives.
 pub struct GrepTool;
 
 impl Tool for GrepTool {
@@ -53,23 +56,7 @@ impl Tool for GrepTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(50) as usize;
 
-        let output = self.run_grep(pattern, path, extension)?;
-
-        // grep exit code: 0 = matches found, 1 = no matches, >1 = error
-        if !output.status.success() && output.status.code() != Some(1) {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(crate::AgentError::ToolExecutionError(format!(
-                "grep failed: {}",
-                stderr.trim()
-            )));
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if stdout.is_empty() {
-            return Ok("No matches found.".to_string());
-        }
-
-        Ok(format_grep_output(&stdout, max_results))
+        self.inner_execute(pattern, path, extension, max_results)
     }
 
     fn get_system_prompt(&self) -> &str {
@@ -89,7 +76,35 @@ impl Tool for GrepTool {
     }
 }
 
+// Unix implementation: delegates to system `grep` command.
+#[cfg(not(windows))]
 impl GrepTool {
+    fn inner_execute(
+        &self,
+        pattern: &str,
+        path: &str,
+        extension: Option<&str>,
+        max_results: usize,
+    ) -> Result<String, crate::AgentError> {
+        let output = self.run_grep(pattern, path, extension)?;
+
+        // grep exit code: 0 = matches found, 1 = no matches, >1 = error
+        if !output.status.success() && output.status.code() != Some(1) {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(crate::AgentError::ToolExecutionError(format!(
+                "grep failed: {}",
+                stderr.trim()
+            )));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if stdout.is_empty() {
+            return Ok("No matches found.".to_string());
+        }
+
+        Ok(format_grep_output(&stdout, max_results))
+    }
+
     /// Run the grep command with the given parameters.
     fn run_grep(
         &self,
@@ -117,6 +132,25 @@ impl GrepTool {
                 crate::AgentError::ToolExecutionError(format!("Failed to execute grep: {e}"))
             }
         })
+    }
+}
+
+// Windows stub: tool exists in schema but returns a helpful message.
+#[cfg(windows)]
+impl GrepTool {
+    fn inner_execute(
+        &self,
+        _pattern: &str,
+        _path: &str,
+        _extension: Option<&str>,
+        _max_results: usize,
+    ) -> Result<String, crate::AgentError> {
+        Ok(
+            "Grep tool requires the system `grep` command which is not available on Windows. \
+            Use the Bash tool with `findstr /s /n \"pattern\" *.*` as an alternative, \
+            or install Git Bash / WSL for full grep support."
+                .to_string(),
+        )
     }
 }
 
@@ -199,6 +233,7 @@ mod tests {
         assert!(err.contains("Missing pattern"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn test_grep_tool_default_path() {
         let tool = GrepTool;
@@ -210,6 +245,7 @@ mod tests {
         assert!(output.contains("GrepTool"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn test_grep_tool_self_search() {
         let tool = GrepTool;
@@ -220,6 +256,7 @@ mod tests {
         assert!(output.contains("struct GrepTool"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn test_grep_tool_extension_filter() {
         let tool = GrepTool;
@@ -234,6 +271,7 @@ mod tests {
         assert!(output.contains("GrepTool"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn test_grep_tool_max_results() {
         let tool = GrepTool;
@@ -251,6 +289,7 @@ mod tests {
         assert!(non_empty.len() <= 5); // 3 matches + possible truncation message + extra
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn test_grep_tool_no_matches() {
         // Create a temp directory with a known file to avoid self-matching
