@@ -203,9 +203,23 @@ impl Agent for MainAgent {
     }
 
     fn replace_messages(&mut self, msgs: Vec<ChatMessage>) {
+        let system_prompt = self.messages.front().cloned();
         self.messages.clear();
-        for msg in msgs {
-            self.messages.push_back(msg);
+        if let Some(sys) = system_prompt {
+            self.messages.push_back(sys);
+            let mut iter = msgs.into_iter();
+            if let Some(first) = iter.next() {
+                if first.role != oy_ai::Role::System {
+                    self.messages.push_back(first);
+                }
+            }
+            for msg in iter {
+                self.messages.push_back(msg);
+            }
+        } else {
+            for msg in msgs {
+                self.messages.push_back(msg);
+            }
         }
     }
 }
