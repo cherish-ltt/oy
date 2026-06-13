@@ -188,7 +188,7 @@ impl Agent for MainAgent {
                     .replace(['/', '\\'], "-")
                     .replace(':', "");
                 save_session(uuid, self.messages().iter().collect(), &path)
-            }
+            },
             Err(e) => Err(AgentError::ToolExecutionError(e.to_string())),
         }
     }

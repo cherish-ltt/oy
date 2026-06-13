@@ -3,6 +3,7 @@ use oy_agent::infrastructure::persistence::{
     find_latest_session, get_session_preview, list_all_sessions, list_sub_agent_sessions,
 };
 use oy_agent::infrastructure::tools::edit::EditTool;
+use oy_agent::infrastructure::tools::grep::GrepTool;
 use oy_agent::infrastructure::tools::read::ReadTool;
 use oy_agent::infrastructure::tools::write::WriteTool;
 use oy_agent::infrastructure::tools::{ToolRegistry, bash::BashTool};
@@ -112,6 +113,7 @@ pub fn register_default_tools(registry: &mut ToolRegistry) {
     registry.register(WriteTool);
     registry.register(EditTool);
     registry.register(BashTool);
+    registry.register(GrepTool);
 }
 
 /// Run the agent with the given CLI arguments, or launch the TUI if no prompt is given.
@@ -173,11 +175,11 @@ async fn run_update() -> Result<(), anyhow::Error> {
             }
             println!("✅ Update successful:\n{}", stdout);
             return Ok(());
-        }
+        },
         Err(e) => {
             println!("⚠️  First attempt failed: {}", e);
             println!("⏳ Retrying with npm official registry...");
-        }
+        },
     }
 
     // Second attempt: official npm registry
@@ -201,11 +203,11 @@ async fn run_update() -> Result<(), anyhow::Error> {
             }
             println!("✅ Update successful:\n{}", stdout);
             Ok(())
-        }
+        },
         Err(e) => {
             eprintln!("❌ Update failed: {}", e);
             std::process::exit(1);
-        }
+        },
     }
 }
 
@@ -242,19 +244,19 @@ async fn run_continue_session() -> Result<(), anyhow::Error> {
             oy_tui::run_tui(Some(entry.path))
                 .await
                 .map_err(|e| anyhow::Error::msg(format!("{}", e)))?;
-        }
+        },
         Ok(None) => {
             eprintln!("ℹ️  No previous session found. Starting fresh.");
             oy_tui::run_tui(None)
                 .await
                 .map_err(|e| anyhow::Error::msg(format!("{}", e)))?;
-        }
+        },
         Err(e) => {
             eprintln!("⚠️  Error finding sessions: {}", e);
             oy_tui::run_tui(None)
                 .await
                 .map_err(|e| anyhow::Error::msg(format!("{}", e)))?;
-        }
+        },
     }
     Ok(())
 }
@@ -395,10 +397,10 @@ async fn run_session_path(path: &Path) -> Result<(), anyhow::Error> {
                 .await
                 .map_err(|e| anyhow::Error::msg(format!("{}", e)))?;
             Ok(())
-        }
+        },
         Err(e) => {
             eprintln!("❌ Failed to load session file: {}", e);
             std::process::exit(1);
-        }
+        },
     }
 }

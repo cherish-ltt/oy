@@ -137,7 +137,7 @@ pub fn list_sub_agent_sessions() -> Result<Vec<SessionEntry>, AgentError> {
                     e
                 );
                 continue;
-            }
+            },
         };
 
         for session_file in session_dir {
@@ -150,7 +150,7 @@ pub fn list_sub_agent_sessions() -> Result<Vec<SessionEntry>, AgentError> {
                         e
                     );
                     continue;
-                }
+                },
             };
             let path = session_file.path();
             if path.extension().and_then(|e| e.to_str()) != Some("json") {

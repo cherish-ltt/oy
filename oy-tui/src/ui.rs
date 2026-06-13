@@ -300,7 +300,7 @@ impl Widget for &App {
             Status::Running => {
                 let idx = (self.tick_counter.get() as usize / 2) % SPINNER.len();
                 SPINNER[idx]
-            }
+            },
             Status::Pause => "•",
         };
 

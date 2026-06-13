@@ -77,7 +77,7 @@ impl Message {
                     format!("> {}", text),
                     Style::default().fg(theme.info_fg).bold(),
                 ))]
-            }
+            },
             Message::AgentMessages(chat_message, expanded) => {
                 let role_style = match chat_message.role {
                     Role::User => Style::default().fg(theme.user_fg),
@@ -119,7 +119,7 @@ impl Message {
                                     &role_style,
                                     theme,
                                 );
-                            }
+                            },
                             "Bash" => {
                                 Self::add_bash_lines(
                                     &mut lines,
@@ -128,7 +128,7 @@ impl Message {
                                     &role_style,
                                     theme,
                                 );
-                            }
+                            },
                             "Edit" => {
                                 Self::add_edit_lines(
                                     &mut lines,
@@ -137,13 +137,13 @@ impl Message {
                                     &role_style,
                                     theme,
                                 );
-                            }
+                            },
                             "Write" => {
                                 Self::add_write_lines(&mut lines, chat_message, &role_style, theme);
-                            }
+                            },
                             _ => {
                                 Self::add_content_lines(&mut lines, chat_message, &role_style);
-                            }
+                            },
                         }
                     } else {
                         Self::add_content_lines(&mut lines, chat_message, &role_style);
@@ -181,7 +181,7 @@ impl Message {
                 }
 
                 lines
-            }
+            },
             Message::ToolCallMsg(state) => {
                 let mut lines = Vec::new();
                 let duration = if let Some(end) = state.end_time {
@@ -255,7 +255,7 @@ impl Message {
                                         .add_modifier(Modifier::ITALIC),
                                 )));
                             }
-                        }
+                        },
                         "Bash" if !state.expanded && total > MAX_BASH_LINES => {
                             let hidden = total - MAX_BASH_LINES;
                             lines.push(Line::from(Span::styled(
@@ -270,7 +270,7 @@ impl Message {
                                     Style::default().fg(theme.tool_fg),
                                 )));
                             }
-                        }
+                        },
                         _ => {
                             for line in &all_lines {
                                 lines.push(Line::from(Span::styled(
@@ -278,12 +278,12 @@ impl Message {
                                     Style::default().fg(theme.tool_fg),
                                 )));
                             }
-                        }
+                        },
                     }
                 }
 
                 lines
-            }
+            },
             Message::AgentStatus(status) => match status {
                 Status::Pause => vec![Line::from(Span::styled(
                     "> pause",
@@ -328,7 +328,7 @@ impl Message {
                         .add_modifier(Modifier::ITALIC),
                 )));
                 lines
-            }
+            },
         }
     }
 
@@ -563,7 +563,7 @@ impl Message {
                 let line = format!("> {}", text);
                 let w = UnicodeWidthStr::width(line.as_str());
                 1.max(w.div_ceil(width))
-            }
+            },
             Message::AgentMessages(chat, expanded) => {
                 if chat.role == Role::Tool {
                     if let Some(fn_name) = &chat.function_name {
@@ -580,7 +580,7 @@ impl Message {
                 } else {
                     self.visual_default_count(chat, width, _theme)
                 }
-            }
+            },
             Message::ToolCallMsg(state) => {
                 let width = width.max(1);
                 let mut count = 0usize;
@@ -633,7 +633,7 @@ impl Message {
                                 );
                                 count += UnicodeWidthStr::width(hint.as_str()).div_ceil(width);
                             }
-                        }
+                        },
                         "Bash" => {
                             if state.expanded || total <= MAX_BASH_LINES {
                                 count += count_wrapped_content_lines(
@@ -653,15 +653,15 @@ impl Message {
                                     width,
                                 );
                             }
-                        }
+                        },
                         _ => {
                             count +=
                                 count_wrapped_content_lines(&all_lines, content_prefix_w, width);
-                        }
+                        },
                     }
                 }
                 count.max(1)
-            }
+            },
             Message::AgentStatus(_) => 1,
             Message::PromptQueued { text, .. } => {
                 let width = width.max(1);
@@ -691,7 +691,7 @@ impl Message {
                 };
 
                 count.max(1)
-            }
+            },
         }
     }
 
@@ -924,18 +924,18 @@ impl Message {
                 match event {
                     Event::Start(Tag::TableHead) => {
                         accum.in_head = true;
-                    }
+                    },
                     Event::Start(Tag::TableRow) => {
                         accum.current_row.clear();
-                    }
+                    },
                     Event::Start(Tag::TableCell) => {
                         accum.current_cell.clear();
-                    }
+                    },
                     Event::End(TagEnd::TableCell) => {
                         accum
                             .current_row
                             .push(std::mem::take(&mut accum.current_cell));
-                    }
+                    },
                     Event::End(TagEnd::TableRow) => {
                         let row = std::mem::take(&mut accum.current_row);
                         if accum.in_head {
@@ -944,22 +944,22 @@ impl Message {
                         } else {
                             accum.rows.push(row);
                         }
-                    }
+                    },
                     Event::End(TagEnd::Table) => {
                         let rendered = render_table(accum, theme);
                         lines.extend(rendered);
                         table_accum = None;
-                    }
+                    },
                     Event::Text(t) => {
                         accum.current_cell.push_str(&t);
-                    }
+                    },
                     Event::Code(t) => {
                         accum.current_cell.push_str(&t);
-                    }
+                    },
                     Event::SoftBreak | Event::HardBreak => {
                         accum.current_cell.push(' ');
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
                 continue;
             }
@@ -977,21 +977,21 @@ impl Message {
                             current_cell: String::new(),
                             in_head: false,
                         });
-                    }
-                    Tag::Paragraph => {}
+                    },
+                    Tag::Paragraph => {},
                     Tag::Strong => {
                         style_stack.push(Style::default().add_modifier(Modifier::BOLD));
-                    }
+                    },
                     Tag::Emphasis => {
                         style_stack.push(Style::default().add_modifier(Modifier::ITALIC));
-                    }
+                    },
                     Tag::Strikethrough => {
                         style_stack.push(Style::default().add_modifier(Modifier::CROSSED_OUT));
-                    }
+                    },
                     Tag::CodeBlock(_) => {
                         flush(&mut lines, &mut current);
                         in_code_block = true;
-                    }
+                    },
                     Tag::Heading { level, .. } => {
                         flush(&mut lines, &mut current);
                         let prefix = "#".repeat(level as usize);
@@ -1000,24 +1000,24 @@ impl Message {
                             base_style.fg(Color::Cyan).add_modifier(Modifier::BOLD),
                         ));
                         style_stack.push(Style::default().add_modifier(Modifier::BOLD));
-                    }
-                    Tag::List(_) => {}
+                    },
+                    Tag::List(_) => {},
                     Tag::Item => {
                         flush(&mut lines, &mut current);
                         current.push(Span::styled("  \u{2022} ", base_style.fg(Color::DarkGray)));
-                    }
+                    },
                     Tag::Link { .. } => {
                         style_stack.push(
                             Style::default()
                                 .fg(Color::Blue)
                                 .add_modifier(Modifier::UNDERLINED),
                         );
-                    }
+                    },
                     Tag::BlockQuote(_) => {
                         flush(&mut lines, &mut current);
                         current.push(Span::styled("> ", base_style.fg(Color::DarkGray)));
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 },
                 Event::End(tag) => match tag {
                     TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::Item | TagEnd::CodeBlock => {
@@ -1025,14 +1025,14 @@ impl Message {
                         if matches!(tag, TagEnd::CodeBlock) {
                             in_code_block = false;
                         }
-                    }
+                    },
                     TagEnd::Strong | TagEnd::Emphasis | TagEnd::Strikethrough => {
                         style_stack.pop();
-                    }
+                    },
                     TagEnd::Link => {
                         style_stack.pop();
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 },
                 Event::Text(text) => {
                     if in_code_block {
@@ -1049,19 +1049,19 @@ impl Message {
                         let style = current_style(base_style, &style_stack);
                         current.push(Span::styled(text.to_string(), style));
                     }
-                }
+                },
                 Event::Code(text) => {
                     current.push(Span::styled(
                         format!("`{}`", text),
                         base_style.fg(Color::Cyan).bg(Color::Black),
                     ));
-                }
+                },
                 Event::SoftBreak | Event::HardBreak => {
                     flush(&mut lines, &mut current);
-                }
+                },
                 Event::Html(html) => {
                     current.push(Span::raw(html.to_string()));
-                }
+                },
                 Event::Rule => {
                     flush(&mut lines, &mut current);
                     current.push(Span::styled(
@@ -1069,8 +1069,8 @@ impl Message {
                         base_style.fg(theme.subtle),
                     ));
                     flush(&mut lines, &mut current);
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
 
@@ -1164,15 +1164,15 @@ fn render_table(accum: &TableAccum, theme: &Theme) -> Vec<Vec<Span<'static>>> {
         let padded = match align {
             Alignment::Left | Alignment::None => {
                 format!("{}{}", text, " ".repeat(pad))
-            }
+            },
             Alignment::Right => {
                 format!("{}{}", " ".repeat(pad), text)
-            }
+            },
             Alignment::Center => {
                 let l = pad / 2;
                 let r = pad - l;
                 format!("{}{}{}", " ".repeat(l), text, " ".repeat(r))
-            }
+            },
         };
         format!(" {} ", padded)
     };

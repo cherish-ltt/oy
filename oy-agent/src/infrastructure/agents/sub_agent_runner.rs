@@ -122,7 +122,7 @@ pub async fn run_sub_agent(
                     rounds_used: current_round,
                     error: Some(err_msg),
                 };
-            }
+            },
         };
 
         // 3b. Check if the response has content (final answer without tool calls)

@@ -63,7 +63,7 @@ impl Tool for BashTool {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 Ok(format!("{}{}", stdout, stderr))
-            }
+            },
             Err(e) => Ok(format!("Error executing command: {}", e)),
         }
     }

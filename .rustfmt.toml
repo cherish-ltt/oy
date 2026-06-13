@@ -1,2 +1,13 @@
 edition = "2024"
 max_width = 100
+tab_spaces = 4
+reorder_imports = true
+reorder_modules = true
+newline_style = "Auto"
+match_block_trailing_comma = true
+
+# Nightly-only (unstable) options — enable when CI switches to nightly:
+# imports_granularity = "Crate"
+# group_imports = "StdExternalCrate"
+# format_code_in_doc_comments = true
+# normalize_comments = true

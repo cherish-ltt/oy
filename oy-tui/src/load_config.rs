@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use oy_agent::{
     infrastructure::tools::{
-        ToolRegistry, bash::BashTool, edit::EditTool, read::ReadTool, uuid_tool::UuidTool,
-        write::WriteTool,
+        ToolRegistry, bash::BashTool, edit::EditTool, grep::GrepTool, read::ReadTool,
+        uuid_tool::UuidTool, write::WriteTool,
     },
     oy_ai::AiConfig,
 };
@@ -137,4 +137,5 @@ pub fn register_default_tools(registry: &mut ToolRegistry) {
     registry.register(EditTool);
     registry.register(BashTool);
     registry.register(UuidTool);
+    registry.register(GrepTool);
 }

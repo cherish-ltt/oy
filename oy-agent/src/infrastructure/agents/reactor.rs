@@ -130,7 +130,7 @@ impl Reactor {
                                 .send(ResponseAgent::PromptQueued { id })
                                 .await;
                         }
-                    }
+                    },
                     PromptKind::AltEnter => {
                         if self.worker_state == AgentState::Idle {
                             // Same optimistic update for Alt+Enter
@@ -160,9 +160,9 @@ impl Reactor {
                                 .send(ResponseAgent::PromptQueued { id })
                                 .await;
                         }
-                    }
+                    },
                 }
-            }
+            },
             RequestAgent::CancelPrompt { id } => {
                 // Remove from both queues if still pending
                 let removed_enter = self.enter_queue.iter().any(|pr| pr.id == id);
@@ -176,31 +176,31 @@ impl Reactor {
                         .send(ResponseAgent::PromptConsumed { id })
                         .await;
                 }
-            }
+            },
             RequestAgent::SetProvider(provider) => {
                 let _ = self
                     .worker_cmd_tx
                     .send(WorkerCommand::SetProvider(provider))
                     .await;
-            }
+            },
             RequestAgent::SetSkills(skills) => {
                 let _ = self
                     .worker_cmd_tx
                     .send(WorkerCommand::SetSkills(skills))
                     .await;
-            }
+            },
             RequestAgent::GetMessages { tx } => {
                 let _ = self
                     .worker_cmd_tx
                     .send(WorkerCommand::GetMessages { tx })
                     .await;
-            }
+            },
             RequestAgent::SetMessages(msgs) => {
                 let _ = self
                     .worker_cmd_tx
                     .send(WorkerCommand::SetMessages(msgs))
                     .await;
-            }
+            },
         }
     }
 
@@ -230,10 +230,10 @@ impl Reactor {
                     }
                     self.flush_alt_queue().await;
                 }
-            }
+            },
             WorkerEvent::Response(response) => {
                 let _ = self.response_tx.send(response).await;
-            }
+            },
         }
     }
 

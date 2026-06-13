@@ -141,27 +141,27 @@ impl Worker {
                         Ok(WorkerCommand::GetMessages { tx }) => {
                             let msgs = self.agent.messages().to_vec();
                             let _ = tx.send(msgs);
-                        }
+                        },
                         Ok(WorkerCommand::SetMessages(msgs)) => {
                             self.agent.replace_messages(msgs);
-                        }
+                        },
                         Ok(WorkerCommand::SetProvider(provider)) => {
                             self.provider = provider;
-                        }
+                        },
                         Ok(WorkerCommand::SetSkills(skills)) => {
                             self.agent.set_skills(skills);
-                        }
+                        },
                         Ok(WorkerCommand::Prompt { text, .. }) => {
                             // Inject as user message immediately so nothing is lost.
                             let _ = self.inject_user_message(&text).await;
-                        }
+                        },
                         Ok(WorkerCommand::FlushEnterQueue(requests)) => {
                             for pr in &requests {
                                 if self.inject_user_message(&pr.text).await.is_err() {
                                     break;
                                 }
                             }
-                        }
+                        },
                         Err(_) => break,
                     }
                 }
@@ -172,7 +172,7 @@ impl Worker {
                     Some(cmd) => match cmd {
                         WorkerCommand::Prompt { text, .. } => {
                             result = self.assembly_prompts(&text).await;
-                        }
+                        },
                         WorkerCommand::FlushEnterQueue(requests) => {
                             // Process every prompt so none are lost; collect last error.
                             let mut last_error = None;
@@ -185,23 +185,23 @@ impl Worker {
                                 Some(e) => Err(e),
                                 None => Ok(AgentEvent::Start),
                             };
-                        }
+                        },
                         WorkerCommand::SetProvider(ai_provider) => {
                             result = self.set_provider(ai_provider);
-                        }
+                        },
                         WorkerCommand::SetSkills(skills) => {
                             self.agent.set_skills(skills);
                             continue;
-                        }
+                        },
                         WorkerCommand::GetMessages { tx } => {
                             let msgs = self.agent.messages().to_vec();
                             let _ = tx.send(msgs);
                             continue;
-                        }
+                        },
                         WorkerCommand::SetMessages(msgs) => {
                             self.agent.replace_messages(msgs);
                             continue;
-                        }
+                        },
                     },
                     None => break,
                 },
@@ -215,7 +215,7 @@ impl Worker {
                     if result.is_ok() {
                         self.drain_pending_commands().await;
                     }
-                }
+                },
                 AgentState::Observing => result = self.observing().await,
             }
 
@@ -231,7 +231,7 @@ impl Worker {
                             self.notify_state(new_state.clone()).await;
                         }
                     }
-                }
+                },
                 Err(e) => {
                     if let Some(agent_state) = self
                         .agent
@@ -244,7 +244,7 @@ impl Worker {
                             self.notify_state(new_state.clone()).await;
                         }
                     }
-                }
+                },
             }
         }
     }
@@ -411,7 +411,7 @@ impl Worker {
                                                     })
                                                     .unwrap_or("unknown panic");
                                                 format!("Internal error: {}", msg)
-                                            }
+                                            },
                                         };
                                         ChatMessage::tool(
                                             output,
@@ -420,7 +420,7 @@ impl Worker {
                                             Some(tc_args),
                                         )
                                     }));
-                                }
+                                },
                                 None => {
                                     tasks.push(tokio::spawn(async move {
                                         ChatMessage::tool(
@@ -433,7 +433,7 @@ impl Worker {
                                             Some(tool_call.arguments),
                                         )
                                     }));
-                                }
+                                },
                             };
                         }
                     }
@@ -441,12 +441,12 @@ impl Worker {
                     return Ok(AgentEvent::ToolCallsRequired);
                 }
                 // 如果没有工具调用，继续执行最后的 TaskCompleted
-            }
+            },
             None => {
                 return Err(AgentError::ChatMessageError(
                     "Chat Message cannot be extracted".to_owned(),
                 ));
-            }
+            },
         }
 
         Ok(AgentEvent::TaskCompleted)
@@ -463,7 +463,7 @@ impl Worker {
                             chat_message,
                         )))
                         .await;
-                    }
+                    },
                     Err(e) => {
                         // JoinError: spawned task panicked despite catch_unwind.
                         // This should be rare, but don't silently swallow it.
@@ -475,7 +475,7 @@ impl Worker {
                             AgentError::ToolExecutionError(err_msg),
                         )))
                         .await;
-                    }
+                    },
                 }
             }
         }
@@ -511,27 +511,27 @@ impl Worker {
             match self.cmd_rx.try_recv() {
                 Ok(WorkerCommand::Prompt { text, .. }) => {
                     let _ = self.inject_user_message(&text).await;
-                }
+                },
                 Ok(WorkerCommand::FlushEnterQueue(requests)) => {
                     for pr in &requests {
                         if self.inject_user_message(&pr.text).await.is_err() {
                             break;
                         }
                     }
-                }
+                },
                 Ok(WorkerCommand::SetProvider(provider)) => {
                     self.provider = provider;
-                }
+                },
                 Ok(WorkerCommand::SetSkills(skills)) => {
                     self.agent.set_skills(skills);
-                }
+                },
                 Ok(WorkerCommand::GetMessages { tx }) => {
                     let msgs = self.agent.messages().to_vec();
                     let _ = tx.send(msgs);
-                }
+                },
                 Ok(WorkerCommand::SetMessages(msgs)) => {
                     self.agent.replace_messages(msgs);
-                }
+                },
                 Err(_) => break,
             }
         }
