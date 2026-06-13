@@ -460,6 +460,7 @@ impl Worker {
                 .and_then(|v| v.as_u64())
                 .is_none()
                 && let Some(tool) = self.tool_registry.get_clone(&tc.function_name)
+                && tc.arguments.is_object()
             {
                 tc.arguments["timeout"] = serde_json::json!(tool.default_timeout());
             }
@@ -723,7 +724,7 @@ fn spawn_unknown_tool_task(tool_call: oy_ai::ToolCall) -> tokio::task::JoinHandl
     let tc_args = tool_call.arguments.clone();
     tokio::spawn(async move {
         ChatMessage::tool(
-            format!("Error: Unknown tool: {}", tool_call.function_name),
+            format!("Error: Unknown tool: {}", tc_name),
             tc_id,
             Some(tc_name),
             Some(tc_args),
