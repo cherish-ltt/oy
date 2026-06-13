@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use crate::{
     Tool,
     domain::sub_agent::{SubAgentOutput, SubAgentType},
-    infrastructure::agents::sub_agent_runner::{SubAgentEvent, run_sub_agent},
+    infrastructure::agents::sub_agent_runner::{SubAgentConfig, SubAgentEvent, run_sub_agent},
     infrastructure::tools::ToolRegistry,
 };
 use oy_ai::AiProvider;
@@ -128,14 +128,14 @@ impl Tool for CreateSubAgentTool {
         // nested tokio::spawn where Handle::current() is unavailable or panics.
         let rt = self.create_runtime()?;
 
-        let result: SubAgentOutput = rt.block_on(run_sub_agent(
+        let result: SubAgentOutput = rt.block_on(run_sub_agent(SubAgentConfig {
             agent_type,
             task,
             context,
-            self.provider.clone(),
-            self.tool_registry.clone(),
-            self.progress_tx.clone(),
-        ));
+            provider: self.provider.clone(),
+            tool_registry: self.tool_registry.clone(),
+            progress_tx: self.progress_tx.clone(),
+        }));
 
         Ok(format_sub_agent_result(&result, &agent_type))
     }

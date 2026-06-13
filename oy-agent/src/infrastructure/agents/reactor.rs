@@ -11,11 +11,14 @@ use crate::agent::{AgentState, PromptKind, PromptRequest, RequestAgent, Response
 /// Command sent from Reactor to Worker.
 // id/kind fields are used by Reactor for queue routing; Worker matches
 // with `{ text, .. }` and doesn't need them — suppress dead_code lint.
-#[allow(dead_code)]
 pub(crate) enum WorkerCommand {
     Prompt {
         text: String,
+        /// 被 Reactor 用于队列路由和消费确认；Worker 使用 `..` 忽略此字段。
+        #[expect(dead_code)]
         id: uuid::Uuid,
+        /// 被 Reactor 用于调度策略判断（Enter vs AltEnter）；Worker 使用 `..` 忽略此字段。
+        #[expect(dead_code)]
         kind: PromptKind,
     },
     FlushEnterQueue(Vec<PromptRequest>),
@@ -96,7 +99,6 @@ impl Reactor {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
     async fn handle_request(&mut self, request: RequestAgent) {
         match request {
             RequestAgent::Prompt { text, id, kind } => {

@@ -56,7 +56,6 @@ pub fn list_all_sessions() -> Result<Vec<SessionEntry>, AgentError> {
 
 /// List all sub-agent session files across all project directories,
 /// sorted by modification time (newest first).
-#[allow(clippy::too_many_lines)]
 pub fn list_sub_agent_sessions() -> Result<Vec<SessionEntry>, AgentError> {
     let home = home_dir()?;
     let sessions_root = home.join(".oy-ai-agent").join("sessions");

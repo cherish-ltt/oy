@@ -21,7 +21,7 @@ use crate::{
 
 use self::{
     reactor::{WorkerCommand, WorkerEvent},
-    sub_agent_runner::run_sub_agent,
+    sub_agent_runner::{SubAgentConfig, run_sub_agent},
 };
 
 pub mod commander_agent;
@@ -72,7 +72,6 @@ impl Worker {
 
     /// Create a Worker that resumes an existing session with a specific UUID
     /// and pre-loaded message history.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn with_session(
         agent: impl AgentCore + 'static,
         provider: impl AiProvider + 'static,
@@ -204,7 +203,6 @@ impl Worker {
     /// Returns `Some(result)` if the command should be processed through the state machine,
     /// or `None` if the command was handled and the outer loop should continue without
     /// a state transition (e.g. SetSkills, GetMessages, SetMessages).
-    #[allow(clippy::too_many_lines)]
     async fn handle_idle_cmd(
         &mut self,
         cmd: WorkerCommand,
@@ -368,7 +366,6 @@ impl Worker {
     }
 
     /// Spawn a tokio task that runs a sub-agent for the create_sub_agent tool call.
-    #[allow(clippy::too_many_lines)]
     fn spawn_sub_agent_task(
         &self,
         tool_call: oy_ai::ToolCall,
@@ -395,14 +392,14 @@ impl Worker {
             let agent_type =
                 SubAgentType::from_str(agent_type_str).unwrap_or(SubAgentType::Planner);
 
-            let output = run_sub_agent(
+            let output = run_sub_agent(SubAgentConfig {
                 agent_type,
-                task.to_string(),
+                task: task.to_string(),
                 context,
                 provider,
-                registry,
-                None,
-            )
+                tool_registry: registry,
+                progress_tx: None,
+            })
             .await;
 
             let result_str = if output.success {
@@ -433,7 +430,6 @@ impl Worker {
     }
 
     /// Spawn a tokio task that executes a regular tool call.
-    #[allow(clippy::too_many_lines)]
     fn spawn_regular_tool_task(
         &self,
         tool_call: oy_ai::ToolCall,

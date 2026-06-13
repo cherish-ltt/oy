@@ -46,7 +46,6 @@ fn parse_skill_frontmatter(content: &str) -> Option<(String, String)> {
 
 /// Load all skill summaries from a single directory.
 /// Looks for `<dir>/<subdir>/SKILL.md` in the given base path.
-#[allow(clippy::too_many_lines)]
 pub fn load_skills_from_dir(base_dir: &Path) -> Vec<SkillSummary> {
     let mut skills = Vec::new();
 

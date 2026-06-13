@@ -160,8 +160,6 @@ pub async fn run(args: CliArgs) -> Result<(), anyhow::Error> {
 }
 
 // ── Update subcommand ──────────────────────────────────────────
-
-#[allow(clippy::too_many_lines)]
 async fn run_update() -> Result<(), anyhow::Error> {
     let timeout = Duration::from_secs(300);
 
@@ -265,7 +263,6 @@ async fn run_continue_session() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[allow(clippy::too_many_lines)]
 async fn run_restore_session() -> Result<(), anyhow::Error> {
     let sessions = list_all_sessions()?;
 
@@ -324,8 +321,6 @@ async fn run_restore_session() -> Result<(), anyhow::Error> {
 }
 
 // ── Sub-sessions command ──────────────────────────────────────
-
-#[allow(clippy::too_many_lines)]
 async fn run_sub_sessions() -> Result<(), anyhow::Error> {
     let sessions = list_sub_agent_sessions()?;
 
