@@ -535,6 +535,11 @@ impl App {
                             .get("pattern")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string())
+                    } else if tc.function_name.eq("uuid") {
+                        tc.arguments
+                            .get("version")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
                     } else {
                         None
                     },

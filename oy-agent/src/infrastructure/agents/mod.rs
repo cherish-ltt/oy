@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     AgentError,
-    agent::{AgentCore, AgentEvent, AgentState, ResponseAgent},
+    agent::{AgentCore, AgentEvent, AgentState, PromptRequest, ResponseAgent},
     domain::{
         sub_agent::SubAgentType,
         token_counter::{TokenUsage, count_input_side_tokens, count_output_side_tokens},
@@ -209,7 +209,6 @@ impl Worker {
     /// Returns `Some(result)` if the command should be processed through the state machine,
     /// or `None` if the command was handled and the outer loop should continue without
     /// a state transition (e.g. SetSkills, GetMessages, SetMessages).
-    #[allow(clippy::too_many_lines)]
     async fn handle_idle_cmd(
         &mut self,
         cmd: WorkerCommand,
@@ -217,17 +216,7 @@ impl Worker {
         match cmd {
             WorkerCommand::Prompt { text, .. } => Some(self.assembly_prompts(&text).await),
             WorkerCommand::FlushEnterQueue(requests) => {
-                // Process every prompt so none are lost; collect last error.
-                let mut last_error = None;
-                for pr in &requests {
-                    if let Err(e) = self.assembly_prompts(&pr.text).await {
-                        last_error = Some(e);
-                    }
-                }
-                Some(match last_error {
-                    Some(e) => Err(e),
-                    None => Ok(AgentEvent::Start),
-                })
+                self.handle_flush_enter_queue(requests).await
             },
             WorkerCommand::SetProvider(ai_provider) => Some(self.set_provider(ai_provider)),
             WorkerCommand::SetSkills(skills) => {
@@ -244,6 +233,24 @@ impl Worker {
                 None
             },
         }
+    }
+
+    /// Process all queued prompts from a FlushEnterQueue command.
+    /// Returns the last error encountered, or Ok(Start) if all succeeded.
+    async fn handle_flush_enter_queue(
+        &mut self,
+        requests: Vec<PromptRequest>,
+    ) -> Option<Result<AgentEvent, AgentError>> {
+        let mut last_error = None;
+        for pr in &requests {
+            if let Err(e) = self.assembly_prompts(&pr.text).await {
+                last_error = Some(e);
+            }
+        }
+        Some(match last_error {
+            Some(e) => Err(e),
+            None => Ok(AgentEvent::Start),
+        })
     }
 
     /// Process a state machine result: transition to the next state and notify.
@@ -413,72 +420,22 @@ impl Worker {
     }
 
     /// Spawn a tokio task that runs a sub-agent for the create_sub_agent tool call.
-    #[allow(clippy::too_many_lines)]
     fn spawn_sub_agent_task(
         &self,
         tool_call: oy_ai::ToolCall,
     ) -> tokio::task::JoinHandle<ChatMessage> {
-        let tc_id = tool_call.id.clone();
-        let tc_name = tool_call.function_name.clone();
-        let tc_args = tool_call.arguments.clone();
-        let provider = self.sub_provider.clone().unwrap();
-        let registry = self.sub_tool_registry.clone().unwrap();
-
-        // Sub-agent 默认超时 900 秒
-        let timeout_secs = tc_args
+        let timeout_secs = tool_call
+            .arguments
             .get("timeout")
             .and_then(|v| v.as_u64())
             .unwrap_or(900);
-        let timeout_duration = std::time::Duration::from_secs(timeout_secs);
 
-        // Clone for timeout error path
-        let tc_id2 = tc_id.clone();
-        let tc_name2 = tc_name.clone();
-
-        tokio::spawn(async move {
-            let result = tokio::time::timeout(timeout_duration, async {
-                // Parse arguments
-                let agent_type_str = tc_args
-                    .get("agent_type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("planner");
-                let task = tc_args.get("task").and_then(|v| v.as_str()).unwrap_or("");
-                let context = tc_args
-                    .get("context")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string());
-
-                let agent_type =
-                    SubAgentType::from_str(agent_type_str).unwrap_or(SubAgentType::Planner);
-
-                let output = run_sub_agent(SubAgentConfig {
-                    agent_type,
-                    task: task.to_string(),
-                    context,
-                    provider,
-                    tool_registry: registry,
-                    progress_tx: None,
-                })
-                .await;
-
-                Self::format_sub_agent_result(tc_id, tc_name, tc_args, output, agent_type)
-            })
-            .await;
-
-            match result {
-                Ok(chat_msg) => chat_msg,
-                Err(_) => ChatMessage::tool(
-                    format!(
-                        "[Timeout] Sub-agent execution exceeded {} seconds",
-                        timeout_secs
-                    ),
-                    tc_id2,
-                    Some(tc_name2),
-                    None,
-                ),
-            }
-        })
+        spawn_sub_agent_inner(
+            tool_call,
+            self.sub_provider.clone().unwrap(),
+            self.sub_tool_registry.clone().unwrap(),
+            timeout_secs,
+        )
     }
 
     /// Inject each tool's `default_timeout()` into tool call arguments if not
@@ -489,7 +446,11 @@ impl Worker {
             return;
         };
         for tc in tool_calls {
-            if tc.arguments.get("timeout").and_then(|v| v.as_u64()).is_none()
+            if tc
+                .arguments
+                .get("timeout")
+                .and_then(|v| v.as_u64())
+                .is_none()
                 && let Some(tool) = self.tool_registry.get_clone(&tc.function_name)
             {
                 tc.arguments["timeout"] = serde_json::json!(tool.default_timeout());
@@ -522,79 +483,13 @@ impl Worker {
     }
 
     /// Spawn a tokio task that executes a regular tool call.
-    #[allow(clippy::too_many_lines)]
     fn spawn_regular_tool_task(
         &self,
         tool_call: oy_ai::ToolCall,
     ) -> tokio::task::JoinHandle<ChatMessage> {
         match self.tool_registry.get_clone(&tool_call.function_name) {
-            Some(t) => {
-                // Get default timeout BEFORE moving t into the closure
-                let default_timeout = t.default_timeout();
-                let tc_id = tool_call.id.clone();
-                let tc_name = tool_call.function_name.clone();
-                let tc_args = tool_call.arguments.clone();
-
-                // Parse optional timeout from LLM args, fallback to default
-                let timeout_secs = tc_args
-                    .get("timeout")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(default_timeout);
-                let timeout_duration = std::time::Duration::from_secs(timeout_secs);
-
-                // Clone id/name again for timeout error path
-                let tc_id2 = tc_id.clone();
-                let tc_name2 = tc_name.clone();
-
-                tokio::spawn(async move {
-                    // Run sync tool in blocking thread with timeout
-                    let result = tokio::time::timeout(
-                        timeout_duration,
-                        tokio::task::spawn_blocking(move || {
-                            Self::execute_tool(t, tc_args, tc_id, tc_name)
-                        }),
-                    )
-                    .await;
-
-                    match result {
-                        Ok(Ok(chat_msg)) => chat_msg,
-                        Ok(Err(join_err)) => {
-                            // spawn_blocking panicked (should be rare due to catch_unwind inside)
-                            ChatMessage::tool(
-                                format!("Internal error: tool execution failed: {}", join_err),
-                                tc_id2,
-                                Some(tc_name2),
-                                None,
-                            )
-                        },
-                        Err(_elapsed) => {
-                            // Timeout — NOT an error, return timeout info to LLM
-                            ChatMessage::tool(
-                                format!(
-                                    "[Timeout] Tool execution exceeded {} seconds",
-                                    timeout_secs
-                                ),
-                                tc_id2,
-                                Some(tc_name2),
-                                None,
-                            )
-                        },
-                    }
-                })
-            },
-            None => {
-                let tc_id = tool_call.id.clone();
-                let tc_name = tool_call.function_name.clone();
-                let tc_args = tool_call.arguments.clone();
-                tokio::spawn(async move {
-                    ChatMessage::tool(
-                        format!("Error: Unknown tool: {}", tool_call.function_name),
-                        tc_id,
-                        Some(tc_name),
-                        Some(tc_args),
-                    )
-                })
-            },
+            Some(t) => spawn_known_tool_task(t, tool_call),
+            None => spawn_unknown_tool_task(tool_call),
         }
     }
 
@@ -694,4 +589,129 @@ impl Worker {
 
         Ok(AgentEvent::Reset)
     }
+}
+
+// ── Free helper functions ──────────────────────────────────────────────
+
+/// Spawn a sub-agent execution task with a timeout.
+fn spawn_sub_agent_inner(
+    tool_call: oy_ai::ToolCall,
+    provider: Arc<dyn AiProvider + Send + Sync>,
+    registry: Arc<ToolRegistry>,
+    timeout_secs: u64,
+) -> tokio::task::JoinHandle<ChatMessage> {
+    let id2 = tool_call.id.clone();
+    let name2 = tool_call.function_name.clone();
+
+    tokio::spawn(async move {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            run_sub_agent_async(tool_call, provider, registry),
+        )
+        .await;
+
+        result.unwrap_or_else(|_| {
+            ChatMessage::tool(
+                format!(
+                    "[Timeout] Sub-agent execution exceeded {} seconds",
+                    timeout_secs
+                ),
+                id2,
+                Some(name2),
+                None,
+            )
+        })
+    })
+}
+
+/// Run a sub-agent asynchronously and return the result ChatMessage.
+async fn run_sub_agent_async(
+    tc: oy_ai::ToolCall,
+    provider: Arc<dyn AiProvider + Send + Sync>,
+    registry: Arc<ToolRegistry>,
+) -> ChatMessage {
+    let agent_type_str = tc
+        .arguments
+        .get("agent_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("planner");
+    let task = tc
+        .arguments
+        .get("task")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let context = tc
+        .arguments
+        .get("context")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    let agent_type = SubAgentType::from_str(agent_type_str).unwrap_or(SubAgentType::Planner);
+
+    let output = run_sub_agent(SubAgentConfig {
+        agent_type,
+        task: task.to_string(),
+        context,
+        provider,
+        tool_registry: registry,
+        progress_tx: None,
+    })
+    .await;
+
+    Worker::format_sub_agent_result(tc.id, tc.function_name, tc.arguments, output, agent_type)
+}
+
+/// Spawn a tokio task that runs a known tool with a timeout.
+fn spawn_known_tool_task(
+    t: Box<dyn crate::domain::tool::Tool + Send>,
+    tool_call: oy_ai::ToolCall,
+) -> tokio::task::JoinHandle<ChatMessage> {
+    let default_timeout = t.default_timeout();
+    tokio::spawn(async move {
+        let tc_id = tool_call.id.clone();
+        let tc_name = tool_call.function_name.clone();
+        let tc_args = tool_call.arguments.clone();
+        let timeout_secs = tc_args
+            .get("timeout")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(default_timeout);
+        let id2 = tc_id.clone();
+        let name2 = tc_name.clone();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            tokio::task::spawn_blocking(move || Worker::execute_tool(t, tc_args, tc_id, tc_name)),
+        )
+        .await;
+        match result {
+            Ok(Ok(m)) => m,
+            Ok(Err(e)) => ChatMessage::tool(
+                format!("Internal error: tool execution failed: {}", e),
+                id2,
+                Some(name2),
+                None,
+            ),
+            Err(_) => ChatMessage::tool(
+                format!("[Timeout] Tool execution exceeded {} seconds", timeout_secs),
+                id2,
+                Some(name2),
+                None,
+            ),
+        }
+    })
+}
+
+/// Spawn a tokio task that reports an unknown tool error.
+fn spawn_unknown_tool_task(tool_call: oy_ai::ToolCall) -> tokio::task::JoinHandle<ChatMessage> {
+    let tc_id = tool_call.id.clone();
+    let tc_name = tool_call.function_name.clone();
+    let tc_args = tool_call.arguments.clone();
+    tokio::spawn(async move {
+        ChatMessage::tool(
+            format!("Error: Unknown tool: {}", tool_call.function_name),
+            tc_id,
+            Some(tc_name),
+            Some(tc_args),
+        )
+    })
 }
