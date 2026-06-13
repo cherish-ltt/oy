@@ -95,7 +95,10 @@ impl Agent for CommanderAgent {
     fn save_session(&mut self, uuid: Uuid) -> Result<String, AgentError> {
         match env::current_dir() {
             Ok(path) => {
-                let path = path.to_string_lossy().replace(['/', '\\'], "-").replace(':', "");
+                let path = path
+                    .to_string_lossy()
+                    .replace(['/', '\\'], "-")
+                    .replace(':', "");
                 save_session(uuid, self.messages().iter().collect(), &path)
             }
             Err(e) => Err(AgentError::ToolExecutionError(e.to_string())),
@@ -116,10 +119,10 @@ impl Agent for CommanderAgent {
         if let Some(sys) = system_prompt {
             self.messages.push_back(sys);
             let mut iter = msgs.into_iter();
-            if let Some(first) = iter.next() {
-                if first.role != oy_ai::Role::System {
-                    self.messages.push_back(first);
-                }
+            if let Some(first) = iter.next()
+                && first.role != oy_ai::Role::System
+            {
+                self.messages.push_back(first);
             }
             for msg in iter {
                 self.messages.push_back(msg);

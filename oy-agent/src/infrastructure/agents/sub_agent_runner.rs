@@ -108,7 +108,10 @@ pub async fn run_sub_agent(
                 if let Ok(project_dir) = std::env::current_dir() {
                     let dir_name = format!(
                         "{}/sub_agents",
-                        project_dir.to_string_lossy().replace(['/', '\\'], "-").replace(':', "")
+                        project_dir
+                            .to_string_lossy()
+                            .replace(['/', '\\'], "-")
+                            .replace(':', "")
                     );
                     let _ = save_session(uuid, messages.iter().collect(), &dir_name);
                 }
@@ -152,7 +155,10 @@ pub async fn run_sub_agent(
             if let Ok(project_dir) = std::env::current_dir() {
                 let dir_name = format!(
                     "{}/sub_agents",
-                    project_dir.to_string_lossy().replace(['/', '\\'], "-").replace(':', "")
+                    project_dir
+                        .to_string_lossy()
+                        .replace(['/', '\\'], "-")
+                        .replace(':', "")
                 );
                 let _ = save_session(uuid, messages.iter().collect(), &dir_name);
             }
@@ -217,7 +223,10 @@ pub async fn run_sub_agent(
     if let Ok(project_dir) = std::env::current_dir() {
         let dir_name = format!(
             "{}/sub_agents",
-            project_dir.to_string_lossy().replace(['/', '\\'], "-").replace(':', "")
+            project_dir
+                .to_string_lossy()
+                .replace(['/', '\\'], "-")
+                .replace(':', "")
         );
         let _ = save_session(uuid, messages.iter().collect(), &dir_name);
     }
