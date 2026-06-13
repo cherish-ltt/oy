@@ -296,8 +296,12 @@ async fn run_restore_session() -> Result<(), anyhow::Error> {
     let input = input.trim();
 
     if let Ok(num) = input.parse::<usize>() {
-        if num == 0 || num > sessions.len() {
+        if num == 0 {
             eprintln!("❌ Cancelled.");
+            return Ok(());
+        }
+        if num > sessions.len() {
+            eprintln!("❌ Invalid selection.");
             return Ok(());
         }
         let entry = &sessions[num - 1];
@@ -348,8 +352,12 @@ async fn run_sub_sessions() -> Result<(), anyhow::Error> {
     let input = input.trim();
 
     if let Ok(num) = input.parse::<usize>() {
-        if num == 0 || num > sessions.len() {
+        if num == 0 {
             eprintln!("❌ Cancelled.");
+            return Ok(());
+        }
+        if num > sessions.len() {
+            eprintln!("❌ Invalid selection.");
             return Ok(());
         }
         let entry = &sessions[num - 1];
