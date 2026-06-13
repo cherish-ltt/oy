@@ -128,14 +128,30 @@ pub fn list_sub_agent_sessions() -> Result<Vec<SessionEntry>, AgentError> {
             continue;
         }
 
-        let session_dir = std::fs::read_dir(&sub_agents_path).map_err(|e| {
-            AgentError::SessionPersistenceError(format!("Cannot read sub_agents dir: {}", e))
-        })?;
+        let session_dir = match std::fs::read_dir(&sub_agents_path) {
+            Ok(dir) => dir,
+            Err(e) => {
+                eprintln!(
+                    "Warning: Cannot read sub_agents dir `{}`: {}, skipping",
+                    sub_agents_path.display(),
+                    e
+                );
+                continue;
+            }
+        };
 
         for session_file in session_dir {
-            let session_file = session_file.map_err(|e| {
-                AgentError::SessionPersistenceError(format!("Cannot read entry: {}", e))
-            })?;
+            let session_file = match session_file {
+                Ok(file) => file,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Cannot read directory entry in `{}`: {}, skipping",
+                        sub_agents_path.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
             let path = session_file.path();
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
