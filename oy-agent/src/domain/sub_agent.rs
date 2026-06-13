@@ -296,7 +296,7 @@ pub const COMMANDER_SYSTEM_PROMPT: &str = r#"
    a. 调用 `create_sub_agent(agent_type="planner", task="...")` 制定计划，在 context 中传入 CI 验收标准，确保 planner 制定计划时将这些标准纳入每步的验证方式
    b. 调用 `create_sub_agent(agent_type="worker", task="...", context="plan文件路径")` 实施计划，Worker 在实施过程中应随时考虑 CI 标准，确保最终产物可通过 CI 检查
    c. 调用 `create_sub_agent(agent_type="reviewer", task="...")` 审查产出，Reviewer 应检查代码是否符合 CI 验收标准
-   d. 如审查通过，调用 `create_sub_agent(agent_type="git_helper", task="...")` 提交 commit
+   d. 如审查通过，调用 `create_sub_agent(agent_type="git_helper", task="...")` 提交 commit / 创建 Issue / 创建 PR
    e. 如审查不通过，重复步骤 b-d（最多重试 10 次）
    f. 继续下一个issue(禁止一次性运行多个issue相关子代理工作，避免混乱和冲突)
 3. 完成所有 sub-issue 后汇总结果
@@ -311,7 +311,7 @@ pub const COMMANDER_SYSTEM_PROMPT: &str = r#"
 - `planner`：制定计划
 - `worker`：执行计划
 - `reviewer`：审查产出
-- `git_helper`：提交 git commit
+- `git_helper`：提交 commit / 创建 Issue / 创建 Pull Request
 
 你可以使用其他工具（如 Read/Bash），来探索代码库，了解用户需求和代码现状，更精确的拆分任务。
 在绝大多数情况，不要尝试调用Write、Edit等工具直接修改代码，这些工具由子代理使用。

@@ -215,7 +215,7 @@ CommanderAgent 是用户主入口，通过 **Shift+Tab** 与 MainAgent 切换。
 | **Planner** | 制定开发+测试计划，输出到 `.oy-agent-output/plans/` | ≤50轮 | 输出完整 Plan 模板（影响范围/验收标准/风险防御），"建筑设计师般严谨" |
 | **Worker** | 按计划产出完整可编译代码 | ≤100轮 | "外科手术刀般精准"，严格遵循 Plan，不偏离、不引入未要求特性、不留 TODO |
 | **Reviewer** | 审计产出，输出通过/不通过及改进建议 | ≤75轮 | 问题分三级（严重/中度/轻度），结果写入 `.oy-agent-output/reviews/`；中度及以上不通过 |
-| **GitHelper** | 整理 git diff，提交 commit | ≤15轮 | 输出含 commit-hash-id |
+| **GitHelper** | 提交 commit / 创建 Issue / 创建 Pull Request | ≤15轮 | 输出含操作详情（commit-hash-id / Issue URL / PR URL） |
 
 ### 工作流程
 
@@ -226,7 +226,7 @@ CommanderAgent 接收用户需求
   │   ├─ create_sub_agent("planner")    → 获得计划
   │   ├─ create_sub_agent("worker")     → 获得代码产出
   │   ├─ create_sub_agent("reviewer")   → 获得审查
-  │   └─ create_sub_agent("git_helper") → 提交 commit
+  │   └─ create_sub_agent("git_helper") → 提交 commit / 创建 Issue / 创建 PR
   └─ 汇总输出
 ```
 

@@ -370,7 +370,8 @@ impl Worker {
                                             SubAgentType::Worker => "代码已产出，Reviewer 可审查。",
                                             SubAgentType::Reviewer =>
                                                 "审查完成，请检查 '通过: 是/否' 决定下一步。",
-                                            SubAgentType::GitHelper => "代码已提交。",
+                                            SubAgentType::GitHelper =>
+                                                "操作已完成（commit/issue/PR）。",
                                         }
                                     )
                                 } else {
