@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use chrono::Utc;
 use oy_ai::{AiProvider, ChatMessage};
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -29,6 +28,7 @@ pub enum SubAgentEvent {
 /// 2. Runs an LLM loop with tool access
 /// 3. Enforces iteration limits
 /// 4. Returns the final output or error
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub async fn run_sub_agent(
     agent_type: SubAgentType,
     task: String,
@@ -39,47 +39,15 @@ pub async fn run_sub_agent(
 ) -> SubAgentOutput {
     let uuid = Uuid::now_v7();
     let max_rounds = agent_type.max_rounds();
-    let mut messages: Vec<ChatMessage> = Vec::new();
+    let mut messages;
 
     // 1. Send progress: Pending
     if let Some(ref tx) = progress_tx {
         let _ = tx.send(SubAgentEvent::Status(SubAgentStatus::Pending));
     }
 
-    // 2. Build messages: [System(prompt + tool_desc + env), User(task + context)]
-    // Match MainAgent's pattern exactly — inject workspace dir and current time.
-    let mut system_prompt = agent_type.system_prompt().to_string();
-
-    // Append tool descriptions so LLM knows how to use the available tools
-    let tools_desc = tool_registry.get_tools_system_prompt();
-    if !tools_desc.is_empty() {
-        system_prompt.push_str("\n\n## 可用工具\n");
-        system_prompt.push_str(&tools_desc);
-    }
-
-    // Append environment context (workspace dir + current time) — same as MainAgent
-    system_prompt.push_str("\n\n## 环境上下文\n");
-    if let Ok(path) = std::env::current_dir() {
-        system_prompt.push_str(&format!("- 工作目录: {}\n", path.to_string_lossy()));
-    }
-    let now = Utc::now();
-    system_prompt.push_str(&format!(
-        "- 当前时间 (UTC): {}\n",
-        now.format("%Y-%m-%d %H:%M")
-    ));
-
-    messages.push(ChatMessage::system(system_prompt));
-
-    // Build the user message: context + task (separate from system prompt)
-    let mut user_content = String::new();
-    if let Some(ctx) = &context {
-        user_content.push_str("## 附加上下文\n");
-        user_content.push_str(ctx);
-        user_content.push_str("\n\n");
-    }
-    user_content.push_str("## 任务\n");
-    user_content.push_str(&task);
-    messages.push(ChatMessage::user(user_content));
+    // 2. Build messages
+    messages = build_sub_agent_messages(&agent_type, &task, &context, &tool_registry);
 
     // 3. Bounded LLM loop
     let mut final_output = String::new();
@@ -104,17 +72,7 @@ pub async fn run_sub_agent(
                         err_msg.clone(),
                     )));
                 }
-                // Save sub-agent session for debugging
-                if let Ok(project_dir) = std::env::current_dir() {
-                    let dir_name = format!(
-                        "{}/sub_agents",
-                        project_dir
-                            .to_string_lossy()
-                            .replace(['/', '\\'], "-")
-                            .replace(':', "")
-                    );
-                    let _ = save_session(uuid, messages.iter().collect(), &dir_name);
-                }
+                save_sub_agent_session(uuid, &messages, &agent_type);
                 return SubAgentOutput {
                     agent_type,
                     success: false,
@@ -151,18 +109,7 @@ pub async fn run_sub_agent(
                 let _ = tx.send(SubAgentEvent::Output(final_output.clone()));
             }
 
-            // Save sub-agent session for debugging
-            if let Ok(project_dir) = std::env::current_dir() {
-                let dir_name = format!(
-                    "{}/sub_agents",
-                    project_dir
-                        .to_string_lossy()
-                        .replace(['/', '\\'], "-")
-                        .replace(':', "")
-                );
-                let _ = save_session(uuid, messages.iter().collect(), &dir_name);
-            }
-
+            save_sub_agent_session(uuid, &messages, &agent_type);
             return output;
         }
 
@@ -219,7 +166,19 @@ pub async fn run_sub_agent(
         )));
     }
 
-    // Save sub-agent session for debugging
+    save_sub_agent_session(uuid, &messages, &agent_type);
+
+    SubAgentOutput {
+        agent_type,
+        success: false,
+        summary: final_output,
+        rounds_used: max_rounds,
+        error: Some(err_msg),
+    }
+}
+
+/// Save a sub-agent session to disk for debugging.
+fn save_sub_agent_session(uuid: Uuid, messages: &[ChatMessage], _agent_type: &SubAgentType) {
     if let Ok(project_dir) = std::env::current_dir() {
         let dir_name = format!(
             "{}/sub_agents",
@@ -230,12 +189,49 @@ pub async fn run_sub_agent(
         );
         let _ = save_session(uuid, messages.iter().collect(), &dir_name);
     }
+}
 
-    SubAgentOutput {
-        agent_type,
-        success: false,
-        summary: final_output,
-        rounds_used: max_rounds,
-        error: Some(err_msg),
+/// Build the initial messages for a sub-agent: system prompt + user message.
+fn build_sub_agent_messages(
+    agent_type: &SubAgentType,
+    task: &str,
+    context: &Option<String>,
+    tool_registry: &ToolRegistry,
+) -> Vec<ChatMessage> {
+    let mut messages = Vec::new();
+
+    let mut system_prompt = agent_type.system_prompt().to_string();
+
+    // Append tool descriptions so LLM knows how to use the available tools
+    let tools_desc = tool_registry.get_tools_system_prompt();
+    if !tools_desc.is_empty() {
+        system_prompt.push_str("\n\n## 可用工具\n");
+        system_prompt.push_str(&tools_desc);
     }
+
+    // Append environment context (workspace dir + current time) — same as MainAgent
+    system_prompt.push_str("\n\n## 环境上下文\n");
+    if let Ok(path) = std::env::current_dir() {
+        system_prompt.push_str(&format!("- 工作目录: {}\n", path.to_string_lossy()));
+    }
+    let now = chrono::Utc::now();
+    system_prompt.push_str(&format!(
+        "- 当前时间 (UTC): {}\n",
+        now.format("%Y-%m-%d %H:%M")
+    ));
+
+    messages.push(ChatMessage::system(system_prompt));
+
+    // Build the user message: context + task (separate from system prompt)
+    let mut user_content = String::new();
+    if let Some(ctx) = context {
+        user_content.push_str("## 附加上下文\n");
+        user_content.push_str(ctx);
+        user_content.push_str("\n\n");
+    }
+    user_content.push_str("## 任务\n");
+    user_content.push_str(task);
+    messages.push(ChatMessage::user(user_content));
+
+    messages
 }

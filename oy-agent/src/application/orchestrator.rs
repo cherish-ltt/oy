@@ -72,6 +72,7 @@ impl Orchestrator {
     }
 
     /// Start CommanderAgent with a session + sub-agent dependencies.
+    #[allow(clippy::too_many_arguments)]
     pub fn start_commander_with_session(
         agent: impl AgentCore + 'static,
         provider: impl AiProvider + 'static,
@@ -97,6 +98,7 @@ impl Orchestrator {
     }
 
     /// Internal: create Worker (optionally with session and/or sub-agent deps).
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     fn start_inner(
         agent: impl AgentCore + 'static,
         provider: impl AiProvider + 'static,

@@ -1,6 +1,6 @@
 # ── OY Clippy Configuration ──
 cognitive-complexity-threshold = 25
 too-many-arguments-threshold = 7
-too-many-lines-threshold = 200
+too-many-lines-threshold = 50
 allow-unwrap-in-tests = true
 msrv = "1.95.0"

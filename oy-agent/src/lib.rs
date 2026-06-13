@@ -1,3 +1,6 @@
+#![deny(clippy::cognitive_complexity)]
+#![deny(clippy::too_many_arguments)]
+#![deny(clippy::too_many_lines)]
 pub mod application;
 pub mod domain;
 pub mod infrastructure;

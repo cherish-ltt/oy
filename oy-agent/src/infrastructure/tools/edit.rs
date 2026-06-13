@@ -71,6 +71,7 @@ impl Tool for EditTool {
         })
     }
 
+    #[allow(clippy::too_many_lines)]
     fn execute(&self, args: Value) -> Result<String, AgentError> {
         // 1. 提取参数
         let file_path = args["file_path"]

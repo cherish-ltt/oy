@@ -96,86 +96,14 @@ impl Reactor {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn handle_request(&mut self, request: RequestAgent) {
         match request {
             RequestAgent::Prompt { text, id, kind } => {
-                match kind {
-                    PromptKind::Enter => {
-                        if self.worker_state == AgentState::Idle {
-                            // Optimistically mark as Thinking to prevent stale-state
-                            // race: Worker will transition Idle→Thinking after processing.
-                            self.worker_state = AgentState::Thinking;
-                            // Idle → forward immediately
-                            let _ = self
-                                .worker_cmd_tx
-                                .send(WorkerCommand::Prompt {
-                                    text,
-                                    id,
-                                    kind: PromptKind::Enter,
-                                })
-                                .await;
-                            let _ = self
-                                .response_tx
-                                .send(ResponseAgent::PromptConsumed { id })
-                                .await;
-                        } else {
-                            // Busy → queue for next Thinking
-                            self.enter_queue.push_back(PromptRequest {
-                                text,
-                                id,
-                                kind: PromptKind::Enter,
-                            });
-                            let _ = self
-                                .response_tx
-                                .send(ResponseAgent::PromptQueued { id })
-                                .await;
-                        }
-                    },
-                    PromptKind::AltEnter => {
-                        if self.worker_state == AgentState::Idle {
-                            // Same optimistic update for Alt+Enter
-                            self.worker_state = AgentState::Thinking;
-                            // Idle → forward immediately
-                            let _ = self
-                                .worker_cmd_tx
-                                .send(WorkerCommand::Prompt {
-                                    text,
-                                    id,
-                                    kind: PromptKind::AltEnter,
-                                })
-                                .await;
-                            let _ = self
-                                .response_tx
-                                .send(ResponseAgent::PromptConsumed { id })
-                                .await;
-                        } else {
-                            // Busy → queue for next Idle
-                            self.alt_queue.push_back(PromptRequest {
-                                text,
-                                id,
-                                kind: PromptKind::AltEnter,
-                            });
-                            let _ = self
-                                .response_tx
-                                .send(ResponseAgent::PromptQueued { id })
-                                .await;
-                        }
-                    },
-                }
+                self.handle_prompt_request(text, id, kind).await;
             },
             RequestAgent::CancelPrompt { id } => {
-                // Remove from both queues if still pending
-                let removed_enter = self.enter_queue.iter().any(|pr| pr.id == id);
-                self.enter_queue.retain(|pr| pr.id != id);
-                let removed_alt = self.alt_queue.iter().any(|pr| pr.id == id);
-                self.alt_queue.retain(|pr| pr.id != id);
-                // If found in either queue, notify TUI that it's been cancelled
-                if removed_enter || removed_alt {
-                    let _ = self
-                        .response_tx
-                        .send(ResponseAgent::PromptConsumed { id })
-                        .await;
-                }
+                self.handle_cancel_request(id).await;
             },
             RequestAgent::SetProvider(provider) => {
                 let _ = self
@@ -201,6 +129,52 @@ impl Reactor {
                     .send(WorkerCommand::SetMessages(msgs))
                     .await;
             },
+        }
+    }
+
+    /// Handle a prompt request based on scheduling policy.
+    async fn handle_prompt_request(&mut self, text: String, id: uuid::Uuid, kind: PromptKind) {
+        let queue = match kind {
+            PromptKind::Enter => &mut self.enter_queue,
+            PromptKind::AltEnter => &mut self.alt_queue,
+        };
+
+        if self.worker_state == AgentState::Idle {
+            // Optimistically mark as Thinking to prevent stale-state
+            // race: Worker will transition Idle→Thinking after processing.
+            self.worker_state = AgentState::Thinking;
+            // Idle → forward immediately
+            let _ = self
+                .worker_cmd_tx
+                .send(WorkerCommand::Prompt { text, id, kind })
+                .await;
+            let _ = self
+                .response_tx
+                .send(ResponseAgent::PromptConsumed { id })
+                .await;
+        } else {
+            // Busy → queue for later (Enter: next Thinking, AltEnter: next Idle)
+            queue.push_back(PromptRequest { text, id, kind });
+            let _ = self
+                .response_tx
+                .send(ResponseAgent::PromptQueued { id })
+                .await;
+        }
+    }
+
+    /// Handle a cancel prompt request.
+    async fn handle_cancel_request(&mut self, id: uuid::Uuid) {
+        // Remove from both queues if still pending
+        let removed_enter = self.enter_queue.iter().any(|pr| pr.id == id);
+        self.enter_queue.retain(|pr| pr.id != id);
+        let removed_alt = self.alt_queue.iter().any(|pr| pr.id == id);
+        self.alt_queue.retain(|pr| pr.id != id);
+        // If found in either queue, notify TUI that it's been cancelled
+        if removed_enter || removed_alt {
+            let _ = self
+                .response_tx
+                .send(ResponseAgent::PromptConsumed { id })
+                .await;
         }
     }
 

@@ -38,6 +38,53 @@ impl CreateSubAgentTool {
         self.progress_tx = Some(tx);
         self
     }
+
+    /// Parse and validate the tool call arguments.
+    fn parse_args(
+        &self,
+        args: &Value,
+    ) -> Result<(SubAgentType, String, Option<String>), crate::AgentError> {
+        let agent_type_str = args
+            .get("agent_type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                crate::AgentError::ToolExecutionError(
+                    "Missing or invalid 'agent_type' argument".into(),
+                )
+            })?;
+
+        let agent_type = SubAgentType::from_str(agent_type_str).map_err(|e| {
+            crate::AgentError::ToolExecutionError(format!(
+                "Unknown agent_type: {}. Expected: planner, worker, reviewer, or git_helper",
+                e
+            ))
+        })?;
+
+        let task = args.get("task").and_then(|v| v.as_str()).ok_or_else(|| {
+            crate::AgentError::ToolExecutionError("Missing 'task' argument".into())
+        })?;
+
+        let context = args
+            .get("context")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        Ok((agent_type, task.to_string(), context))
+    }
+
+    /// Create a new current_thread runtime for executing the sub-agent.
+    fn create_runtime(&self) -> Result<tokio::runtime::Runtime, crate::AgentError> {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| {
+                crate::AgentError::ToolExecutionError(format!(
+                    "Failed to create sub-agent runtime: {}",
+                    e
+                ))
+            })
+    }
 }
 
 impl Tool for CreateSubAgentTool {
@@ -74,75 +121,23 @@ impl Tool for CreateSubAgentTool {
 
     fn execute(&self, args: Value) -> Result<String, crate::AgentError> {
         // Parse arguments
-        let agent_type_str = args
-            .get("agent_type")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                crate::AgentError::ToolExecutionError(
-                    "Missing or invalid 'agent_type' argument".into(),
-                )
-            })?;
-
-        let agent_type = SubAgentType::from_str(agent_type_str).map_err(|e| {
-            crate::AgentError::ToolExecutionError(format!(
-                "Unknown agent_type: {}. Expected: planner, worker, reviewer, or git_helper",
-                e
-            ))
-        })?;
-
-        let task = args.get("task").and_then(|v| v.as_str()).ok_or_else(|| {
-            crate::AgentError::ToolExecutionError("Missing 'task' argument".into())
-        })?;
-
-        let context = args
-            .get("context")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
+        let (agent_type, task, context) = self.parse_args(&args)?;
 
         // Create a dedicated current_thread runtime for this sub-agent execution.
         // Cannot use Handle::current().block_on() here because we may be inside a
         // nested tokio::spawn where Handle::current() is unavailable or panics.
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| {
-                crate::AgentError::ToolExecutionError(format!(
-                    "Failed to create sub-agent runtime: {}",
-                    e
-                ))
-            })?;
+        let rt = self.create_runtime()?;
 
         let result: SubAgentOutput = rt.block_on(run_sub_agent(
             agent_type,
-            task.to_string(),
+            task,
             context,
             self.provider.clone(),
             self.tool_registry.clone(),
             self.progress_tx.clone(),
         ));
 
-        // Format the output for CommanderAgent consumption
-        if result.success {
-            Ok(format!(
-                "[{} 完成 - {} 轮]\n{}\n{}",
-                agent_type,
-                result.rounds_used,
-                result.summary,
-                match agent_type {
-                    SubAgentType::Planner => "计划已创建，Worker 可引用此计划文件。",
-                    SubAgentType::Worker => "代码已产出，Reviewer 可审查。",
-                    SubAgentType::Reviewer => "审查完成，请检查 '通过: 是/否' 决定下一步。",
-                    SubAgentType::GitHelper => "操作已完成（commit/issue/PR）。",
-                }
-            ))
-        } else {
-            let err = result.error.unwrap_or_else(|| "Unknown error".into());
-            Ok(format!(
-                "[{} 失败 - {} 轮]\n错误: {}",
-                agent_type, result.rounds_used, err
-            ))
-        }
+        Ok(format_sub_agent_result(&result, &agent_type))
     }
 
     fn get_system_prompt(&self) -> &str {
@@ -157,5 +152,29 @@ impl Tool for CreateSubAgentTool {
             tool_registry: self.tool_registry.clone(),
             progress_tx: self.progress_tx.clone(),
         })
+    }
+}
+
+/// Format the sub-agent output for CommanderAgent consumption.
+fn format_sub_agent_result(result: &SubAgentOutput, agent_type: &SubAgentType) -> String {
+    if result.success {
+        format!(
+            "[{} 完成 - {} 轮]\n{}\n{}",
+            agent_type,
+            result.rounds_used,
+            result.summary,
+            match agent_type {
+                SubAgentType::Planner => "计划已创建，Worker 可引用此计划文件。",
+                SubAgentType::Worker => "代码已产出，Reviewer 可审查。",
+                SubAgentType::Reviewer => "审查完成，请检查 '通过: 是/否' 决定下一步。",
+                SubAgentType::GitHelper => "操作已完成（commit/issue/PR）。",
+            }
+        )
+    } else {
+        let err = result.error.as_deref().unwrap_or("Unknown error");
+        format!(
+            "[{} 失败 - {} 轮]\n错误: {}",
+            agent_type, result.rounds_used, err
+        )
     }
 }

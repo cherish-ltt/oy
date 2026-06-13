@@ -643,85 +643,7 @@ impl App {
                 }
             },
             KeyCode::Enter if !self.input.is_empty() => {
-                self.expand_paste_snippets();
-                let input = std::mem::take(&mut self.input);
-                self.cursor_pos = 0;
-                self.paste_counter = 0;
-                self.scroll_offset.set(u16::MAX);
-
-                // Determine prompt kind: Alt+Enter = AltEnter, Enter = Enter
-                let kind = if key_event.modifiers == KeyModifiers::ALT {
-                    PromptKind::AltEnter
-                } else {
-                    PromptKind::Enter
-                };
-
-                // Check for slash commands — exact match only, otherwise send as prompt
-                if input.starts_with('/') && self.execute_command(&input).await {
-                    // Handled as a command
-                } else if self.active_agent == AgentType::MainAgent {
-                    // ── Route to MainAgent ──
-                    if let Some(main_agent) = &self.main_agent {
-                        if self.pending_prompts.len() >= 9 {
-                            self.insert_before_queued(UiMessages(
-                                "Maximum 9 prompts can be queued. Press Ctrl+R then 1..9 to revoke a queued prompt first.".to_string()
-                            ));
-                            if self.auto_scroll.get() {
-                                self.scroll_offset.set(u16::MAX);
-                            }
-                            return Ok(());
-                        }
-
-                        let id = Uuid::now_v7();
-                        let _ = main_agent
-                            .request_sender
-                            .send(RequestAgent::Prompt {
-                                text: input.clone(),
-                                id,
-                                kind,
-                            })
-                            .await;
-                        self.pending_prompts.push(id);
-                        self.insert_before_queued(Message::PromptQueued { id, text: input });
-                    } else {
-                        self.insert_before_queued(UiMessages(
-                            "MainAgent not initialized. Please use /model to configure your API key and model first.".to_string()
-                        ));
-                    }
-                } else {
-                    // ── Route to CommanderAgent ──
-                    if let Some(cmd_agent) = &self.commander_agent {
-                        if self.pending_prompts.len() >= 9 {
-                            self.insert_before_queued(UiMessages(
-                                "Maximum 9 prompts can be queued. Press Ctrl+R then 1..9 to revoke a queued prompt first.".to_string()
-                            ));
-                            if self.auto_scroll.get() {
-                                self.scroll_offset.set(u16::MAX);
-                            }
-                            return Ok(());
-                        }
-
-                        let id = Uuid::now_v7();
-                        let _ = cmd_agent
-                            .request_sender
-                            .send(RequestAgent::Prompt {
-                                text: input.clone(),
-                                id,
-                                kind,
-                            })
-                            .await;
-                        self.pending_prompts.push(id);
-                        self.insert_before_queued(Message::PromptQueued { id, text: input });
-                    } else {
-                        self.insert_before_queued(UiMessages(
-                            "CommanderAgent not initialized.".to_string(),
-                        ));
-                    }
-                }
-
-                if self.auto_scroll.get() {
-                    self.scroll_offset.set(u16::MAX);
-                }
+                return self.handle_key_enter(key_event).await;
             },
             KeyCode::Backspace if self.cursor_pos > 0 && !self.delete_paste_placeholder() => {
                 let len = self.input[..self.cursor_pos]
@@ -805,6 +727,80 @@ impl App {
             _ => {},
         }
         Ok(())
+    }
+
+    /// Handle the Enter key press: expand snippets, execute commands or send prompts.
+    async fn handle_key_enter(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
+        self.expand_paste_snippets();
+        let input = std::mem::take(&mut self.input);
+        self.cursor_pos = 0;
+        self.paste_counter = 0;
+        self.scroll_offset.set(u16::MAX);
+
+        // Determine prompt kind: Alt+Enter = AltEnter, Enter = Enter
+        let kind = if key_event.modifiers == KeyModifiers::ALT {
+            PromptKind::AltEnter
+        } else {
+            PromptKind::Enter
+        };
+
+        // Check for slash commands — exact match only, otherwise send as prompt
+        if input.starts_with('/') && self.execute_command(&input).await {
+            // Handled as a command
+        } else {
+            self.route_prompt(&input, kind).await;
+        }
+
+        if self.auto_scroll.get() {
+            self.scroll_offset.set(u16::MAX);
+        }
+        Ok(())
+    }
+
+    /// Route a prompt to the active agent (MainAgent or CommanderAgent).
+    async fn route_prompt(&mut self, input: &str, kind: PromptKind) {
+        let agent = match self.active_agent {
+            AgentType::MainAgent => &self.main_agent,
+            AgentType::CommanderAgent => &self.commander_agent,
+        };
+
+        let Some(agent_manager) = agent else {
+            let msg = if self.active_agent == AgentType::MainAgent {
+                "MainAgent not initialized. Please use /model to configure your API key and model first."
+            } else {
+                "CommanderAgent not initialized."
+            };
+            self.insert_before_queued(UiMessages(msg.to_string()));
+            if self.auto_scroll.get() {
+                self.scroll_offset.set(u16::MAX);
+            }
+            return;
+        };
+
+        if self.pending_prompts.len() >= 9 {
+            self.insert_before_queued(UiMessages(
+                "Maximum 9 prompts can be queued. Press Ctrl+R then 1..9 to revoke a queued prompt first.".to_string()
+            ));
+            if self.auto_scroll.get() {
+                self.scroll_offset.set(u16::MAX);
+            }
+            return;
+        }
+
+        let id = Uuid::now_v7();
+        let _ = agent_manager
+            .request_sender
+            .send(RequestAgent::Prompt {
+                text: input.to_string(),
+                id,
+                kind,
+            })
+            .await;
+        self.pending_prompts.push(id);
+        self.insert_before_queued(Message::PromptQueued {
+            id,
+            text: input.to_string(),
+        });
     }
 
     async fn handle_key_command_selector(

@@ -1,3 +1,6 @@
+#![deny(clippy::cognitive_complexity)]
+#![deny(clippy::too_many_arguments)]
+#![deny(clippy::too_many_lines)]
 use clap::Parser;
 use oy_code_cli::{CliArgs, run};
 

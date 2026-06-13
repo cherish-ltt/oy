@@ -1,5 +1,4 @@
 use serde_json::Value;
-use std::process::Command;
 
 use crate::Tool;
 
@@ -54,68 +53,23 @@ impl Tool for GrepTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(50) as usize;
 
-        let mut cmd = Command::new("grep");
-        cmd.arg("-rn")
-            .arg("--null")
-            .arg("--binary-files=without-match");
-
-        if let Some(ext) = extension {
-            cmd.arg("--include").arg(format!("*.{ext}"));
-        }
-
-        cmd.arg(pattern).arg(path);
-
-        let output = cmd.output().map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                crate::AgentError::ToolExecutionError(
-                    "grep command not found on this system".into(),
-                )
-            } else {
-                crate::AgentError::ToolExecutionError(format!("Failed to execute grep: {e}"))
-            }
-        })?;
-
-        let status = output.status;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let output = self.run_grep(pattern, path, extension)?;
 
         // grep exit code: 0 = matches found, 1 = no matches, >1 = error
-        if !status.success() && status.code() != Some(1) {
+        if !output.status.success() && output.status.code() != Some(1) {
+            let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(crate::AgentError::ToolExecutionError(format!(
                 "grep failed: {}",
                 stderr.trim()
             )));
         }
 
+        let stdout = String::from_utf8_lossy(&output.stdout);
         if stdout.is_empty() {
             return Ok("No matches found.".to_string());
         }
 
-        let lines: Vec<&str> = stdout.lines().collect();
-        let total = lines.len();
-
-        if total == 0 {
-            return Ok("No matches found.".to_string());
-        }
-
-        let mut result = String::new();
-        let count = total.min(max_results);
-
-        for line in lines.iter().take(count) {
-            result.push_str(line);
-            result.push('\n');
-        }
-
-        if total > max_results {
-            result.push_str(&format!(
-                "\n... and {} more result(s) (showing {} of {})",
-                total - max_results,
-                max_results,
-                total
-            ));
-        }
-
-        Ok(result.trim().to_string())
+        Ok(format_grep_output(&stdout, max_results))
     }
 
     fn get_system_prompt(&self) -> &str {
@@ -133,6 +87,66 @@ impl Tool for GrepTool {
     fn clone_box(&self) -> Box<dyn Tool> {
         Box::new(Self)
     }
+}
+
+impl GrepTool {
+    /// Run the grep command with the given parameters.
+    fn run_grep(
+        &self,
+        pattern: &str,
+        path: &str,
+        extension: Option<&str>,
+    ) -> Result<std::process::Output, crate::AgentError> {
+        let mut cmd = std::process::Command::new("grep");
+        cmd.arg("-rn")
+            .arg("--null")
+            .arg("--binary-files=without-match");
+
+        if let Some(ext) = extension {
+            cmd.arg("--include").arg(format!("*.{ext}"));
+        }
+
+        cmd.arg(pattern).arg(path);
+
+        cmd.output().map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                crate::AgentError::ToolExecutionError(
+                    "grep command not found on this system".into(),
+                )
+            } else {
+                crate::AgentError::ToolExecutionError(format!("Failed to execute grep: {e}"))
+            }
+        })
+    }
+}
+
+/// Format grep output, truncating to max_results lines.
+fn format_grep_output(stdout: &str, max_results: usize) -> String {
+    let lines: Vec<&str> = stdout.lines().collect();
+    let total = lines.len();
+
+    if total == 0 {
+        return "No matches found.".to_string();
+    }
+
+    let mut result = String::new();
+    let count = total.min(max_results);
+
+    for line in lines.iter().take(count) {
+        result.push_str(line);
+        result.push('\n');
+    }
+
+    if total > max_results {
+        result.push_str(&format!(
+            "\n... and {} more result(s) (showing {} of {})",
+            total - max_results,
+            max_results,
+            total
+        ));
+    }
+
+    result.trim().to_string()
 }
 
 #[cfg(test)]
