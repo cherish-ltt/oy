@@ -731,3 +731,119 @@ fn spawn_unknown_tool_task(tool_call: oy_ai::ToolCall) -> tokio::task::JoinHandl
         )
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Worker;
+    use crate::domain::errors::AgentError;
+    use crate::domain::tool::Tool;
+    use oy_ai::Role;
+    use serde_json::{Value, json};
+
+    struct MockTool {
+        should_fail: bool,
+        should_panic: bool,
+    }
+
+    impl Tool for MockTool {
+        fn name(&self) -> &'static str {
+            "MockTool"
+        }
+
+        fn description(&self) -> &'static str {
+            "A mock tool for unit testing"
+        }
+
+        fn schema(&self) -> Value {
+            json!({})
+        }
+
+        fn execute(&self, _args: Value) -> Result<String, AgentError> {
+            if self.should_panic {
+                panic!("mock panic");
+            }
+            if self.should_fail {
+                Err(AgentError::ToolExecutionError("mock error".into()))
+            } else {
+                Ok("mock success".into())
+            }
+        }
+
+        fn get_system_prompt(&self) -> &str {
+            ""
+        }
+
+        fn clone_box(&self) -> Box<dyn Tool> {
+            Box::new(MockTool {
+                should_fail: self.should_fail,
+                should_panic: self.should_panic,
+            })
+        }
+    }
+
+    #[test]
+    fn test_execute_tool_success() {
+        let tool = MockTool {
+            should_fail: false,
+            should_panic: false,
+        };
+        let tc_args = json!({"key": "value"});
+        let result = Worker::execute_tool(
+            Box::new(tool),
+            tc_args.clone(),
+            "call_001".to_string(),
+            "MockTool".to_string(),
+        );
+        assert_eq!(result.role, Role::Tool);
+        assert_eq!(result.content.as_deref(), Some("mock success"));
+        assert_eq!(result.tool_call_id.as_deref(), Some("call_001"));
+        assert_eq!(result.function_name.as_deref(), Some("MockTool"));
+        assert_eq!(result.tool_call_arguments.as_ref(), Some(&tc_args));
+    }
+
+    #[test]
+    fn test_execute_tool_error() {
+        let tool = MockTool {
+            should_fail: true,
+            should_panic: false,
+        };
+        let tc_args = json!({});
+        let result = Worker::execute_tool(
+            Box::new(tool),
+            tc_args.clone(),
+            "call_002".to_string(),
+            "MockTool".to_string(),
+        );
+        assert_eq!(result.role, Role::Tool);
+        assert_eq!(
+            result.content.as_deref(),
+            Some("Error: Tool execution error: mock error")
+        );
+        assert_eq!(result.tool_call_id.as_deref(), Some("call_002"));
+        assert_eq!(result.function_name.as_deref(), Some("MockTool"));
+        assert_eq!(result.tool_call_arguments.as_ref(), Some(&tc_args));
+    }
+
+    #[test]
+    fn test_execute_tool_panic() {
+        let tool = MockTool {
+            should_fail: false,
+            should_panic: true,
+        };
+        let tc_args = json!({"panic": true});
+        let result = Worker::execute_tool(
+            Box::new(tool),
+            tc_args.clone(),
+            "call_003".to_string(),
+            "MockTool".to_string(),
+        );
+        assert_eq!(result.role, Role::Tool);
+        assert_eq!(
+            result.content.as_deref(),
+            Some("Internal error: mock panic")
+        );
+        assert_eq!(result.tool_call_id.as_deref(), Some("call_003"));
+        assert_eq!(result.function_name.as_deref(), Some("MockTool"));
+        assert_eq!(result.tool_call_arguments.as_ref(), Some(&tc_args));
+    }
+}
