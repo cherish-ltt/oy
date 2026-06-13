@@ -113,9 +113,7 @@ impl GrepTool {
         extension: Option<&str>,
     ) -> Result<std::process::Output, crate::AgentError> {
         let mut cmd = std::process::Command::new("grep");
-        cmd.arg("-rn")
-            .arg("--null")
-            .arg("--binary-files=without-match");
+        cmd.arg("-rn").arg("--binary-files=without-match");
 
         if let Some(ext) = extension {
             cmd.arg("--include").arg(format!("*.{ext}"));

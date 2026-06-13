@@ -312,10 +312,10 @@ mod tests {
         let msgs = vec![];
         let result = save_session(uuid, msgs, &dir);
         assert!(result.is_ok());
-        if let Ok(p) = &result {
-            if let Some(parent) = Path::new(p).parent() {
-                let _ = std::fs::remove_dir_all(parent);
-            }
+        if let Ok(p) = &result
+            && let Some(parent) = Path::new(p).parent()
+        {
+            let _ = std::fs::remove_dir_all(parent);
         }
     }
 
@@ -325,7 +325,7 @@ mod tests {
     fn test_get_session_preview_finds_first_user() {
         let dir = test_dir("preview_first_user");
         let uuid = Uuid::now_v7();
-        let msgs = vec![
+        let msgs = [
             ChatMessage::system("system prompt"),
             ChatMessage::user("hello world"),
             ChatMessage::assistant(Some("response".into()), None, None),
@@ -344,7 +344,7 @@ mod tests {
         let dir = test_dir("preview_skip_system");
         let uuid = Uuid::now_v7();
         // Multiple system messages before the first user message
-        let msgs = vec![
+        let msgs = [
             ChatMessage::system("system 1"),
             ChatMessage::system("system 2"),
             ChatMessage::user("actual prompt"),
@@ -433,7 +433,7 @@ mod tests {
     fn test_get_session_preview_no_user_message_returns_none() {
         let dir = test_dir("preview_no_user");
         let uuid = Uuid::now_v7();
-        let msgs = vec![
+        let msgs = [
             ChatMessage::system("system"),
             ChatMessage::assistant(Some("response".into()), None, None),
             ChatMessage::tool("result", "call_1".into(), Some("Read".into()), None),
@@ -451,7 +451,7 @@ mod tests {
     fn test_get_session_preview_only_has_tool_and_assistant() {
         let dir = test_dir("preview_only_tool");
         let uuid = Uuid::now_v7();
-        let msgs = vec![
+        let msgs = [
             ChatMessage::assistant(Some("thinking...".into()), None, None),
             ChatMessage::tool("output", "c1".into(), Some("Bash".into()), None),
         ];
@@ -484,7 +484,7 @@ mod tests {
     fn test_load_session_messages_roundtrip() {
         let dir = test_dir("load_msgs_roundtrip");
         let uuid = Uuid::now_v7();
-        let msgs = vec![
+        let msgs = [
             ChatMessage::system("system prompt"),
             ChatMessage::user("hello"),
             ChatMessage::assistant(Some("world".into()), None, None),
@@ -504,9 +504,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_load_session_messages_preserves_tool_calls() {
-        let dir = test_dir("load_msgs_tool_calls");
+    /// Create a session fixture with tool-call messages and return the saved path.
+    fn save_tool_calls_fixture(dir: &str) -> PathBuf {
         let uuid = Uuid::now_v7();
         use oy_ai::ToolCall;
         let tool_call = ToolCall {
@@ -514,14 +513,20 @@ mod tests {
             function_name: "Read".into(),
             arguments: serde_json::json!({"file_path": "/tmp/x.txt"}),
         };
-        let msgs = vec![
+        let msgs = [
             ChatMessage::user("read a file"),
             ChatMessage::assistant(None, None, Some(vec![tool_call])),
             ChatMessage::tool("content", "call_1".into(), Some("Read".into()), None),
         ];
         let refs: Vec<&ChatMessage> = msgs.iter().collect();
-        let path = save_session(uuid, refs, &dir).unwrap();
-        let (_, loaded_msgs) = load_session_messages(Path::new(&path)).unwrap();
+        save_session(uuid, refs, dir).map(PathBuf::from).unwrap()
+    }
+
+    #[test]
+    fn test_load_session_messages_preserves_tool_calls() {
+        let dir = test_dir("load_msgs_tool_calls");
+        let path = save_tool_calls_fixture(&dir);
+        let (_, loaded_msgs) = load_session_messages(&path).unwrap();
         assert_eq!(loaded_msgs.len(), 3);
         let assistant = &loaded_msgs[1];
         assert_eq!(assistant.role, oy_ai::Role::Assistant);
@@ -534,7 +539,7 @@ mod tests {
         let tool_result = &loaded_msgs[2];
         assert_eq!(tool_result.role, oy_ai::Role::Tool);
         assert_eq!(tool_result.tool_call_id.as_deref(), Some("call_1"));
-        if let Some(p) = Path::new(&path).parent() {
+        if let Some(p) = path.parent() {
             let _ = std::fs::remove_dir_all(p);
         }
     }
