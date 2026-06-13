@@ -43,6 +43,11 @@ impl Tool for BashTool {
                 "command": {
                     "type": "string",
                     "description": "The command to execute"
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Optional timeout in seconds (default: 150). Increase for long-running commands.",
+                    "default": 150
                 }
             },
             "required": ["command"]
@@ -63,14 +68,14 @@ impl Tool for BashTool {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 Ok(format!("{}{}", stdout, stderr))
-            }
+            },
             Err(e) => Ok(format!("Error executing command: {}", e)),
         }
     }
 
     fn get_system_prompt(&self) -> &str {
         r#"
-        - `bash`: Using Bash for file operations
+        - `bash`: Using Bash for file operations (default timeout: 150s, override via timeout param)
         "#
     }
 

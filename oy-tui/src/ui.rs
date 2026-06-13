@@ -1,5 +1,3 @@
-use std::env;
-
 use oy_agent::format_token_count;
 use ratatui::{
     buffer::Buffer,
@@ -14,6 +12,7 @@ use crate::{
     app::{App, AppMode, SubAgentUiState, visual_cursor_pos},
     command::CommandInfo,
     message::{Message, Status},
+    theme::Theme,
 };
 
 /// 使用与 `visual_cursor_pos` 一致的 word-wrap 算法将输入文本按宽度切割成行。
@@ -114,9 +113,31 @@ impl Widget for &App {
         ])
         .split(area);
 
-        // ── Message Area (per-message paragraphs with full-line backgrounds) ──
-        let content_width = chunks[0].width.saturating_sub(2) as usize;
-        let visible_height = (chunks[0].height.saturating_sub(2)) as usize;
+        self.render_chat_area(chunks[0], buf, t);
+        self.render_input_area(chunks[1], buf, t);
+        self.render_status_area(chunks[3], buf, t);
+
+        // ── Sub-Agent Status Panel ──
+        if has_sub_agents && chunks[4].height >= 3 {
+            self.render_sub_agent_panel(chunks[4], buf, t);
+        } else {
+            // No sub-agents — reset panel Y to avoid stale detection
+            self.sub_agent_panel_y.set(u16::MAX);
+        }
+
+        // ── Popups ──
+        if has_popup {
+            self.render_popups(chunks[2], buf, t);
+        }
+    }
+}
+
+impl App {
+    /// Render the chat history message area with scrolling support.
+    #[allow(clippy::cognitive_complexity)]
+    fn render_chat_area(&self, area: Rect, buf: &mut Buffer, t: &Theme) {
+        let content_width = area.width.saturating_sub(2) as usize;
+        let visible_height = (area.height.saturating_sub(2)) as usize;
 
         // Detect terminal resize: if chat area width changed, auto-scroll to bottom
         if self.last_chat_width.get() != content_width as u16 && self.last_chat_width.get() != 0 {
@@ -152,7 +173,6 @@ impl Widget for &App {
         }
 
         // Determine starting message and line offset from scroll
-        // (spacers are counted as 1 line each in the scroll space)
         let mut scroll_rem = self.scroll_offset.get() as usize;
         let mut msg_idx = 0usize;
         let mut line_offset = 0usize;
@@ -171,7 +191,7 @@ impl Widget for &App {
         }
 
         // Render visible messages as individual paragraphs
-        let inner_x = chunks[0].x + 1;
+        let inner_x = area.x + 1;
         let inner_w = content_width as u16;
         let mut used_lines = 0usize;
         // Track the 1-based display number for PromptQueued messages
@@ -196,7 +216,7 @@ impl Widget for &App {
 
             let msg_area = Rect {
                 x: inner_x,
-                y: chunks[0].y + 1 + used_lines as u16,
+                y: area.y + 1 + used_lines as u16,
                 width: inner_w,
                 height: render_lines as u16,
             };
@@ -224,7 +244,7 @@ impl Widget for &App {
 
             // Add spacer line (with surface_bg) between messages
             if i + 1 < self.messages.len() && used_lines < visible_height {
-                let spacer_y = chunks[0].y + 1 + used_lines as u16;
+                let spacer_y = area.y + 1 + used_lines as u16;
                 let spacer_area = Rect {
                     x: inner_x,
                     y: spacer_y,
@@ -246,11 +266,13 @@ impl Widget for &App {
             .title_alignment(Alignment::Center)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(t.border));
-        border_block.render(chunks[0], buf);
+        border_block.render(area, buf);
+    }
 
-        // ── Input Area ──
+    /// Render the text input area with wrapping and cursor positioning.
+    fn render_input_area(&self, area: Rect, buf: &mut Buffer, t: &Theme) {
         let input_text = self.input.to_string();
-        let input_text_width = chunks[1].width.saturating_sub(2) as usize;
+        let input_text_width = area.width.saturating_sub(2) as usize;
 
         // 手动换行，算法与 visual_cursor_pos 一致
         let wrapped_lines = wrap_input_text(&input_text, input_text_width);
@@ -259,17 +281,17 @@ impl Widget for &App {
         let (cursor_visual_row, cursor_visual_col) =
             visual_cursor_pos(&self.input, self.cursor_pos, input_text_width);
 
-        let input_visible_height = chunks[1].height.saturating_sub(2);
+        let input_visible_height = area.height.saturating_sub(2);
         let input_scroll = if cursor_visual_row >= input_visible_height {
             cursor_visual_row - input_visible_height + 1
         } else {
             0
         };
 
-        self.cursor_x.set(chunks[1].x + 1 + cursor_visual_col);
+        self.cursor_x.set(area.x + 1 + cursor_visual_col);
         self.cursor_y
-            .set(chunks[1].y + 1 + cursor_visual_row - input_scroll);
-        self.input_width.set(chunks[1].width.saturating_sub(2));
+            .set(area.y + 1 + cursor_visual_row - input_scroll);
+        self.input_width.set(area.width.saturating_sub(2));
 
         let input_title = if matches!(self.app_mode, AppMode::RevokeSelect) {
             "Revoke [1-9]: select, Esc: cancel".to_string()
@@ -292,15 +314,17 @@ impl Widget for &App {
             .wrap(Wrap { trim: false })
             .style(Style::default().fg(t.surface_fg).bg(t.surface_bg));
 
-        input_paragraph.render(chunks[1], buf);
+        input_paragraph.render(area, buf);
+    }
 
-        // ── Status Area ──
+    /// Render the status bar with spinner, token usage, and agent info.
+    fn render_status_area(&self, area: Rect, buf: &mut Buffer, t: &Theme) {
         const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         let spinner_char = match self.agent_status.get() {
             Status::Running => {
                 let idx = (self.tick_counter.get() as usize / 2) % SPINNER.len();
                 SPINNER[idx]
-            }
+            },
             Status::Pause => "•",
         };
 
@@ -352,7 +376,7 @@ impl Widget for &App {
             .alignment(Alignment::Left)
             .style(Style::default().fg(t.status_fg).bg(t.status_bg));
 
-        status_paragraph.render(chunks[3], buf);
+        status_paragraph.render(area, buf);
 
         let mut status_right = "Use the /model command to set up one model 
             Unknown directory "
@@ -365,7 +389,7 @@ impl Widget for &App {
                     &format!("{} · {} ", model_name, effort),
                 );
             }
-            if let Ok(path) = env::current_dir() {
+            if let Ok(path) = std::env::current_dir() {
                 status_right = status_right.replace(
                     "Unknown directory ",
                     &format!("{} ", &path.to_string_lossy()),
@@ -376,81 +400,78 @@ impl Widget for &App {
             .alignment(Alignment::Right)
             .style(Style::default().fg(t.status_fg).bg(t.status_bg));
 
-        status_right_para.render(chunks[3], buf);
+        status_right_para.render(area, buf);
+    }
 
-        // ── Sub-Agent Status Panel ──
-        // Only rendered when CommanderAgent is active and has sub-agent states
-        if !self.sub_agent_states.is_empty() && chunks[4].height >= 3 {
-            let panel_area = chunks[4];
-            let max_items = panel_area.height.saturating_sub(2) as usize; // content rows
-            let total = self.sub_agent_states.len();
-            let scroll = self.sub_agent_scroll.get().min(total.saturating_sub(1));
+    /// Render the sub-agent execution status panel.
+    fn render_sub_agent_panel(&self, area: Rect, buf: &mut Buffer, t: &Theme) {
+        let max_items = area.height.saturating_sub(2) as usize; // content rows
+        let total = self.sub_agent_states.len();
+        let scroll = self.sub_agent_scroll.get().min(total.saturating_sub(1));
 
-            // Store panel Y position for mouse scroll detection
-            self.sub_agent_panel_y.set(panel_area.y);
+        // Store panel Y position for mouse scroll detection
+        self.sub_agent_panel_y.set(area.y);
 
-            let has_more_up = scroll > 0;
-            let has_more_down = scroll + max_items < total;
+        let has_more_up = scroll > 0;
+        let has_more_down = scroll + max_items < total;
 
-            let indicator_lines = has_more_up as usize + has_more_down as usize;
-            let visible_max = max_items.saturating_sub(indicator_lines);
-            let visible: Vec<&SubAgentUiState> = self
-                .sub_agent_states
-                .iter()
-                .skip(scroll)
-                .take(visible_max)
-                .collect();
+        let indicator_lines = has_more_up as usize + has_more_down as usize;
+        let visible_max = max_items.saturating_sub(indicator_lines);
+        let visible: Vec<&SubAgentUiState> = self
+            .sub_agent_states
+            .iter()
+            .skip(scroll)
+            .take(visible_max)
+            .collect();
 
-            let mut panel_lines = Vec::new();
-            if has_more_up {
-                panel_lines.push(Line::from(Span::styled(
-                    "  \u{2191} more...",
-                    Style::default().fg(t.subtle),
-                )));
-            }
-            for state in &visible {
-                let icon = if state.completed {
-                    if state.success { "✓" } else { "✗" }
-                } else {
-                    "▶"
-                };
-                let task_preview: String = state.task.chars().take(35).collect();
-                let elapsed = state
-                    .elapsed_secs
-                    .unwrap_or_else(|| state.start_time.elapsed().as_secs_f64());
-                let line_str = format!(
-                    " {} {}  {}  {:.1}s",
-                    icon, state.agent_type, task_preview, elapsed
-                );
-                panel_lines.push(Line::from(Span::styled(
-                    line_str,
-                    Style::default().fg(t.info_fg),
-                )));
-            }
-            if has_more_down {
-                panel_lines.push(Line::from(Span::styled(
-                    "  \u{2193} more...",
-                    Style::default().fg(t.subtle),
-                )));
-            }
-
-            let panel = Paragraph::new(Text::from(panel_lines))
-                .block(
-                    Block::bordered()
-                        .title("Sub-Agents")
-                        .title_alignment(Alignment::Left)
-                        .border_type(BorderType::Rounded)
-                        .border_style(Style::default().fg(t.accent)),
-                )
-                .style(Style::default().bg(t.surface_bg));
-            panel.render(panel_area, buf);
-        } else {
-            // No sub-agents — reset panel Y to avoid stale detection
-            self.sub_agent_panel_y.set(u16::MAX);
+        let mut panel_lines = Vec::new();
+        if has_more_up {
+            panel_lines.push(Line::from(Span::styled(
+                "  \u{2191} more...",
+                Style::default().fg(t.subtle),
+            )));
+        }
+        for state in &visible {
+            let icon = if state.completed {
+                if state.success { "✓" } else { "✗" }
+            } else {
+                "▶"
+            };
+            let task_preview: String = state.task.chars().take(35).collect();
+            let elapsed = state
+                .elapsed_secs
+                .unwrap_or_else(|| state.start_time.elapsed().as_secs_f64());
+            let line_str = format!(
+                " {} {}  {}  {:.1}s",
+                icon, state.agent_type, task_preview, elapsed
+            );
+            panel_lines.push(Line::from(Span::styled(
+                line_str,
+                Style::default().fg(t.info_fg),
+            )));
+        }
+        if has_more_down {
+            panel_lines.push(Line::from(Span::styled(
+                "  \u{2193} more...",
+                Style::default().fg(t.subtle),
+            )));
         }
 
+        let panel = Paragraph::new(Text::from(panel_lines))
+            .block(
+                Block::bordered()
+                    .title("Sub-Agents")
+                    .title_alignment(Alignment::Left)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(t.accent)),
+            )
+            .style(Style::default().bg(t.surface_bg));
+        panel.render(area, buf);
+    }
+
+    /// Render popups: SubMenu and CommandSelector.
+    fn render_popups(&self, area: Rect, buf: &mut Buffer, t: &Theme) {
         // ── SubMenu / Command Selector Popup ──
-        // Render into chunks[2] (reserved popup area)
         if let AppMode::SubMenu {
             title,
             items,
@@ -459,58 +480,8 @@ impl Widget for &App {
         } = &self.app_mode
             && !items.is_empty()
         {
-            let sel = *selected;
-            let scroll = *scroll_offset;
-            let total = items.len();
-            let max_content_rows = (chunks[2].height.saturating_sub(2)) as usize;
-            let has_more_up = scroll > 0;
-            let has_more_down = scroll + max_content_rows < total;
-
-            // Account for "↑/↓ more..." indicator lines
-            let indicator_lines = (has_more_up as usize) + (has_more_down as usize);
-            let max_items = max_content_rows.saturating_sub(indicator_lines);
-            let visible: Vec<&(String, String)> =
-                items.iter().skip(scroll).take(max_items).collect();
-
-            // Recalculate has_more_down based on actual items taken
-            let has_more_down = scroll + visible.len() < total;
-
-            let mut popup_text = Text::default();
-            if has_more_up {
-                popup_text.push_line(Line::from(Span::styled(
-                    "  \u{2191} more...",
-                    Style::default().fg(t.subtle),
-                )));
-            }
-            for (i, (name, desc)) in visible.iter().enumerate() {
-                let abs_idx = scroll + i;
-                let style = if abs_idx == sel {
-                    Style::default().fg(t.surface_bg).bg(t.accent)
-                } else {
-                    Style::default().fg(t.surface_fg)
-                };
-                popup_text.push_line(Line::from(vec![
-                    Span::styled(if abs_idx == sel { "\u{25b8} " } else { "  " }, style),
-                    Span::styled(format!("{}  - {}", name, desc), style),
-                ]));
-            }
-            if has_more_down {
-                popup_text.push_line(Line::from(Span::styled(
-                    "  \u{2193} more...",
-                    Style::default().fg(t.subtle),
-                )));
-            }
-
-            let popup = Paragraph::new(popup_text)
-                .block(
-                    Block::bordered()
-                        .title(title.as_str())
-                        .title_alignment(Alignment::Left)
-                        .border_type(BorderType::Rounded)
-                        .border_style(Style::default().fg(t.accent)),
-                )
-                .style(Style::default().bg(t.surface_bg));
-            popup.render(chunks[2], buf);
+            self.render_submenu_popup(area, buf, t, title, items, *selected, *scroll_offset);
+            return;
         }
 
         // ── Command Selector Popup ──
@@ -519,61 +490,140 @@ impl Widget for &App {
             scroll_offset,
         } = &self.app_mode
         {
-            let matches = self.command_registry.search(&self.input);
-            if !matches.is_empty() {
-                let sel = *selected;
-                let scroll = *scroll_offset;
-                let total = matches.len();
-                let max_content_rows = (chunks[2].height.saturating_sub(2)) as usize;
-                let has_more_up = scroll > 0;
-                let has_more_down = scroll + max_content_rows < total;
-
-                // Account for "↑/↓ more..." indicator lines
-                let indicator_lines = (has_more_up as usize) + (has_more_down as usize);
-                let max_items = max_content_rows.saturating_sub(indicator_lines);
-                let visible: Vec<&&CommandInfo> =
-                    matches.iter().skip(scroll).take(max_items).collect();
-
-                // Recalculate has_more_down based on actual items taken
-                let has_more_down = scroll + visible.len() < total;
-
-                let mut popup_text = Text::default();
-                if has_more_up {
-                    popup_text.push_line(Line::from(Span::styled(
-                        "  \u{2191} more...",
-                        Style::default().fg(t.subtle),
-                    )));
-                }
-                for (i, cmd) in visible.iter().enumerate() {
-                    let abs_idx = scroll + i;
-                    let style = if abs_idx == sel {
-                        Style::default().fg(t.surface_bg).bg(t.accent)
-                    } else {
-                        Style::default().fg(t.surface_fg)
-                    };
-                    popup_text.push_line(Line::from(vec![
-                        Span::styled(if abs_idx == sel { "\u{25b8} " } else { "  " }, style),
-                        Span::styled(format!("{}  - {}", cmd.name, cmd.description), style),
-                    ]));
-                }
-                if has_more_down {
-                    popup_text.push_line(Line::from(Span::styled(
-                        "  \u{2193} more...",
-                        Style::default().fg(t.subtle),
-                    )));
-                }
-
-                let popup = Paragraph::new(popup_text)
-                    .block(
-                        Block::bordered()
-                            .title("Commands")
-                            .title_alignment(Alignment::Left)
-                            .border_type(BorderType::Rounded)
-                            .border_style(Style::default().fg(t.accent)),
-                    )
-                    .style(Style::default().bg(t.surface_bg));
-                popup.render(chunks[2], buf);
-            }
+            self.render_command_selector_popup(area, buf, t, *selected, *scroll_offset);
         }
+    }
+
+    /// Render the SubMenu popup.
+    #[allow(clippy::too_many_arguments)]
+    fn render_submenu_popup(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        t: &Theme,
+        title: &str,
+        items: &[(String, String)],
+        selected: usize,
+        scroll_offset: usize,
+    ) {
+        let sel = selected;
+        let scroll = scroll_offset;
+        let total = items.len();
+        let max_content_rows = (area.height.saturating_sub(2)) as usize;
+        let has_more_up = scroll > 0;
+        let has_more_down = scroll + max_content_rows < total;
+
+        // Account for "↑/↓ more..." indicator lines
+        let indicator_lines = (has_more_up as usize) + (has_more_down as usize);
+        let max_items = max_content_rows.saturating_sub(indicator_lines);
+        let visible: Vec<&(String, String)> = items.iter().skip(scroll).take(max_items).collect();
+
+        // Recalculate has_more_down based on actual items taken
+        let has_more_down = scroll + visible.len() < total;
+
+        let mut popup_text = Text::default();
+        if has_more_up {
+            popup_text.push_line(Line::from(Span::styled(
+                "  \u{2191} more...",
+                Style::default().fg(t.subtle),
+            )));
+        }
+        for (i, (name, desc)) in visible.iter().enumerate() {
+            let abs_idx = scroll + i;
+            let style = if abs_idx == sel {
+                Style::default().fg(t.surface_bg).bg(t.accent)
+            } else {
+                Style::default().fg(t.surface_fg)
+            };
+            popup_text.push_line(Line::from(vec![
+                Span::styled(if abs_idx == sel { "\u{25b8} " } else { "  " }, style),
+                Span::styled(format!("{}  - {}", name, desc), style),
+            ]));
+        }
+        if has_more_down {
+            popup_text.push_line(Line::from(Span::styled(
+                "  \u{2193} more...",
+                Style::default().fg(t.subtle),
+            )));
+        }
+
+        let popup = Paragraph::new(popup_text)
+            .block(
+                Block::bordered()
+                    .title(title)
+                    .title_alignment(Alignment::Left)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(t.accent)),
+            )
+            .style(Style::default().bg(t.surface_bg));
+        popup.render(area, buf);
+    }
+
+    /// Render the command selector popup.
+    #[allow(clippy::too_many_arguments)]
+    fn render_command_selector_popup(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        t: &Theme,
+        selected: usize,
+        scroll_offset: usize,
+    ) {
+        let matches = self.command_registry.search(&self.input);
+        if matches.is_empty() {
+            return;
+        }
+
+        let sel = selected;
+        let scroll = scroll_offset;
+        let total = matches.len();
+        let max_content_rows = (area.height.saturating_sub(2)) as usize;
+        let has_more_up = scroll > 0;
+        let has_more_down = scroll + max_content_rows < total;
+
+        // Account for "↑/↓ more..." indicator lines
+        let indicator_lines = (has_more_up as usize) + (has_more_down as usize);
+        let max_items = max_content_rows.saturating_sub(indicator_lines);
+        let visible: Vec<&&CommandInfo> = matches.iter().skip(scroll).take(max_items).collect();
+
+        // Recalculate has_more_down based on actual items taken
+        let has_more_down = scroll + visible.len() < total;
+
+        let mut popup_text = Text::default();
+        if has_more_up {
+            popup_text.push_line(Line::from(Span::styled(
+                "  \u{2191} more...",
+                Style::default().fg(t.subtle),
+            )));
+        }
+        for (i, cmd) in visible.iter().enumerate() {
+            let abs_idx = scroll + i;
+            let style = if abs_idx == sel {
+                Style::default().fg(t.surface_bg).bg(t.accent)
+            } else {
+                Style::default().fg(t.surface_fg)
+            };
+            popup_text.push_line(Line::from(vec![
+                Span::styled(if abs_idx == sel { "\u{25b8} " } else { "  " }, style),
+                Span::styled(format!("{}  - {}", cmd.name, cmd.description), style),
+            ]));
+        }
+        if has_more_down {
+            popup_text.push_line(Line::from(Span::styled(
+                "  \u{2193} more...",
+                Style::default().fg(t.subtle),
+            )));
+        }
+
+        let popup = Paragraph::new(popup_text)
+            .block(
+                Block::bordered()
+                    .title("Commands")
+                    .title_alignment(Alignment::Left)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(t.accent)),
+            )
+            .style(Style::default().bg(t.surface_bg));
+        popup.render(area, buf);
     }
 }

@@ -28,132 +28,88 @@ pub fn find_latest_session() -> Result<Option<SessionEntry>, AgentError> {
 /// List all session files across all project directories,
 /// sorted by modification time (newest first).
 pub fn list_all_sessions() -> Result<Vec<SessionEntry>, AgentError> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| AgentError::SessionPersistenceError("Cannot find home directory".into()))?;
-    let sessions_root = home.join(".oy-ai-agent").join("sessions");
-
-    if !sessions_root.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut entries = Vec::new();
-    let read_dir = std::fs::read_dir(&sessions_root).map_err(|e| {
-        AgentError::SessionPersistenceError(format!("Cannot read sessions dir: {}", e))
-    })?;
-
-    for project_dir in read_dir {
-        let project_dir = project_dir.map_err(|e| {
-            AgentError::SessionPersistenceError(format!("Cannot read entry: {}", e))
-        })?;
-        let project_path = project_dir.path();
-        if !project_path.is_dir() {
-            continue;
-        }
-        let project_name = project_path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-
-        let session_dir = std::fs::read_dir(&project_path).map_err(|e| {
-            AgentError::SessionPersistenceError(format!("Cannot read session dir: {}", e))
-        })?;
-
-        for session_file in session_dir {
-            let session_file = session_file.map_err(|e| {
-                AgentError::SessionPersistenceError(format!("Cannot read entry: {}", e))
-            })?;
-            let path = session_file.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            if let Ok(uuid) = Uuid::from_str(file_stem) {
-                entries.push(SessionEntry {
-                    path,
-                    uuid,
-                    project_name: project_name.clone(),
-                });
-            }
-        }
-    }
-
-    // Sort by mtime descending (newest first) — cache metadata to avoid O(N log N) disk I/O
-    let mut entries_with_mtime: Vec<(SessionEntry, std::time::SystemTime)> = entries
-        .into_iter()
-        .map(|entry| {
-            let mtime = std::fs::metadata(&entry.path)
-                .and_then(|m| m.modified())
-                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            (entry, mtime)
-        })
-        .collect();
-
-    entries_with_mtime.sort_by_key(|b| std::cmp::Reverse(b.1));
-    let entries: Vec<SessionEntry> = entries_with_mtime.into_iter().map(|(e, _)| e).collect();
-
-    Ok(entries)
+    collect_sessions_with(|project_path, project_name, entries| {
+        collect_entries_from_dir(project_path, project_name, entries)
+    })
 }
 
 /// List all sub-agent session files across all project directories,
 /// sorted by modification time (newest first).
 pub fn list_sub_agent_sessions() -> Result<Vec<SessionEntry>, AgentError> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| AgentError::SessionPersistenceError("Cannot find home directory".into()))?;
-    let sessions_root = home.join(".oy-ai-agent").join("sessions");
-
-    if !sessions_root.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut entries = Vec::new();
-    let read_dir = std::fs::read_dir(&sessions_root).map_err(|e| {
-        AgentError::SessionPersistenceError(format!("Cannot read sessions dir: {}", e))
-    })?;
-
-    for project_dir in read_dir {
-        let project_dir = project_dir.map_err(|e| {
-            AgentError::SessionPersistenceError(format!("Cannot read entry: {}", e))
-        })?;
-        let project_path = project_dir.path();
-        if !project_path.is_dir() {
-            continue;
-        }
-        let project_name = project_path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-
+    collect_sessions_with(|project_path, project_name, entries| {
         let sub_agents_path = project_path.join("sub_agents");
         if !sub_agents_path.exists() || !sub_agents_path.is_dir() {
+            return Ok(());
+        }
+        let sub_project_name = format!("{}/sub_agents", project_name);
+        match collect_entries_from_dir(&sub_agents_path, &sub_project_name, entries) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                eprintln!(
+                    "Warning: Cannot read sub_agents dir `{}`: {}, skipping",
+                    sub_agents_path.display(),
+                    e
+                );
+                Ok(())
+            },
+        }
+    })
+}
+
+/// Get the home directory or return an error.
+fn home_dir() -> Result<PathBuf, AgentError> {
+    dirs::home_dir()
+        .ok_or_else(|| AgentError::SessionPersistenceError("Cannot find home directory".into()))
+}
+
+/// Read a directory and return an iterator, or return an error.
+fn read_sessions_dir(path: &Path) -> Result<std::fs::ReadDir, AgentError> {
+    std::fs::read_dir(path).map_err(|e| {
+        AgentError::SessionPersistenceError(format!("Cannot read sessions dir: {}", e))
+    })
+}
+
+/// Get the project name from a directory path's file name.
+fn project_name_from_path(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default()
+}
+
+/// Collect JSON session entries from a directory into the given vector.
+fn collect_entries_from_dir(
+    dir: &Path,
+    project_name: &str,
+    entries: &mut Vec<SessionEntry>,
+) -> Result<(), AgentError> {
+    let session_dir = std::fs::read_dir(dir).map_err(|e| {
+        AgentError::SessionPersistenceError(format!("Cannot read session dir: {}", e))
+    })?;
+
+    for session_file in session_dir {
+        let session_file = session_file.map_err(|e| {
+            AgentError::SessionPersistenceError(format!("Cannot read entry: {}", e))
+        })?;
+        let path = session_file.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
-
-        let session_dir = std::fs::read_dir(&sub_agents_path).map_err(|e| {
-            AgentError::SessionPersistenceError(format!("Cannot read sub_agents dir: {}", e))
-        })?;
-
-        for session_file in session_dir {
-            let session_file = session_file.map_err(|e| {
-                AgentError::SessionPersistenceError(format!("Cannot read entry: {}", e))
-            })?;
-            let path = session_file.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            if let Ok(uuid) = Uuid::from_str(file_stem) {
-                entries.push(SessionEntry {
-                    path,
-                    uuid,
-                    project_name: format!("{}/sub_agents", project_name),
-                });
-            }
+        let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if let Ok(uuid) = Uuid::from_str(file_stem) {
+            entries.push(SessionEntry {
+                path,
+                uuid,
+                project_name: project_name.to_string(),
+            });
         }
     }
+    Ok(())
+}
 
-    // Sort by mtime descending (newest first)
+/// Sort entries by modification time descending (newest first).
+fn sort_entries_by_mtime(entries: &mut Vec<SessionEntry>) {
     let mut entries_with_mtime: Vec<(SessionEntry, std::time::SystemTime)> = entries
-        .into_iter()
+        .drain(..)
         .map(|entry| {
             let mtime = std::fs::metadata(&entry.path)
                 .and_then(|m| m.modified())
@@ -163,8 +119,37 @@ pub fn list_sub_agent_sessions() -> Result<Vec<SessionEntry>, AgentError> {
         .collect();
 
     entries_with_mtime.sort_by_key(|b| std::cmp::Reverse(b.1));
-    let entries: Vec<SessionEntry> = entries_with_mtime.into_iter().map(|(e, _)| e).collect();
+    entries.extend(entries_with_mtime.into_iter().map(|(e, _)| e));
+}
 
+/// Collect session entries across all project directories using a custom collector.
+fn collect_sessions_with<F>(mut collect_fn: F) -> Result<Vec<SessionEntry>, AgentError>
+where
+    F: FnMut(&Path, &str, &mut Vec<SessionEntry>) -> Result<(), AgentError>,
+{
+    let home = home_dir()?;
+    let sessions_root = home.join(".oy-ai-agent").join("sessions");
+
+    if !sessions_root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut entries = Vec::new();
+    let read_dir = read_sessions_dir(&sessions_root)?;
+
+    for project_dir in read_dir {
+        let project_dir = project_dir.map_err(|e| {
+            AgentError::SessionPersistenceError(format!("Cannot read entry: {}", e))
+        })?;
+        let project_path = project_dir.path();
+        if !project_path.is_dir() {
+            continue;
+        }
+        let project_name = project_name_from_path(&project_path);
+        collect_fn(&project_path, &project_name, &mut entries)?;
+    }
+
+    sort_entries_by_mtime(&mut entries);
     Ok(entries)
 }
 
@@ -327,10 +312,10 @@ mod tests {
         let msgs = vec![];
         let result = save_session(uuid, msgs, &dir);
         assert!(result.is_ok());
-        if let Ok(p) = &result {
-            if let Some(parent) = Path::new(p).parent() {
-                let _ = std::fs::remove_dir_all(parent);
-            }
+        if let Ok(p) = &result
+            && let Some(parent) = Path::new(p).parent()
+        {
+            let _ = std::fs::remove_dir_all(parent);
         }
     }
 
@@ -340,7 +325,7 @@ mod tests {
     fn test_get_session_preview_finds_first_user() {
         let dir = test_dir("preview_first_user");
         let uuid = Uuid::now_v7();
-        let msgs = vec![
+        let msgs = [
             ChatMessage::system("system prompt"),
             ChatMessage::user("hello world"),
             ChatMessage::assistant(Some("response".into()), None, None),
@@ -359,7 +344,7 @@ mod tests {
         let dir = test_dir("preview_skip_system");
         let uuid = Uuid::now_v7();
         // Multiple system messages before the first user message
-        let msgs = vec![
+        let msgs = [
             ChatMessage::system("system 1"),
             ChatMessage::system("system 2"),
             ChatMessage::user("actual prompt"),
@@ -448,7 +433,7 @@ mod tests {
     fn test_get_session_preview_no_user_message_returns_none() {
         let dir = test_dir("preview_no_user");
         let uuid = Uuid::now_v7();
-        let msgs = vec![
+        let msgs = [
             ChatMessage::system("system"),
             ChatMessage::assistant(Some("response".into()), None, None),
             ChatMessage::tool("result", "call_1".into(), Some("Read".into()), None),
@@ -466,7 +451,7 @@ mod tests {
     fn test_get_session_preview_only_has_tool_and_assistant() {
         let dir = test_dir("preview_only_tool");
         let uuid = Uuid::now_v7();
-        let msgs = vec![
+        let msgs = [
             ChatMessage::assistant(Some("thinking...".into()), None, None),
             ChatMessage::tool("output", "c1".into(), Some("Bash".into()), None),
         ];
@@ -499,7 +484,7 @@ mod tests {
     fn test_load_session_messages_roundtrip() {
         let dir = test_dir("load_msgs_roundtrip");
         let uuid = Uuid::now_v7();
-        let msgs = vec![
+        let msgs = [
             ChatMessage::system("system prompt"),
             ChatMessage::user("hello"),
             ChatMessage::assistant(Some("world".into()), None, None),
@@ -519,9 +504,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_load_session_messages_preserves_tool_calls() {
-        let dir = test_dir("load_msgs_tool_calls");
+    /// Create a session fixture with tool-call messages and return the saved path.
+    fn save_tool_calls_fixture(dir: &str) -> PathBuf {
         let uuid = Uuid::now_v7();
         use oy_ai::ToolCall;
         let tool_call = ToolCall {
@@ -529,14 +513,20 @@ mod tests {
             function_name: "Read".into(),
             arguments: serde_json::json!({"file_path": "/tmp/x.txt"}),
         };
-        let msgs = vec![
+        let msgs = [
             ChatMessage::user("read a file"),
             ChatMessage::assistant(None, None, Some(vec![tool_call])),
             ChatMessage::tool("content", "call_1".into(), Some("Read".into()), None),
         ];
         let refs: Vec<&ChatMessage> = msgs.iter().collect();
-        let path = save_session(uuid, refs, &dir).unwrap();
-        let (_, loaded_msgs) = load_session_messages(Path::new(&path)).unwrap();
+        save_session(uuid, refs, dir).map(PathBuf::from).unwrap()
+    }
+
+    #[test]
+    fn test_load_session_messages_preserves_tool_calls() {
+        let dir = test_dir("load_msgs_tool_calls");
+        let path = save_tool_calls_fixture(&dir);
+        let (_, loaded_msgs) = load_session_messages(&path).unwrap();
         assert_eq!(loaded_msgs.len(), 3);
         let assistant = &loaded_msgs[1];
         assert_eq!(assistant.role, oy_ai::Role::Assistant);
@@ -549,7 +539,7 @@ mod tests {
         let tool_result = &loaded_msgs[2];
         assert_eq!(tool_result.role, oy_ai::Role::Tool);
         assert_eq!(tool_result.tool_call_id.as_deref(), Some("call_1"));
-        if let Some(p) = Path::new(&path).parent() {
+        if let Some(p) = path.parent() {
             let _ = std::fs::remove_dir_all(p);
         }
     }

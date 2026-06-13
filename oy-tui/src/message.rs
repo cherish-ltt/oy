@@ -24,6 +24,7 @@ pub struct ToolCallState {
     pub start_time: Instant,
     pub end_time: Option<Instant>,
     pub expanded: bool,
+    pub timeout_secs: u64,
 }
 
 #[derive(Debug)]
@@ -77,213 +78,11 @@ impl Message {
                     format!("> {}", text),
                     Style::default().fg(theme.info_fg).bold(),
                 ))]
-            }
+            },
             Message::AgentMessages(chat_message, expanded) => {
-                let role_style = match chat_message.role {
-                    Role::User => Style::default().fg(theme.user_fg),
-                    Role::Assistant => Style::default().fg(theme.assistant_fg),
-                    Role::Tool => Style::default().fg(theme.tool_fg),
-                    Role::System => return Vec::new(),
-                };
-                let mut lines = Vec::new();
-
-                // reasoning content (e.g. thinking)
-                // NOTE: Must split into individual Lines per \n, because ratatui's WordWrapper
-                // treats \n within a single Line's Span as zero-width whitespace (not a line
-                // break). Without splitting, the entire thinking block renders as one wrapped
-                // text blob while visual_line_count allocates N lines of height, causing
-                // trailing blank rows.
-                if let Some(reasoning_content) = &chat_message.reasoning_content {
-                    for (i, r_line) in reasoning_content.trim_end().lines().enumerate() {
-                        let text = if i == 0 {
-                            format!("[{:#?} - thinking] {}", chat_message.role, r_line)
-                        } else {
-                            r_line.to_string()
-                        };
-                        lines.push(Line::from(Span::styled(
-                            text,
-                            role_style.add_modifier(Modifier::ITALIC),
-                        )));
-                    }
-                }
-
-                // ----- Tool result: per-tool-type formatting -----
-                if chat_message.role == Role::Tool {
-                    if let Some(fn_name) = &chat_message.function_name {
-                        match fn_name.as_str() {
-                            "Read" => {
-                                Self::add_read_lines(
-                                    &mut lines,
-                                    chat_message,
-                                    *expanded,
-                                    &role_style,
-                                    theme,
-                                );
-                            }
-                            "Bash" => {
-                                Self::add_bash_lines(
-                                    &mut lines,
-                                    chat_message,
-                                    *expanded,
-                                    &role_style,
-                                    theme,
-                                );
-                            }
-                            "Edit" => {
-                                Self::add_edit_lines(
-                                    &mut lines,
-                                    chat_message,
-                                    *expanded,
-                                    &role_style,
-                                    theme,
-                                );
-                            }
-                            "Write" => {
-                                Self::add_write_lines(&mut lines, chat_message, &role_style, theme);
-                            }
-                            _ => {
-                                Self::add_content_lines(&mut lines, chat_message, &role_style);
-                            }
-                        }
-                    } else {
-                        Self::add_content_lines(&mut lines, chat_message, &role_style);
-                    }
-                } else {
-                    if let Some(content) = &chat_message.content {
-                        let content = content.trim_end();
-                        let prefix = format!("[{:#?}] ", chat_message.role);
-                        let md_lines = Self::render_markdown(content, role_style, theme);
-                        // Flatten: split any Line whose spans still contain \n into multiple
-                        // Lines. Same ratatui WordWrapper limitation as reasoning_content.
-                        for (i, line) in Self::flatten_lines(md_lines).into_iter().enumerate() {
-                            if i == 0 {
-                                let mut spans = vec![Span::styled(prefix.clone(), role_style)];
-                                spans.extend(line.spans);
-                                lines.push(Line::from(spans));
-                            } else {
-                                lines.push(line);
-                            }
-                        }
-                    }
-                }
-
-                if let Some(tool_calls) = &chat_message.tool_calls {
-                    for tool in tool_calls {
-                        lines.push(Line::from(Span::styled(
-                            format!("  🔧 调用工具: {}", tool.function_name),
-                            Style::default().fg(theme.accent),
-                        )));
-                        lines.push(Line::from(Span::styled(
-                            format!("     参数: {}", tool.arguments),
-                            Style::default().fg(theme.subtle),
-                        )));
-                    }
-                }
-
-                lines
-            }
-            Message::ToolCallMsg(state) => {
-                let mut lines = Vec::new();
-                let duration = if let Some(end) = state.end_time {
-                    end.duration_since(state.start_time).as_secs_f64()
-                } else {
-                    state.start_time.elapsed().as_secs_f64()
-                };
-
-                let icon = if state.result.is_some() { "✓" } else { "·" };
-
-                lines.push(Line::from(vec![
-                    Span::styled("🔧 ", Style::default().fg(theme.accent)),
-                    Span::styled(
-                        format!("ToolCall {} ", icon),
-                        Style::default().fg(theme.accent),
-                    ),
-                    Span::styled(
-                        &state.function_name,
-                        Style::default()
-                            .fg(theme.warning)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    if let Some(arguments) = &state.arguments {
-                        Span::styled(
-                            format!(": {}", arguments),
-                            Style::default()
-                                .fg(theme.subtle)
-                                .add_modifier(Modifier::BOLD),
-                        )
-                    } else {
-                        Span::styled(
-                            ": unknown arguments",
-                            Style::default()
-                                .fg(theme.subtle)
-                                .add_modifier(Modifier::BOLD),
-                        )
-                    },
-                    Span::styled(
-                        format!(" ({:.1}s)", duration),
-                        Style::default().fg(theme.subtle),
-                    ),
-                ]));
-
-                if let Some(result) = &state.result
-                    && let Some(content) = &result.content
-                {
-                    let all_lines: Vec<&str> = content.lines().collect();
-                    let total = all_lines.len();
-
-                    match state.function_name.as_str() {
-                        "Read" => {
-                            let display = if state.expanded || total <= MAX_READ_LINES {
-                                total
-                            } else {
-                                MAX_READ_LINES
-                            };
-                            for line in &all_lines[..display] {
-                                lines.push(Line::from(Span::styled(
-                                    format!("  {}", line),
-                                    Style::default().fg(theme.tool_fg),
-                                )));
-                            }
-                            if !state.expanded && total > MAX_READ_LINES {
-                                lines.push(Line::from(Span::styled(
-                                    format!(
-                                        "  ... ({} more lines, ctrl+o to expand) ",
-                                        total - MAX_READ_LINES
-                                    ),
-                                    Style::default()
-                                        .fg(theme.subtle)
-                                        .add_modifier(Modifier::ITALIC),
-                                )));
-                            }
-                        }
-                        "Bash" if !state.expanded && total > MAX_BASH_LINES => {
-                            let hidden = total - MAX_BASH_LINES;
-                            lines.push(Line::from(Span::styled(
-                                format!("  ... ({} earlier lines, ctrl+o to expand) ", hidden),
-                                Style::default()
-                                    .fg(theme.subtle)
-                                    .add_modifier(Modifier::ITALIC),
-                            )));
-                            for line in &all_lines[total - MAX_BASH_LINES..] {
-                                lines.push(Line::from(Span::styled(
-                                    format!("  {}", line),
-                                    Style::default().fg(theme.tool_fg),
-                                )));
-                            }
-                        }
-                        _ => {
-                            for line in &all_lines {
-                                lines.push(Line::from(Span::styled(
-                                    format!("  {}", line),
-                                    Style::default().fg(theme.tool_fg),
-                                )));
-                            }
-                        }
-                    }
-                }
-
-                lines
-            }
+                self.to_lines_agent_messages(chat_message, *expanded, theme)
+            },
+            Message::ToolCallMsg(state) => self.to_lines_tool_call_msg(state, theme),
             Message::AgentStatus(status) => match status {
                 Status::Pause => vec![Line::from(Span::styled(
                     "> pause",
@@ -295,41 +94,264 @@ impl Message {
                 ))],
             },
             Message::PromptQueued { id: _id, text } => {
-                let number = queue_number.unwrap_or(0);
-                let number_style = Style::default()
-                    .fg(theme.warning)
-                    .add_modifier(Modifier::BOLD);
-                let label_style = Style::default().fg(theme.warning);
+                self.to_lines_prompt_queued(text, queue_number, theme)
+            },
+        }
+    }
 
-                // Truncate prompt text: if longer than 80 chars, cut with "..."
-                let display_text = if text.chars().count() > 80 {
-                    let cut = text
-                        .char_indices()
-                        .take(80)
-                        .last()
-                        .map(|(i, c)| i + c.len_utf8())
-                        .unwrap_or(80);
-                    format!("{}...", &text[..cut])
+    /// Build lines for an AgentMessages variant with reasoning, content, and tool calls.
+    fn to_lines_agent_messages(
+        &self,
+        chat_message: &ChatMessage,
+        expanded: bool,
+        theme: &Theme,
+    ) -> Vec<Line<'_>> {
+        let role_style = match chat_message.role {
+            Role::User => Style::default().fg(theme.user_fg),
+            Role::Assistant => Style::default().fg(theme.assistant_fg),
+            Role::Tool => Style::default().fg(theme.tool_fg),
+            Role::System => return Vec::new(),
+        };
+        let mut lines = Vec::new();
+
+        // reasoning content (e.g. thinking)
+        if let Some(reasoning_content) = &chat_message.reasoning_content {
+            for (i, r_line) in reasoning_content.trim_end().lines().enumerate() {
+                let text = if i == 0 {
+                    format!("[{:#?} - thinking] {}", chat_message.role, r_line)
                 } else {
-                    text.clone()
+                    r_line.to_string()
                 };
-
-                let mut lines = Vec::new();
-                // Line 1: [N] ⏳ Prompt queuing...
-                lines.push(Line::from(vec![
-                    Span::styled(format!("[{}] ", number), number_style),
-                    Span::styled("⏳ Prompt queuing...", label_style),
-                ]));
-                // Line 2: indented italic prompt content
                 lines.push(Line::from(Span::styled(
-                    format!("    {}", display_text),
-                    Style::default()
-                        .fg(theme.subtle)
-                        .add_modifier(Modifier::ITALIC),
+                    text,
+                    role_style.add_modifier(Modifier::ITALIC),
                 )));
-                lines
             }
         }
+
+        // ----- Tool result: per-tool-type formatting -----
+        if chat_message.role == Role::Tool {
+            if let Some(fn_name) = &chat_message.function_name {
+                match fn_name.as_str() {
+                    "Read" => {
+                        Self::add_read_lines(
+                            &mut lines,
+                            chat_message,
+                            expanded,
+                            &role_style,
+                            theme,
+                        );
+                    },
+                    "Bash" => {
+                        Self::add_bash_lines(
+                            &mut lines,
+                            chat_message,
+                            expanded,
+                            &role_style,
+                            theme,
+                        );
+                    },
+                    "Edit" => {
+                        Self::add_edit_lines(
+                            &mut lines,
+                            chat_message,
+                            expanded,
+                            &role_style,
+                            theme,
+                        );
+                    },
+                    "Write" => {
+                        Self::add_write_lines(&mut lines, chat_message, &role_style, theme);
+                    },
+                    _ => {
+                        Self::add_content_lines(&mut lines, chat_message, &role_style);
+                    },
+                }
+            } else {
+                Self::add_content_lines(&mut lines, chat_message, &role_style);
+            }
+        } else {
+            if let Some(content) = &chat_message.content {
+                let content = content.trim_end();
+                let prefix = format!("[{:#?}] ", chat_message.role);
+                let md_lines = Self::render_markdown(content, role_style, theme);
+                // Flatten: split any Line whose spans still contain \n into multiple Lines.
+                for (i, line) in Self::flatten_lines(md_lines).into_iter().enumerate() {
+                    if i == 0 {
+                        let mut spans = vec![Span::styled(prefix.clone(), role_style)];
+                        spans.extend(line.spans);
+                        lines.push(Line::from(spans));
+                    } else {
+                        lines.push(line);
+                    }
+                }
+            }
+        }
+
+        if let Some(tool_calls) = &chat_message.tool_calls {
+            for tool in tool_calls {
+                lines.push(Line::from(Span::styled(
+                    format!("  🔧 调用工具: {}", tool.function_name),
+                    Style::default().fg(theme.accent),
+                )));
+                lines.push(Line::from(Span::styled(
+                    format!("     参数: {}", tool.arguments),
+                    Style::default().fg(theme.subtle),
+                )));
+            }
+        }
+
+        lines
+    }
+
+    /// Build lines for a ToolCallMsg variant with function-specific truncation.
+    fn to_lines_tool_call_msg<'a>(
+        &'a self,
+        state: &'a ToolCallState,
+        theme: &Theme,
+    ) -> Vec<Line<'a>> {
+        let mut lines = Vec::new();
+        let duration = if let Some(end) = state.end_time {
+            end.duration_since(state.start_time).as_secs_f64()
+        } else {
+            state.start_time.elapsed().as_secs_f64()
+        };
+
+        let icon = if state.result.is_some() { "✓" } else { "·" };
+
+        lines.push(Line::from(vec![
+            Span::styled("🔧 ", Style::default().fg(theme.accent)),
+            Span::styled(
+                format!("ToolCall {} ", icon),
+                Style::default().fg(theme.accent),
+            ),
+            Span::styled(
+                &state.function_name,
+                Style::default()
+                    .fg(theme.warning)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            if let Some(arguments) = &state.arguments {
+                Span::styled(
+                    format!(": {}", arguments),
+                    Style::default()
+                        .fg(theme.subtle)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::styled(
+                    ": unknown arguments",
+                    Style::default()
+                        .fg(theme.subtle)
+                        .add_modifier(Modifier::BOLD),
+                )
+            },
+            Span::styled(
+                format!(" ({:.1}s/{}s)", duration, state.timeout_secs),
+                Style::default().fg(theme.subtle),
+            ),
+        ]));
+
+        if let Some(result) = &state.result
+            && let Some(content) = &result.content
+        {
+            let all_lines: Vec<&str> = content.lines().collect();
+            let total = all_lines.len();
+
+            match state.function_name.as_str() {
+                "Read" => {
+                    let display = if state.expanded || total <= MAX_READ_LINES {
+                        total
+                    } else {
+                        MAX_READ_LINES
+                    };
+                    for line in &all_lines[..display] {
+                        lines.push(Line::from(Span::styled(
+                            format!("  {}", line),
+                            Style::default().fg(theme.tool_fg),
+                        )));
+                    }
+                    if !state.expanded && total > MAX_READ_LINES {
+                        lines.push(Line::from(Span::styled(
+                            format!(
+                                "  ... ({} more lines, ctrl+o to expand) ",
+                                total - MAX_READ_LINES
+                            ),
+                            Style::default()
+                                .fg(theme.subtle)
+                                .add_modifier(Modifier::ITALIC),
+                        )));
+                    }
+                },
+                "Bash" if !state.expanded && total > MAX_BASH_LINES => {
+                    let hidden = total - MAX_BASH_LINES;
+                    lines.push(Line::from(Span::styled(
+                        format!("  ... ({} earlier lines, ctrl+o to expand) ", hidden),
+                        Style::default()
+                            .fg(theme.subtle)
+                            .add_modifier(Modifier::ITALIC),
+                    )));
+                    for line in &all_lines[total - MAX_BASH_LINES..] {
+                        lines.push(Line::from(Span::styled(
+                            format!("  {}", line),
+                            Style::default().fg(theme.tool_fg),
+                        )));
+                    }
+                },
+                _ => {
+                    for line in &all_lines {
+                        lines.push(Line::from(Span::styled(
+                            format!("  {}", line),
+                            Style::default().fg(theme.tool_fg),
+                        )));
+                    }
+                },
+            }
+        }
+
+        lines
+    }
+
+    /// Build lines for a PromptQueued variant with truncation.
+    fn to_lines_prompt_queued(
+        &self,
+        text: &str,
+        queue_number: Option<u8>,
+        theme: &Theme,
+    ) -> Vec<Line<'_>> {
+        let number = queue_number.unwrap_or(0);
+        let number_style = Style::default()
+            .fg(theme.warning)
+            .add_modifier(Modifier::BOLD);
+        let label_style = Style::default().fg(theme.warning);
+
+        // Truncate prompt text: if longer than 80 chars, cut with "..."
+        let display_text = if text.chars().count() > 80 {
+            let cut = text
+                .char_indices()
+                .take(80)
+                .last()
+                .map(|(i, c)| i + c.len_utf8())
+                .unwrap_or(80);
+            format!("{}...", &text[..cut])
+        } else {
+            text.to_string()
+        };
+
+        let mut lines = Vec::new();
+        // Line 1: [N] ⏳ Prompt queuing...
+        lines.push(Line::from(vec![
+            Span::styled(format!("[{}] ", number), number_style),
+            Span::styled("⏳ Prompt queuing...", label_style),
+        ]));
+        // Line 2: indented italic prompt content
+        lines.push(Line::from(Span::styled(
+            format!("    {}", display_text),
+            Style::default()
+                .fg(theme.subtle)
+                .add_modifier(Modifier::ITALIC),
+        )));
+        lines
     }
 
     /// ── Tool-type-specific formatting helpers ──────────────────────
@@ -554,6 +576,7 @@ impl Message {
         }
     }
 
+    #[allow(clippy::cognitive_complexity)]
     pub fn visual_line_count(&self, width: usize, _theme: &Theme) -> usize {
         if width == 0 {
             return 1;
@@ -563,7 +586,7 @@ impl Message {
                 let line = format!("> {}", text);
                 let w = UnicodeWidthStr::width(line.as_str());
                 1.max(w.div_ceil(width))
-            }
+            },
             Message::AgentMessages(chat, expanded) => {
                 if chat.role == Role::Tool {
                     if let Some(fn_name) = &chat.function_name {
@@ -580,7 +603,7 @@ impl Message {
                 } else {
                     self.visual_default_count(chat, width, _theme)
                 }
-            }
+            },
             Message::ToolCallMsg(state) => {
                 let width = width.max(1);
                 let mut count = 0usize;
@@ -593,11 +616,12 @@ impl Message {
                     state.start_time.elapsed().as_secs_f64()
                 };
                 let header = format!(
-                    "🔧 ToolCall {} {}: {} ({:.1}s)",
+                    "🔧 ToolCall {} {}: {} ({:.1}s/{}s)",
                     icon,
                     state.function_name,
                     state.arguments.as_deref().unwrap_or("unknown arguments"),
                     duration,
+                    state.timeout_secs,
                 );
                 let header_w = UnicodeWidthStr::width(header.as_str());
                 count += if header_w == 0 {
@@ -633,7 +657,7 @@ impl Message {
                                 );
                                 count += UnicodeWidthStr::width(hint.as_str()).div_ceil(width);
                             }
-                        }
+                        },
                         "Bash" => {
                             if state.expanded || total <= MAX_BASH_LINES {
                                 count += count_wrapped_content_lines(
@@ -653,15 +677,15 @@ impl Message {
                                     width,
                                 );
                             }
-                        }
+                        },
                         _ => {
                             count +=
                                 count_wrapped_content_lines(&all_lines, content_prefix_w, width);
-                        }
+                        },
                     }
                 }
                 count.max(1)
-            }
+            },
             Message::AgentStatus(_) => 1,
             Message::PromptQueued { text, .. } => {
                 let width = width.max(1);
@@ -691,7 +715,7 @@ impl Message {
                 };
 
                 count.max(1)
-            }
+            },
         }
     }
 
@@ -924,18 +948,18 @@ impl Message {
                 match event {
                     Event::Start(Tag::TableHead) => {
                         accum.in_head = true;
-                    }
+                    },
                     Event::Start(Tag::TableRow) => {
                         accum.current_row.clear();
-                    }
+                    },
                     Event::Start(Tag::TableCell) => {
                         accum.current_cell.clear();
-                    }
+                    },
                     Event::End(TagEnd::TableCell) => {
                         accum
                             .current_row
                             .push(std::mem::take(&mut accum.current_cell));
-                    }
+                    },
                     Event::End(TagEnd::TableRow) => {
                         let row = std::mem::take(&mut accum.current_row);
                         if accum.in_head {
@@ -944,22 +968,22 @@ impl Message {
                         } else {
                             accum.rows.push(row);
                         }
-                    }
+                    },
                     Event::End(TagEnd::Table) => {
                         let rendered = render_table(accum, theme);
                         lines.extend(rendered);
                         table_accum = None;
-                    }
+                    },
                     Event::Text(t) => {
                         accum.current_cell.push_str(&t);
-                    }
+                    },
                     Event::Code(t) => {
                         accum.current_cell.push_str(&t);
-                    }
+                    },
                     Event::SoftBreak | Event::HardBreak => {
                         accum.current_cell.push(' ');
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
                 continue;
             }
@@ -977,21 +1001,21 @@ impl Message {
                             current_cell: String::new(),
                             in_head: false,
                         });
-                    }
-                    Tag::Paragraph => {}
+                    },
+                    Tag::Paragraph => {},
                     Tag::Strong => {
                         style_stack.push(Style::default().add_modifier(Modifier::BOLD));
-                    }
+                    },
                     Tag::Emphasis => {
                         style_stack.push(Style::default().add_modifier(Modifier::ITALIC));
-                    }
+                    },
                     Tag::Strikethrough => {
                         style_stack.push(Style::default().add_modifier(Modifier::CROSSED_OUT));
-                    }
+                    },
                     Tag::CodeBlock(_) => {
                         flush(&mut lines, &mut current);
                         in_code_block = true;
-                    }
+                    },
                     Tag::Heading { level, .. } => {
                         flush(&mut lines, &mut current);
                         let prefix = "#".repeat(level as usize);
@@ -1000,24 +1024,24 @@ impl Message {
                             base_style.fg(Color::Cyan).add_modifier(Modifier::BOLD),
                         ));
                         style_stack.push(Style::default().add_modifier(Modifier::BOLD));
-                    }
-                    Tag::List(_) => {}
+                    },
+                    Tag::List(_) => {},
                     Tag::Item => {
                         flush(&mut lines, &mut current);
                         current.push(Span::styled("  \u{2022} ", base_style.fg(Color::DarkGray)));
-                    }
+                    },
                     Tag::Link { .. } => {
                         style_stack.push(
                             Style::default()
                                 .fg(Color::Blue)
                                 .add_modifier(Modifier::UNDERLINED),
                         );
-                    }
+                    },
                     Tag::BlockQuote(_) => {
                         flush(&mut lines, &mut current);
                         current.push(Span::styled("> ", base_style.fg(Color::DarkGray)));
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 },
                 Event::End(tag) => match tag {
                     TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::Item | TagEnd::CodeBlock => {
@@ -1025,14 +1049,14 @@ impl Message {
                         if matches!(tag, TagEnd::CodeBlock) {
                             in_code_block = false;
                         }
-                    }
+                    },
                     TagEnd::Strong | TagEnd::Emphasis | TagEnd::Strikethrough => {
                         style_stack.pop();
-                    }
+                    },
                     TagEnd::Link => {
                         style_stack.pop();
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 },
                 Event::Text(text) => {
                     if in_code_block {
@@ -1049,19 +1073,19 @@ impl Message {
                         let style = current_style(base_style, &style_stack);
                         current.push(Span::styled(text.to_string(), style));
                     }
-                }
+                },
                 Event::Code(text) => {
                     current.push(Span::styled(
                         format!("`{}`", text),
                         base_style.fg(Color::Cyan).bg(Color::Black),
                     ));
-                }
+                },
                 Event::SoftBreak | Event::HardBreak => {
                     flush(&mut lines, &mut current);
-                }
+                },
                 Event::Html(html) => {
                     current.push(Span::raw(html.to_string()));
-                }
+                },
                 Event::Rule => {
                     flush(&mut lines, &mut current);
                     current.push(Span::styled(
@@ -1069,8 +1093,8 @@ impl Message {
                         base_style.fg(theme.subtle),
                     ));
                     flush(&mut lines, &mut current);
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
 
@@ -1164,15 +1188,15 @@ fn render_table(accum: &TableAccum, theme: &Theme) -> Vec<Vec<Span<'static>>> {
         let padded = match align {
             Alignment::Left | Alignment::None => {
                 format!("{}{}", text, " ".repeat(pad))
-            }
+            },
             Alignment::Right => {
                 format!("{}{}", " ".repeat(pad), text)
-            }
+            },
             Alignment::Center => {
                 let l = pad / 2;
                 let r = pad - l;
                 format!("{}{}{}", " ".repeat(l), text, " ".repeat(r))
-            }
+            },
         };
         format!(" {} ", padded)
     };
@@ -1337,6 +1361,7 @@ mod tests {
             start_time: Instant::now(),
             end_time: None,
             expanded: false,
+            timeout_secs: 150,
         };
         let msg = Message::ToolCallMsg(state);
         assert_eq!(msg.message_bg(&LIGHT_THEME), LIGHT_THEME.tool_bg);
@@ -1372,6 +1397,7 @@ mod tests {
             start_time: Instant::now(),
             end_time: None,
             expanded: true,
+            timeout_secs: 150,
         };
         let debug = format!("{:?}", state);
         assert!(debug.contains("Bash"));

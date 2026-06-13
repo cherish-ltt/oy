@@ -39,6 +39,31 @@ impl EditTool {
             content.to_string()
         }
     }
+
+    /// Read file, replace first occurrence of old_text with new_text, write back.
+    /// Returns a human-readable status message.
+    fn apply_edit_to_file(path: &Path, old_text: &str, new_text: &str) -> String {
+        let content = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => return format!("Failed to read file: {}", e),
+        };
+
+        if !content.contains(old_text) {
+            return "No changes made: the specified text was not found in the file.".to_string();
+        }
+
+        let new_content = Self::replace_first(&content, old_text, new_text);
+
+        match fs::write(path, new_content) {
+            Ok(_) => format!(
+                "Successfully replaced '{}' with '{}' in {}",
+                old_text,
+                new_text,
+                path.display()
+            ),
+            Err(e) => format!("Failed to write file: {}", e),
+        }
+    }
 }
 
 impl Tool for EditTool {
@@ -65,6 +90,11 @@ impl Tool for EditTool {
                 "new_text": {
                     "type": "string",
                     "description": "The new text to insert"
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Optional timeout in seconds (default: 150)",
+                    "default": 150
                 }
             },
             "required": ["file_path", "old_text", "new_text"]
@@ -93,35 +123,13 @@ impl Tool for EditTool {
             return Ok(format!("File not found: {}", file_path));
         }
 
-        // 3. 读取文件内容
-        let content = match fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(e) => return Ok(format!("Failed to read file: {}", e)),
-        };
-
-        // 4. 检查 old_text 是否存在
-        if !content.contains(old_text) {
-            return Ok(
-                "No changes made: the specified text was not found in the file.".to_string(),
-            );
-        }
-
-        // 5. 执行替换（只替换第一次出现）
-        let new_content = Self::replace_first(&content, old_text, new_text);
-
-        // 6. 写回文件
-        match fs::write(path, new_content) {
-            Ok(_) => Ok(format!(
-                "Successfully replaced '{}' with '{}' in {}",
-                old_text, new_text, file_path
-            )),
-            Err(e) => Ok(format!("Failed to write file: {}", e)),
-        }
+        // 3-6. Apply edit: read, replace, write back
+        Ok(Self::apply_edit_to_file(path, old_text, new_text))
     }
 
     fn get_system_prompt(&self) -> &str {
         r#"
-        - `edit`: Precise file editing through precise text replacement; Keep the old text block small and unique; Combine multiple edits in the same file into one edit call
+        - `edit`: Precise file editing through precise text replacement; Keep the old text block small and unique; Combine multiple edits in the same file into one edit call (default timeout: 150s, override via timeout param)
         "#
     }
 

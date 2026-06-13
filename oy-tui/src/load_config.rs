@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use oy_agent::{
     infrastructure::tools::{
-        ToolRegistry, bash::BashTool, edit::EditTool, read::ReadTool, uuid_tool::UuidTool,
-        write::WriteTool,
+        ToolRegistry, bash::BashTool, edit::EditTool, grep::GrepTool, read::ReadTool,
+        uuid_tool::UuidTool, write::WriteTool,
     },
     oy_ai::AiConfig,
 };
@@ -80,20 +80,6 @@ impl GlobalTomlConfig {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_config_default() {
-        let config = GlobalTomlConfig::default();
-        assert!(config.api_key.is_none());
-        assert!(config.base_url.is_none());
-        assert!(config.model.is_none());
-        assert!(config.theme.is_none());
-    }
-}
-
 pub fn build_provider_config(config: &GlobalTomlConfig) -> AiConfig {
     let api_key = config.api_key.clone().unwrap_or_else(|| {
         eprintln!(
@@ -137,4 +123,19 @@ pub fn register_default_tools(registry: &mut ToolRegistry) {
     registry.register(EditTool);
     registry.register(BashTool);
     registry.register(UuidTool);
+    registry.register(GrepTool);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_default() {
+        let config = GlobalTomlConfig::default();
+        assert!(config.api_key.is_none());
+        assert!(config.base_url.is_none());
+        assert!(config.model.is_none());
+        assert!(config.theme.is_none());
+    }
 }

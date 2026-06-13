@@ -136,6 +136,7 @@ pub struct App {
 }
 
 impl App {
+    #[allow(clippy::cognitive_complexity)]
     pub async fn new(session_path: Option<PathBuf>) -> Self {
         let mut messages = VecDeque::new();
         let global_toml_config = GlobalTomlConfig::load();
@@ -215,14 +216,14 @@ impl App {
                     ));
                     session_loaded = true;
                     uuid
-                }
+                },
                 Err(e) => {
                     messages.push_back(Message::UiMessages(format!(
                         "Failed to load session: {}. Starting fresh.",
                         e
                     )));
                     Uuid::now_v7()
-                }
+                },
             }
         } else {
             Uuid::now_v7()
@@ -377,10 +378,10 @@ impl App {
                         if key_event.kind == crossterm::event::KeyEventKind::Press =>
                     {
                         self.handle_key_events(key_event).await?
-                    }
+                    },
                     crossterm::event::Event::Paste(text) => {
                         self.handle_paste(&text);
-                    }
+                    },
                     crossterm::event::Event::Mouse(mouse_event) => match mouse_event.kind {
                         MouseEventKind::ScrollDown => {
                             let in_sub_area = !self.sub_agent_states.is_empty()
@@ -393,7 +394,7 @@ impl App {
                                 self.scroll_offset
                                     .set(self.scroll_offset.get().saturating_add(3));
                             }
-                        }
+                        },
                         MouseEventKind::ScrollUp => {
                             let in_sub_area = !self.sub_agent_states.is_empty()
                                 && mouse_event.row >= self.sub_agent_panel_y.get();
@@ -405,31 +406,31 @@ impl App {
                                     .set(self.scroll_offset.get().saturating_sub(3));
                                 self.auto_scroll.set(false);
                             }
-                        }
-                        _ => {}
+                        },
+                        _ => {},
                     },
-                    _ => {}
+                    _ => {},
                 },
                 Event::App(app_event) => match app_event {
                     AppEvent::Quit => self.quit(),
                     AppEvent::ChatMessage(chat_message) => {
                         self.handle_chat_message(chat_message).await;
-                    }
+                    },
                     AppEvent::TokenUsage(token_usage) => {
                         self.token_usage = token_usage;
-                    }
+                    },
                     AppEvent::AgentError(e) => {
                         self.insert_before_queued(UiMessages(format!("errors: {}", e)));
                         if self.auto_scroll.get() {
                             self.scroll_offset.set(u16::MAX);
                         }
-                    }
+                    },
                     AppEvent::Pause => {
                         self.agent_status.set(Status::Pause);
-                    }
+                    },
                     AppEvent::Running => {
                         self.agent_status.set(Status::Running);
-                    }
+                    },
                     AppEvent::PromptConsumed { id } => {
                         self.pending_prompts.retain(|x| *x != id);
                         // Remove the queuing message from the UI
@@ -440,7 +441,7 @@ impl App {
                         if self.auto_scroll.get() {
                             self.scroll_offset.set(u16::MAX);
                         }
-                    }
+                    },
                     AppEvent::PromptQueued { id } => {
                         // The Enter/Alt+Enter handler already added the Message::PromptQueued
                         // and pushed the id to pending_prompts. This event from the reactor
@@ -449,13 +450,14 @@ impl App {
                         if !self.pending_prompts.contains(&id) {
                             self.pending_prompts.push(id);
                         }
-                    }
+                    },
                 },
             }
         }
         Ok(())
     }
 
+    #[allow(clippy::cognitive_complexity)]
     async fn handle_chat_message(&mut self, chat_message: oy_agent::oy_ai::ChatMessage) {
         use oy_agent::oy_ai::Role;
 
@@ -497,6 +499,17 @@ impl App {
                     });
                 }
 
+                let default_timeout = if tc.function_name == "create_sub_agent" {
+                    900
+                } else {
+                    150
+                };
+                let timeout_secs = tc
+                    .arguments
+                    .get("timeout")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(default_timeout);
+
                 self.insert_before_queued(ToolCallMsg(ToolCallState {
                     function_name: tc.function_name.clone(),
                     arguments: if tc.function_name.eq("Read")
@@ -517,6 +530,16 @@ impl App {
                             .get("agent_type")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string())
+                    } else if tc.function_name.eq("grep") {
+                        tc.arguments
+                            .get("pattern")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                    } else if tc.function_name.eq("uuid") {
+                        tc.arguments
+                            .get("version")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
                     } else {
                         None
                     },
@@ -525,6 +548,7 @@ impl App {
                     start_time: Instant::now(),
                     end_time: None,
                     expanded: false,
+                    timeout_secs,
                 }));
             }
             if self.auto_scroll.get() {
@@ -601,12 +625,12 @@ impl App {
                     Message::AgentMessages(_, expanded) => {
                         *expanded = !*expanded;
                         break;
-                    }
+                    },
                     Message::ToolCallMsg(state) => {
                         state.expanded = !state.expanded;
                         break;
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
             }
             return Ok(());
@@ -617,12 +641,13 @@ impl App {
             AppMode::RevokeSelect => self.handle_key_revoke_select(key_event).await,
             AppMode::CommandSelector { selected, .. } => {
                 self.handle_key_command_selector(key_event, selected).await
-            }
+            },
             AppMode::ModelForm { .. } => self.handle_key_model_form(key_event).await,
             AppMode::SubMenu { .. } => self.handle_key_submenu(key_event).await,
         }
     }
 
+    #[allow(clippy::cognitive_complexity)]
     async fn handle_key_normal(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
         match key_event.code {
             KeyCode::Esc | KeyCode::Char('q') => self.events.send(AppEvent::Quit),
@@ -631,7 +656,7 @@ impl App {
                     && !self.pending_prompts.is_empty() =>
             {
                 self.app_mode = AppMode::RevokeSelect;
-            }
+            },
             KeyCode::Char('c' | 'C') if key_event.modifiers == KeyModifiers::CONTROL => {
                 if self.input.is_empty() {
                     self.events.send(AppEvent::Quit)
@@ -641,88 +666,10 @@ impl App {
                     // If input started with "/", exit command mode
                     self.app_mode = AppMode::Normal;
                 }
-            }
+            },
             KeyCode::Enter if !self.input.is_empty() => {
-                self.expand_paste_snippets();
-                let input = std::mem::take(&mut self.input);
-                self.cursor_pos = 0;
-                self.paste_counter = 0;
-                self.scroll_offset.set(u16::MAX);
-
-                // Determine prompt kind: Alt+Enter = AltEnter, Enter = Enter
-                let kind = if key_event.modifiers == KeyModifiers::ALT {
-                    PromptKind::AltEnter
-                } else {
-                    PromptKind::Enter
-                };
-
-                // Check for slash commands — exact match only, otherwise send as prompt
-                if input.starts_with('/') && self.execute_command(&input).await {
-                    // Handled as a command
-                } else if self.active_agent == AgentType::MainAgent {
-                    // ── Route to MainAgent ──
-                    if let Some(main_agent) = &self.main_agent {
-                        if self.pending_prompts.len() >= 9 {
-                            self.insert_before_queued(UiMessages(
-                                "Maximum 9 prompts can be queued. Press Ctrl+R then 1..9 to revoke a queued prompt first.".to_string()
-                            ));
-                            if self.auto_scroll.get() {
-                                self.scroll_offset.set(u16::MAX);
-                            }
-                            return Ok(());
-                        }
-
-                        let id = Uuid::now_v7();
-                        let _ = main_agent
-                            .request_sender
-                            .send(RequestAgent::Prompt {
-                                text: input.clone(),
-                                id,
-                                kind,
-                            })
-                            .await;
-                        self.pending_prompts.push(id);
-                        self.insert_before_queued(Message::PromptQueued { id, text: input });
-                    } else {
-                        self.insert_before_queued(UiMessages(
-                            "MainAgent not initialized. Please use /model to configure your API key and model first.".to_string()
-                        ));
-                    }
-                } else {
-                    // ── Route to CommanderAgent ──
-                    if let Some(cmd_agent) = &self.commander_agent {
-                        if self.pending_prompts.len() >= 9 {
-                            self.insert_before_queued(UiMessages(
-                                "Maximum 9 prompts can be queued. Press Ctrl+R then 1..9 to revoke a queued prompt first.".to_string()
-                            ));
-                            if self.auto_scroll.get() {
-                                self.scroll_offset.set(u16::MAX);
-                            }
-                            return Ok(());
-                        }
-
-                        let id = Uuid::now_v7();
-                        let _ = cmd_agent
-                            .request_sender
-                            .send(RequestAgent::Prompt {
-                                text: input.clone(),
-                                id,
-                                kind,
-                            })
-                            .await;
-                        self.pending_prompts.push(id);
-                        self.insert_before_queued(Message::PromptQueued { id, text: input });
-                    } else {
-                        self.insert_before_queued(UiMessages(
-                            "CommanderAgent not initialized.".to_string(),
-                        ));
-                    }
-                }
-
-                if self.auto_scroll.get() {
-                    self.scroll_offset.set(u16::MAX);
-                }
-            }
+                return self.handle_key_enter(key_event).await;
+            },
             KeyCode::Backspace if self.cursor_pos > 0 && !self.delete_paste_placeholder() => {
                 let len = self.input[..self.cursor_pos]
                     .chars()
@@ -736,7 +683,7 @@ impl App {
                 if self.input.is_empty() {
                     self.app_mode = AppMode::Normal;
                 }
-            }
+            },
             KeyCode::Left if self.cursor_pos > 0 => {
                 let len = self.input[..self.cursor_pos]
                     .chars()
@@ -744,7 +691,7 @@ impl App {
                     .map(|c| c.len_utf8())
                     .unwrap_or(0);
                 self.cursor_pos -= len;
-            }
+            },
             KeyCode::Right if self.cursor_pos < self.input.len() => {
                 let len = self.input[self.cursor_pos..]
                     .chars()
@@ -752,40 +699,40 @@ impl App {
                     .map(|c| c.len_utf8())
                     .unwrap_or(0);
                 self.cursor_pos += len;
-            }
+            },
             KeyCode::Up => {
                 let width = self.input_width.get() as usize;
                 if width > 0 {
                     self.move_cursor_up(width);
                 }
-            }
+            },
             KeyCode::Down => {
                 let width = self.input_width.get() as usize;
                 if width > 0 {
                     self.move_cursor_down(width);
                 }
-            }
+            },
             KeyCode::Char('v') if key_event.modifiers == KeyModifiers::CONTROL => {
                 self.paste_from_clipboard();
-            }
+            },
             KeyCode::Char('V')
                 if key_event.modifiers == KeyModifiers::CONTROL | KeyModifiers::SHIFT =>
             {
                 self.paste_from_clipboard();
-            }
+            },
             KeyCode::Char('v') if key_event.modifiers == KeyModifiers::ALT => {
                 self.paste_from_clipboard();
-            }
+            },
             KeyCode::Insert if key_event.modifiers == KeyModifiers::SHIFT => {
                 self.paste_from_clipboard();
-            }
+            },
             // Shift+Tab (BackTab) — switch between MainAgent and CommanderAgent
             KeyCode::BackTab => {
                 self.switch_agent().await;
-            }
+            },
             KeyCode::Tab if key_event.modifiers == KeyModifiers::SHIFT => {
                 self.switch_agent().await;
-            }
+            },
             // Ctrl+O is handled at top-level handle_key_events; do not re-handle here.
             KeyCode::Char(c) => {
                 self.input.insert(self.cursor_pos, c);
@@ -801,10 +748,83 @@ impl App {
                         scroll_offset: 0,
                     };
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
         Ok(())
+    }
+
+    /// Handle the Enter key press: expand snippets, execute commands or send prompts.
+    async fn handle_key_enter(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
+        self.expand_paste_snippets();
+        let input = std::mem::take(&mut self.input);
+        self.cursor_pos = 0;
+        self.paste_counter = 0;
+
+        // Determine prompt kind: Alt+Enter = AltEnter, Enter = Enter
+        let kind = if key_event.modifiers == KeyModifiers::ALT {
+            PromptKind::AltEnter
+        } else {
+            PromptKind::Enter
+        };
+
+        // Check for slash commands — exact match only, otherwise send as prompt
+        if input.starts_with('/') && self.execute_command(&input).await {
+            // Handled as a command
+        } else {
+            self.route_prompt(&input, kind).await;
+        }
+
+        if self.auto_scroll.get() {
+            self.scroll_offset.set(u16::MAX);
+        }
+        Ok(())
+    }
+
+    /// Route a prompt to the active agent (MainAgent or CommanderAgent).
+    async fn route_prompt(&mut self, input: &str, kind: PromptKind) {
+        let agent = match self.active_agent {
+            AgentType::MainAgent => &self.main_agent,
+            AgentType::CommanderAgent => &self.commander_agent,
+        };
+
+        let Some(agent_manager) = agent else {
+            let msg = if self.active_agent == AgentType::MainAgent {
+                "MainAgent not initialized. Please use /model to configure your API key and model first."
+            } else {
+                "CommanderAgent not initialized."
+            };
+            self.insert_before_queued(UiMessages(msg.to_string()));
+            if self.auto_scroll.get() {
+                self.scroll_offset.set(u16::MAX);
+            }
+            return;
+        };
+
+        if self.pending_prompts.len() >= 9 {
+            self.insert_before_queued(UiMessages(
+                "Maximum 9 prompts can be queued. Press Ctrl+R then 1..9 to revoke a queued prompt first.".to_string()
+            ));
+            if self.auto_scroll.get() {
+                self.scroll_offset.set(u16::MAX);
+            }
+            return;
+        }
+
+        let id = Uuid::now_v7();
+        let _ = agent_manager
+            .request_sender
+            .send(RequestAgent::Prompt {
+                text: input.to_string(),
+                id,
+                kind,
+            })
+            .await;
+        self.pending_prompts.push(id);
+        self.insert_before_queued(Message::PromptQueued {
+            id,
+            text: input.to_string(),
+        });
     }
 
     async fn handle_key_command_selector(
@@ -823,7 +843,7 @@ impl App {
                     selected: new_sel,
                     scroll_offset,
                 };
-            }
+            },
             KeyCode::Down => {
                 let new_sel = if selected >= max_idx { 0 } else { selected + 1 };
                 let scroll_offset = Self::adjust_scroll(new_sel, matches.len(), MAX_POPUP_ROWS);
@@ -831,7 +851,7 @@ impl App {
                     selected: new_sel,
                     scroll_offset,
                 };
-            }
+            },
             KeyCode::Enter if !matches.is_empty() => {
                 let cmd = matches[selected.min(max_idx)].name;
                 let input = std::mem::take(&mut self.input);
@@ -845,12 +865,12 @@ impl App {
                     self.cursor_pos = self.input.len();
                     self.execute_command(cmd).await;
                 }
-            }
+            },
             KeyCode::Esc => {
                 self.app_mode = AppMode::Normal;
                 self.input.clear();
                 self.cursor_pos = 0;
-            }
+            },
             KeyCode::Char(c) => {
                 self.input.insert(self.cursor_pos, c);
                 self.cursor_pos += c.len_utf8();
@@ -864,7 +884,7 @@ impl App {
                         scroll_offset: 0,
                     };
                 }
-            }
+            },
             KeyCode::Backspace if self.cursor_pos > 0 => {
                 let len = self.input[..self.cursor_pos]
                     .chars()
@@ -887,12 +907,13 @@ impl App {
                         };
                     }
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
         Ok(())
     }
 
+    #[allow(clippy::cognitive_complexity)]
     async fn handle_key_model_form(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
         // Clone the current mode to extract values, then mutate
         let snapshot = match &self.app_mode {
@@ -907,7 +928,7 @@ impl App {
                 self.input.clear();
                 self.cursor_pos = 0;
                 self.input_title.clear();
-            }
+            },
             KeyCode::Enter if !self.input.is_empty() => {
                 values[step] = std::mem::take(&mut self.input);
                 self.cursor_pos = 0;
@@ -937,8 +958,8 @@ impl App {
                                     self.scroll_offset.set(u16::MAX);
                                 }
                             }
-                        }
-                        _ => {}
+                        },
+                        _ => {},
                     }
                     self.app_mode = AppMode::Normal;
                     self.input_title.clear();
@@ -961,11 +982,11 @@ impl App {
                         _ => unreachable!(),
                     };
                 }
-            }
+            },
             KeyCode::Char(c) => {
                 self.input.insert(self.cursor_pos, c);
                 self.cursor_pos += c.len_utf8();
-            }
+            },
             KeyCode::Backspace if self.cursor_pos > 0 => {
                 let len = self.input[..self.cursor_pos]
                     .chars()
@@ -975,7 +996,7 @@ impl App {
                 self.input
                     .replace_range(self.cursor_pos - len..self.cursor_pos, "");
                 self.cursor_pos -= len;
-            }
+            },
             KeyCode::Left if self.cursor_pos > 0 => {
                 let len = self.input[..self.cursor_pos]
                     .chars()
@@ -983,7 +1004,7 @@ impl App {
                     .map(|c| c.len_utf8())
                     .unwrap_or(0);
                 self.cursor_pos -= len;
-            }
+            },
             KeyCode::Right if self.cursor_pos < self.input.len() => {
                 let len = self.input[self.cursor_pos..]
                     .chars()
@@ -991,8 +1012,8 @@ impl App {
                     .map(|c| c.len_utf8())
                     .unwrap_or(0);
                 self.cursor_pos += len;
-            }
-            _ => {}
+            },
+            _ => {},
         }
         Ok(())
     }
@@ -1275,7 +1296,7 @@ impl App {
                     selected: new_sel,
                     scroll_offset: new_scroll,
                 };
-            }
+            },
             KeyCode::Down => {
                 let new_sel = if selected >= max_idx { 0 } else { selected + 1 };
                 let new_scroll = Self::adjust_scroll(new_sel, items.len(), MAX_POPUP_ROWS);
@@ -1285,17 +1306,17 @@ impl App {
                     selected: new_sel,
                     scroll_offset: new_scroll,
                 };
-            }
+            },
             KeyCode::Enter if !items.is_empty() => {
                 let item = &items[selected.min(max_idx)];
                 self.execute_submenu_item(&title, &item.0).await;
-            }
+            },
             KeyCode::Esc => {
                 self.app_mode = AppMode::Normal;
                 self.input.clear();
                 self.cursor_pos = 0;
-            }
-            _ => {}
+            },
+            _ => {},
         }
         Ok(())
     }
@@ -1314,7 +1335,7 @@ impl App {
                     selected: 0,
                     scroll_offset: 0,
                 };
-            }
+            },
             "/settings" if item_name == "/thinking" => {
                 // Open thinking effort submenu
                 let items: Vec<(String, String)> = thinking_items()
@@ -1327,7 +1348,7 @@ impl App {
                     selected: 0,
                     scroll_offset: 0,
                 };
-            }
+            },
             "/settings" if item_name == "/context" => {
                 // Open context capacity submenu
                 let items: Vec<(String, String)> = context_items()
@@ -1340,7 +1361,7 @@ impl App {
                     selected: 0,
                     scroll_offset: 0,
                 };
-            }
+            },
             _ => {
                 // Collect all known leaf items
                 let matched_id = theme_items()
@@ -1366,7 +1387,7 @@ impl App {
                             values: [String::new(), String::new(), String::new(), String::new()],
                         };
                         return;
-                    }
+                    },
                     Some(CommandId::SetApiKey) => {
                         self.input_title = "API Key:".to_string();
                         self.app_mode = AppMode::ModelForm {
@@ -1374,7 +1395,7 @@ impl App {
                             values: [String::new(), String::new(), String::new(), String::new()],
                         };
                         return;
-                    }
+                    },
                     Some(CommandId::SetModel) => {
                         self.input_title = "Model:".to_string();
                         self.app_mode = AppMode::ModelForm {
@@ -1382,10 +1403,10 @@ impl App {
                             values: [String::new(), String::new(), String::new(), String::new()],
                         };
                         return;
-                    }
+                    },
                     Some(CommandId::ReadClaudeSkills) => {
                         self.switch_claude_skills().await;
-                    }
+                    },
                     Some(id)
                         if matches!(
                             id,
@@ -1405,7 +1426,7 @@ impl App {
                             _ => unreachable!(),
                         };
                         self.switch_reasoning_effort(effort).await;
-                    }
+                    },
                     Some(id)
                         if matches!(
                             id,
@@ -1443,7 +1464,7 @@ impl App {
                         } else {
                             self.switch_context_capacity(capacity).await;
                         }
-                    }
+                    },
                     _ => {
                         self.insert_before_queued(UiMessages(format!(
                             "Unknown submenu item: {}",
@@ -1452,12 +1473,12 @@ impl App {
                         if self.auto_scroll.get() {
                             self.scroll_offset.set(u16::MAX);
                         }
-                    }
+                    },
                 }
                 self.app_mode = AppMode::Normal;
                 self.input.clear();
                 self.cursor_pos = 0;
-            }
+            },
         }
     }
 
@@ -1651,7 +1672,7 @@ impl App {
             "base_url" => config.base_url = Some(value.to_string()),
             "api_key" => config.api_key = Some(value.to_string()),
             "model" => config.model = Some(value.to_string()),
-            _ => {}
+            _ => {},
         }
 
         if let Err(e) = config.save() {
@@ -1849,11 +1870,11 @@ impl App {
                 let target_number = (c as u8) - b'1' + 1;
                 self.revoke_prompt_by_number(target_number).await;
                 self.app_mode = AppMode::Normal;
-            }
+            },
             KeyCode::Esc | KeyCode::Enter => {
                 self.app_mode = AppMode::Normal;
-            }
-            _ => {}
+            },
+            _ => {},
         }
         Ok(())
     }
@@ -1946,7 +1967,7 @@ impl App {
                 AgentType::CommanderAgent => {
                     self.set_agent_messages(&self.commander_agent, &history)
                         .await
-                }
+                },
             }
         }
 

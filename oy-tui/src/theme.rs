@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn test_theme_fields_non_default() {
         for theme in [&DARK_THEME, &LIGHT_THEME] {
-            assert!(theme.name.len() > 0);
+            assert!(!theme.name.is_empty());
             assert_ne!(theme.accent, Color::Reset);
             assert_ne!(theme.subtle, Color::Reset);
             assert_ne!(theme.success, Color::Reset);

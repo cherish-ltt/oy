@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use crate::{
     Tool,
     domain::sub_agent::{SubAgentOutput, SubAgentType},
-    infrastructure::agents::sub_agent_runner::{SubAgentEvent, run_sub_agent},
+    infrastructure::agents::sub_agent_runner::{SubAgentConfig, SubAgentEvent, run_sub_agent},
     infrastructure::tools::ToolRegistry,
 };
 use oy_ai::AiProvider;
@@ -38,42 +38,12 @@ impl CreateSubAgentTool {
         self.progress_tx = Some(tx);
         self
     }
-}
 
-impl Tool for CreateSubAgentTool {
-    fn name(&self) -> &'static str {
-        "create_sub_agent"
-    }
-
-    fn description(&self) -> &'static str {
-        "Create and run a sub-agent (planner/worker/reviewer/git_helper) for task execution"
-    }
-
-    fn schema(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "agent_type": {
-                    "type": "string",
-                    "description": "Type of sub-agent to create: planner, worker, reviewer, or git_helper",
-                    "enum": ["planner", "worker", "reviewer", "git_helper"]
-                },
-                "task": {
-                    "type": "string",
-                    "description": "The task description for the sub-agent"
-                },
-                "context": {
-                    "type": "string",
-                    "description": "Optional context (e.g., plan file path for worker)",
-                    "default": ""
-                }
-            },
-            "required": ["agent_type", "task"]
-        })
-    }
-
-    fn execute(&self, args: Value) -> Result<String, crate::AgentError> {
-        // Parse arguments
+    /// Parse and validate the tool call arguments.
+    fn parse_args(
+        &self,
+        args: &Value,
+    ) -> Result<(SubAgentType, String, Option<String>), crate::AgentError> {
         let agent_type_str = args
             .get("agent_type")
             .and_then(|v| v.as_str())
@@ -100,10 +70,12 @@ impl Tool for CreateSubAgentTool {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
 
-        // Create a dedicated current_thread runtime for this sub-agent execution.
-        // Cannot use Handle::current().block_on() here because we may be inside a
-        // nested tokio::spawn where Handle::current() is unavailable or panics.
-        let rt = tokio::runtime::Builder::new_current_thread()
+        Ok((agent_type, task.to_string(), context))
+    }
+
+    /// Create a new current_thread runtime for executing the sub-agent.
+    fn create_runtime(&self) -> Result<tokio::runtime::Runtime, crate::AgentError> {
+        tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(|e| {
@@ -111,43 +83,76 @@ impl Tool for CreateSubAgentTool {
                     "Failed to create sub-agent runtime: {}",
                     e
                 ))
-            })?;
+            })
+    }
+}
 
-        let result: SubAgentOutput = rt.block_on(run_sub_agent(
-            agent_type,
-            task.to_string(),
-            context,
-            self.provider.clone(),
-            self.tool_registry.clone(),
-            self.progress_tx.clone(),
-        ));
+impl Tool for CreateSubAgentTool {
+    fn name(&self) -> &'static str {
+        "create_sub_agent"
+    }
 
-        // Format the output for CommanderAgent consumption
-        if result.success {
-            Ok(format!(
-                "[{} 完成 - {} 轮]\n{}\n{}",
-                agent_type,
-                result.rounds_used,
-                result.summary,
-                match agent_type {
-                    SubAgentType::Planner => "计划已创建，Worker 可引用此计划文件。",
-                    SubAgentType::Worker => "代码已产出，Reviewer 可审查。",
-                    SubAgentType::Reviewer => "审查完成，请检查 '通过: 是/否' 决定下一步。",
-                    SubAgentType::GitHelper => "代码已提交。",
+    fn description(&self) -> &'static str {
+        "Create and run a sub-agent (planner/worker/reviewer/git_helper) for task execution"
+    }
+
+    fn default_timeout(&self) -> u64 {
+        900 // 15 minutes
+    }
+
+    fn schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "agent_type": {
+                    "type": "string",
+                    "description": "Type of sub-agent to create: planner, worker, reviewer, or git_helper (commit/issue/PR)",
+                    "enum": ["planner", "worker", "reviewer", "git_helper"]
+                },
+                "task": {
+                    "type": "string",
+                    "description": "The task description for the sub-agent"
+                },
+                "context": {
+                    "type": "string",
+                    "description": "Optional context (e.g., plan file path for worker)",
+                    "default": ""
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Optional timeout in seconds (default: 900). Sub-agents need longer time.",
+                    "default": 900
                 }
-            ))
-        } else {
-            let err = result.error.unwrap_or_else(|| "Unknown error".into());
-            Ok(format!(
-                "[{} 失败 - {} 轮]\n错误: {}",
-                agent_type, result.rounds_used, err
-            ))
-        }
+            },
+            "required": ["agent_type", "task"]
+        })
+    }
+
+    fn execute(&self, args: Value) -> Result<String, crate::AgentError> {
+        // Parse arguments
+        let (agent_type, task, context) = self.parse_args(&args)?;
+
+        // Create a dedicated current_thread runtime for this sub-agent execution.
+        // Cannot use Handle::current().block_on() here because we may be inside a
+        // nested tokio::spawn where Handle::current() is unavailable or panics.
+        let rt = self.create_runtime()?;
+
+        let result: SubAgentOutput = rt.block_on(run_sub_agent(SubAgentConfig {
+            agent_type,
+            task,
+            context,
+            provider: self.provider.clone(),
+            tool_registry: self.tool_registry.clone(),
+            progress_tx: self.progress_tx.clone(),
+        }));
+
+        Ok(format_sub_agent_result(&result, &agent_type))
     }
 
     fn get_system_prompt(&self) -> &str {
-        "## create_sub_agent\n
-         Create a sub-agent to execute a task.\n
+        "## create_sub_agent\n\
+         Create a sub-agent to execute a task.\n\
+         Default timeout: 900s (15 min). Increase via `timeout` parameter for complex tasks.\n\
          The sub-agent runs with its own system prompt and iteration limit, and returns the result."
     }
 
@@ -157,5 +162,29 @@ impl Tool for CreateSubAgentTool {
             tool_registry: self.tool_registry.clone(),
             progress_tx: self.progress_tx.clone(),
         })
+    }
+}
+
+/// Format the sub-agent output for CommanderAgent consumption.
+fn format_sub_agent_result(result: &SubAgentOutput, agent_type: &SubAgentType) -> String {
+    if result.success {
+        format!(
+            "[{} 完成 - {} 轮]\n{}\n{}",
+            agent_type,
+            result.rounds_used,
+            result.summary,
+            match agent_type {
+                SubAgentType::Planner => "计划已创建，Worker 可引用此计划文件。",
+                SubAgentType::Worker => "代码已产出，Reviewer 可审查。",
+                SubAgentType::Reviewer => "审查完成，请检查 '通过: 是/否' 决定下一步。",
+                SubAgentType::GitHelper => "操作已完成（commit/issue/PR）。",
+            }
+        )
+    } else {
+        let err = result.error.as_deref().unwrap_or("Unknown error");
+        format!(
+            "[{} 失败 - {} 轮]\n错误: {}",
+            agent_type, result.rounds_used, err
+        )
     }
 }

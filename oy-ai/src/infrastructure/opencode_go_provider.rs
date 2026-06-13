@@ -56,42 +56,41 @@ impl AiProvider for OpenCodeGoProvider {
             .await
             .map_err(|e| AiError::ApiError(e.to_string()))?;
 
-        let message = &response["choices"][0]["message"];
+        Ok(parse_chat_response(&response))
+    }
+}
 
-        let role = match message["role"].as_str() {
-            Some("assistant") => crate::domain::chat_message::Role::Assistant,
-            _ => crate::domain::chat_message::Role::Assistant,
-        };
+/// Parse the OpenRouter API response into a ChatMessage.
+fn parse_chat_response(response: &Value) -> ChatMessage {
+    let message = &response["choices"][0]["message"];
+    let content = message["content"].as_str().map(|s| s.to_string());
+    let reasoning_content = message["reasoning_content"].as_str().map(|s| s.to_string());
+    let tool_calls = message["tool_calls"].as_array().map(|calls| {
+        calls
+            .iter()
+            .map(|tc| {
+                let args: Value =
+                    serde_json::from_str(tc["function"]["arguments"].as_str().unwrap_or("{}"))
+                        .unwrap_or(json!({}));
+                ToolCall {
+                    id: tc["id"].as_str().unwrap_or_default().to_string(),
+                    function_name: tc["function"]["name"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string(),
+                    arguments: args,
+                }
+            })
+            .collect()
+    });
 
-        let content = message["content"].as_str().map(|s| s.to_string());
-        let reasoning_content = message["reasoning_content"].as_str().map(|s| s.to_string());
-
-        let tool_calls = message["tool_calls"].as_array().map(|calls| {
-            calls
-                .iter()
-                .map(|tc| {
-                    let arguments_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
-                    let arguments: Value = serde_json::from_str(arguments_str).unwrap_or(json!({}));
-                    ToolCall {
-                        id: tc["id"].as_str().unwrap_or_default().to_string(),
-                        function_name: tc["function"]["name"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .to_string(),
-                        arguments,
-                    }
-                })
-                .collect()
-        });
-
-        Ok(ChatMessage {
-            role,
-            content,
-            reasoning_content,
-            tool_calls,
-            tool_call_id: None,
-            function_name: None,
-            tool_call_arguments: None,
-        })
+    ChatMessage {
+        role: crate::domain::chat_message::Role::Assistant,
+        content,
+        reasoning_content,
+        tool_calls,
+        tool_call_id: None,
+        function_name: None,
+        tool_call_arguments: None,
     }
 }

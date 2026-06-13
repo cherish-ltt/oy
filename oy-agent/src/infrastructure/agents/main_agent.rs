@@ -148,6 +148,14 @@ impl Agent for MainAgent {
         }
     }
 
+    fn insert_message_front(&mut self, uuid: Uuid, msg: ChatMessage) -> Result<(), AgentError> {
+        self.messages.push_front(msg);
+        match self.save_session(uuid) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
     fn messages(&mut self) -> &[ChatMessage] {
         self.messages.make_contiguous()
     }
@@ -188,7 +196,7 @@ impl Agent for MainAgent {
                     .replace(['/', '\\'], "-")
                     .replace(':', "");
                 save_session(uuid, self.messages().iter().collect(), &path)
-            }
+            },
             Err(e) => Err(AgentError::ToolExecutionError(e.to_string())),
         }
     }
@@ -329,6 +337,26 @@ mod tests {
     }
 
     #[test]
+    fn test_replace_messages_empty_self_filters_source_system() {
+        let mut agent = new_agent();
+        // No messages in agent initially
+
+        let source_msgs = vec![
+            ChatMessage::system("You are a helper"),
+            ChatMessage::user("first"),
+            ChatMessage::assistant(Some("second".to_string()), None, None),
+        ];
+
+        agent.replace_messages(source_msgs);
+
+        assert_eq!(agent.messages().len(), 2);
+        assert_eq!(agent.messages()[0].role, oy_ai::Role::User);
+        assert_eq!(agent.messages()[0].content.as_deref(), Some("first"));
+        assert_eq!(agent.messages()[1].role, oy_ai::Role::Assistant);
+        assert_eq!(agent.messages()[1].content.as_deref(), Some("second"));
+    }
+
+    #[test]
     fn test_replace_messages_no_system_in_source() {
         let mut agent = new_agent();
         let uuid = Uuid::now_v7();
@@ -355,5 +383,47 @@ mod tests {
             agent.messages()[2].content.as_deref(),
             Some("assistant reply")
         );
+    }
+
+    #[test]
+    fn test_insert_message_front() {
+        let mut agent = new_agent();
+        let uuid = Uuid::now_v7();
+
+        // 先 push 一条 system 消息到末尾
+        let _ = agent.push_message_back(uuid, ChatMessage::system("system prompt"));
+        assert_eq!(agent.messages().len(), 1);
+        assert_eq!(agent.messages()[0].role, oy_ai::Role::System);
+
+        // 在开头插入一条 user 消息
+        let _ = agent.insert_message_front(uuid, ChatMessage::user("front user"));
+        assert_eq!(agent.messages().len(), 2);
+        assert_eq!(
+            agent.messages()[0].role,
+            oy_ai::Role::User,
+            "user message should be at index 0 after insert_front"
+        );
+        assert_eq!(agent.messages()[0].content.as_deref(), Some("front user"));
+        assert_eq!(
+            agent.messages()[1].role,
+            oy_ai::Role::System,
+            "system message should be pushed to index 1"
+        );
+        assert_eq!(
+            agent.messages()[1].content.as_deref(),
+            Some("system prompt")
+        );
+    }
+
+    #[test]
+    fn test_insert_message_front_empty() {
+        let mut agent = new_agent();
+        let uuid = Uuid::now_v7();
+
+        // 空列表中 insert_front
+        let _ = agent.insert_message_front(uuid, ChatMessage::user("only message"));
+        assert_eq!(agent.messages().len(), 1);
+        assert_eq!(agent.messages()[0].role, oy_ai::Role::User);
+        assert_eq!(agent.messages()[0].content.as_deref(), Some("only message"));
     }
 }

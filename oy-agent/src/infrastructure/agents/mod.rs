@@ -2,7 +2,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use futures::{StreamExt, stream::FuturesUnordered};
-use oy_ai::{AiProvider, ChatMessage};
+use oy_ai::{AiProvider, ChatMessage, Role};
 use tokio::{
     sync::mpsc::{Receiver, Sender},
     task::JoinHandle,
@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     AgentError,
-    agent::{AgentCore, AgentEvent, AgentState, ResponseAgent},
+    agent::{AgentCore, AgentEvent, AgentState, PromptRequest, ResponseAgent},
     domain::{
         sub_agent::SubAgentType,
         token_counter::{TokenUsage, count_input_side_tokens, count_output_side_tokens},
@@ -21,7 +21,7 @@ use crate::{
 
 use self::{
     reactor::{WorkerCommand, WorkerEvent},
-    sub_agent_runner::run_sub_agent,
+    sub_agent_runner::{SubAgentConfig, run_sub_agent},
 };
 
 pub mod commander_agent;
@@ -44,6 +44,12 @@ pub(crate) struct Worker {
     sub_provider: Option<Arc<dyn AiProvider + Send + Sync>>,
     /// File-only tool registry for sub-agents (None for MainAgent)
     sub_tool_registry: Option<Arc<ToolRegistry>>,
+}
+
+/// Parameters for resuming an existing Worker session.
+pub(crate) struct SessionConfig {
+    pub uuid: Uuid,
+    pub initial_messages: Vec<ChatMessage>,
 }
 
 impl Worker {
@@ -72,16 +78,16 @@ impl Worker {
 
     /// Create a Worker that resumes an existing session with a specific UUID
     /// and pre-loaded message history.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn with_session(
         agent: impl AgentCore + 'static,
         provider: impl AiProvider + 'static,
         tool_registry: ToolRegistry,
         cmd_rx: Receiver<WorkerCommand>,
         event_tx: Sender<WorkerEvent>,
-        session_uuid: Uuid,
-        initial_messages: Vec<ChatMessage>,
+        session: SessionConfig,
     ) -> Self {
-        let uuid = session_uuid;
+        let uuid = session.uuid;
         let mut worker = Self {
             uuid,
             agent: Box::new(agent),
@@ -97,7 +103,7 @@ impl Worker {
         };
         // Pre-load historical messages — push_message_back handles
         // persisting to the session file with the correct uuid.
-        for msg in initial_messages {
+        for msg in session.initial_messages {
             let _ = worker.agent.push_message_back(worker.uuid, msg);
         }
         worker
@@ -130,122 +136,150 @@ impl Worker {
     }
 
     pub(crate) async fn run(&mut self) {
-        let mut result;
         loop {
             // Drain instant commands only in non-Idle states.
             // In Idle state, commands must go through recv() in the Idle branch
             // to properly trigger state machine transitions via assembly_prompts.
             if *self.agent.current_state() != AgentState::Idle {
-                loop {
-                    match self.cmd_rx.try_recv() {
-                        Ok(WorkerCommand::GetMessages { tx }) => {
-                            let msgs = self.agent.messages().to_vec();
-                            let _ = tx.send(msgs);
-                        }
-                        Ok(WorkerCommand::SetMessages(msgs)) => {
-                            self.agent.replace_messages(msgs);
-                        }
-                        Ok(WorkerCommand::SetProvider(provider)) => {
-                            self.provider = provider;
-                        }
-                        Ok(WorkerCommand::SetSkills(skills)) => {
-                            self.agent.set_skills(skills);
-                        }
-                        Ok(WorkerCommand::Prompt { text, .. }) => {
-                            // Inject as user message immediately so nothing is lost.
-                            let _ = self.inject_user_message(&text).await;
-                        }
-                        Ok(WorkerCommand::FlushEnterQueue(requests)) => {
-                            for pr in &requests {
-                                if self.inject_user_message(&pr.text).await.is_err() {
-                                    break;
-                                }
-                            }
-                        }
-                        Err(_) => break,
-                    }
-                }
+                self.try_drain_commands().await;
             }
 
-            match self.agent.current_state() {
+            let result = match self.agent.current_state() {
                 AgentState::Idle => match self.cmd_rx.recv().await {
-                    Some(cmd) => match cmd {
-                        WorkerCommand::Prompt { text, .. } => {
-                            result = self.assembly_prompts(&text).await;
-                        }
-                        WorkerCommand::FlushEnterQueue(requests) => {
-                            // Process every prompt so none are lost; collect last error.
-                            let mut last_error = None;
-                            for pr in &requests {
-                                if let Err(e) = self.assembly_prompts(&pr.text).await {
-                                    last_error = Some(e);
-                                }
-                            }
-                            result = match last_error {
-                                Some(e) => Err(e),
-                                None => Ok(AgentEvent::Start),
-                            };
-                        }
-                        WorkerCommand::SetProvider(ai_provider) => {
-                            result = self.set_provider(ai_provider);
-                        }
-                        WorkerCommand::SetSkills(skills) => {
-                            self.agent.set_skills(skills);
-                            continue;
-                        }
-                        WorkerCommand::GetMessages { tx } => {
-                            let msgs = self.agent.messages().to_vec();
-                            let _ = tx.send(msgs);
-                            continue;
-                        }
-                        WorkerCommand::SetMessages(msgs) => {
-                            self.agent.replace_messages(msgs);
-                            continue;
-                        }
+                    Some(cmd) => match self.handle_idle_cmd(cmd).await {
+                        Some(r) => r,
+                        None => continue,
                     },
-                    None => break,
+                    None => return,
                 },
-                AgentState::Thinking => result = self.thinking().await,
-                AgentState::Acting => result = self.acting().await,
+                AgentState::Thinking => self.thinking().await,
+                AgentState::Acting => self.acting().await,
                 AgentState::ToolCall => {
-                    result = self.tool_call().await;
+                    let r = self.tool_call().await;
                     // After collecting tool results, drain any queued Enter prompts.
                     // They get injected as user messages alongside tool results,
                     // before the next Thinking (LLM call).
-                    if result.is_ok() {
+                    if r.is_ok() {
                         self.drain_pending_commands().await;
                     }
-                }
-                AgentState::Observing => result = self.observing().await,
-            }
+                    r
+                },
+                AgentState::Observing => self.observing().await,
+            };
 
-            match result {
-                Ok(event) => {
-                    if let Some(agent_state) =
-                        self.agent.next_state(self.agent.current_state(), &event)
-                    {
-                        let old_state = self.agent.current_state().clone();
-                        self.agent.set_state(agent_state);
-                        let new_state = self.agent.current_state();
-                        if *new_state != old_state {
-                            self.notify_state(new_state.clone()).await;
+            self.process_result(result).await;
+        }
+    }
+
+    /// Drain queued commands without blocking (non-Idle states).
+    async fn try_drain_commands(&mut self) {
+        loop {
+            match self.cmd_rx.try_recv() {
+                Ok(WorkerCommand::GetMessages { tx }) => {
+                    let msgs = self.agent.messages().to_vec();
+                    let _ = tx.send(msgs);
+                },
+                Ok(WorkerCommand::SetMessages(msgs)) => {
+                    self.agent.replace_messages(msgs);
+                },
+                Ok(WorkerCommand::SetProvider(provider)) => {
+                    self.provider = provider;
+                },
+                Ok(WorkerCommand::SetSkills(skills)) => {
+                    self.agent.set_skills(skills);
+                },
+                Ok(WorkerCommand::Prompt { text, .. }) => {
+                    // Inject as user message immediately so nothing is lost.
+                    let _ = self.inject_user_message(&text).await;
+                },
+                Ok(WorkerCommand::FlushEnterQueue(requests)) => {
+                    for pr in &requests {
+                        if self.inject_user_message(&pr.text).await.is_err() {
+                            break;
                         }
                     }
-                }
-                Err(e) => {
-                    if let Some(agent_state) = self
-                        .agent
-                        .next_state(self.agent.current_state(), &self.handle_error(e).await)
-                    {
-                        let old_state = self.agent.current_state().clone();
-                        self.agent.set_state(agent_state);
-                        let new_state = self.agent.current_state();
-                        if *new_state != old_state {
-                            self.notify_state(new_state.clone()).await;
-                        }
-                    }
-                }
+                },
+                Err(_) => break,
             }
+        }
+    }
+
+    /// Handle a single command received in Idle state.
+    ///
+    /// Returns `Some(result)` if the command should be processed through the state machine,
+    /// or `None` if the command was handled and the outer loop should continue without
+    /// a state transition (e.g. SetSkills, GetMessages, SetMessages).
+    async fn handle_idle_cmd(
+        &mut self,
+        cmd: WorkerCommand,
+    ) -> Option<Result<AgentEvent, AgentError>> {
+        match cmd {
+            WorkerCommand::Prompt { text, .. } => Some(self.assembly_prompts(&text).await),
+            WorkerCommand::FlushEnterQueue(requests) => {
+                self.handle_flush_enter_queue(requests).await
+            },
+            WorkerCommand::SetProvider(ai_provider) => Some(self.set_provider(ai_provider)),
+            WorkerCommand::SetSkills(skills) => {
+                self.agent.set_skills(skills);
+                None
+            },
+            WorkerCommand::GetMessages { tx } => {
+                let msgs = self.agent.messages().to_vec();
+                let _ = tx.send(msgs);
+                None
+            },
+            WorkerCommand::SetMessages(msgs) => {
+                self.agent.replace_messages(msgs);
+                None
+            },
+        }
+    }
+
+    /// Process all queued prompts from a FlushEnterQueue command.
+    /// Returns the last error encountered, or Ok(Start) if all succeeded.
+    async fn handle_flush_enter_queue(
+        &mut self,
+        requests: Vec<PromptRequest>,
+    ) -> Option<Result<AgentEvent, AgentError>> {
+        let mut last_error = None;
+        for pr in &requests {
+            if let Err(e) = self.assembly_prompts(&pr.text).await {
+                last_error = Some(e);
+            }
+        }
+        Some(match last_error {
+            Some(e) => Err(e),
+            None => Ok(AgentEvent::Start),
+        })
+    }
+
+    /// Process a state machine result: transition to the next state and notify.
+    async fn process_result(&mut self, result: Result<AgentEvent, AgentError>) {
+        match result {
+            Ok(event) => {
+                if let Some(agent_state) = self.agent.next_state(self.agent.current_state(), &event)
+                {
+                    let old_state = self.agent.current_state().clone();
+                    self.agent.set_state(agent_state);
+                    let new_state = self.agent.current_state();
+                    if *new_state != old_state {
+                        self.notify_state(new_state.clone()).await;
+                    }
+                }
+            },
+            Err(e) => {
+                if let Some(agent_state) = self
+                    .agent
+                    .next_state(self.agent.current_state(), &self.handle_error(e).await)
+                {
+                    let old_state = self.agent.current_state().clone();
+                    self.agent.set_state(agent_state);
+                    let new_state = self.agent.current_state();
+                    if *new_state != old_state {
+                        self.notify_state(new_state.clone()).await;
+                    }
+                }
+            },
         }
     }
 
@@ -256,14 +290,16 @@ impl Worker {
     }
 
     async fn assembly_prompts(&mut self, prompt: &String) -> Result<AgentEvent, AgentError> {
-        if self.agent.get_front_message().is_none() {
-            self.agent.push_message_back(
-                self.uuid,
-                ChatMessage::system(
-                    self.agent
-                        .get_system_prompt(&self.tool_registry.get_tools_system_prompt()),
-                ),
-            )?;
+        let needs_system_prompt = match self.agent.get_front_message() {
+            None => true,
+            Some(msg) => msg.role != Role::System,
+        };
+        if needs_system_prompt {
+            let system_msg = ChatMessage::system(
+                self.agent
+                    .get_system_prompt(&self.tool_registry.get_tools_system_prompt()),
+            );
+            self.agent.insert_message_front(self.uuid, system_msg)?;
         }
         self.agent
             .push_message_back(self.uuid, ChatMessage::user(prompt.clone()))?;
@@ -279,10 +315,14 @@ impl Worker {
         self.send_event_async(WorkerEvent::Response(ResponseAgent::Running))
             .await;
 
-        let response = self
+        let mut response = self
             .provider
             .chat(self.agent.messages(), &self.tool_registry.get_schemas())
             .await?;
+
+        // Inject default_timeout into each tool call's arguments so the TUI
+        // can display the correct timeout (instead of a hardcoded fallback).
+        self.inject_tool_default_timeouts(&mut response);
 
         // Push response to messages first so all counts are accurate
         self.agent.push_message_back(self.uuid, response.clone())?;
@@ -313,142 +353,153 @@ impl Worker {
     async fn acting(&mut self) -> Result<AgentEvent, AgentError> {
         match self.agent.get_back_message() {
             Some(chat_message) => {
-                if chat_message
-                    .tool_calls
-                    .as_ref()
-                    .is_some_and(|c| !c.is_empty())
+                if let Some(tool_calls) = chat_message.tool_calls.clone().filter(|c| !c.is_empty())
                 {
                     let tasks = FuturesUnordered::new();
-                    for tool_call in chat_message.tool_calls.clone().unwrap() {
+                    for tool_call in tool_calls {
                         // Special handling: create_sub_agent runs as async sub-agent
                         // via tokio::spawn + .await, not via sync Tool::execute.
                         if tool_call.function_name == "create_sub_agent"
                             && self.sub_provider.is_some()
                         {
-                            let tc_id = tool_call.id.clone();
-                            let tc_name = tool_call.function_name.clone();
-                            let tc_args = tool_call.arguments.clone();
-                            let provider = self.sub_provider.clone().unwrap();
-                            let registry = self.sub_tool_registry.clone().unwrap();
-
-                            tasks.push(tokio::spawn(async move {
-                                // Parse arguments
-                                let agent_type_str = tc_args
-                                    .get("agent_type")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("planner");
-                                let task =
-                                    tc_args.get("task").and_then(|v| v.as_str()).unwrap_or("");
-                                let context = tc_args
-                                    .get("context")
-                                    .and_then(|v| v.as_str())
-                                    .filter(|s| !s.is_empty())
-                                    .map(|s| s.to_string());
-
-                                let agent_type = SubAgentType::from_str(agent_type_str)
-                                    .unwrap_or(SubAgentType::Planner);
-
-                                let output = run_sub_agent(
-                                    agent_type,
-                                    task.to_string(),
-                                    context,
-                                    provider,
-                                    registry,
-                                    None,
-                                )
-                                .await;
-
-                                let result_str = if output.success {
-                                    format!(
-                                        "[{} 完成 - {} 轮]\n{}\n{}",
-                                        agent_type,
-                                        output.rounds_used,
-                                        output.summary,
-                                        match agent_type {
-                                            SubAgentType::Planner =>
-                                                "计划已创建，Worker 可引用此计划文件。",
-                                            SubAgentType::Worker => "代码已产出，Reviewer 可审查。",
-                                            SubAgentType::Reviewer =>
-                                                "审查完成，请检查 '通过: 是/否' 决定下一步。",
-                                            SubAgentType::GitHelper => "代码已提交。",
-                                        }
-                                    )
-                                } else {
-                                    let err = output.error.unwrap_or_default();
-                                    format!(
-                                        "[{} 失败 - {} 轮]\n错误: {}",
-                                        agent_type, output.rounds_used, err
-                                    )
-                                };
-
-                                ChatMessage::tool(result_str, tc_id, Some(tc_name), Some(tc_args))
-                            }));
+                            tasks.push(self.spawn_sub_agent_task(tool_call));
                         } else {
-                            match self.tool_registry.get_clone(&tool_call.function_name) {
-                                Some(t) => {
-                                    // Clone metadata BEFORE the async move so we can
-                                    // produce a ChatMessage::tool even if the task panics.
-                                    let tc_id = tool_call.id.clone();
-                                    let tc_name = tool_call.function_name.clone();
-                                    let tc_args = tool_call.arguments.clone();
-                                    tasks.push(tokio::spawn(async move {
-                                        // catch_unwind prevents panics from becoming
-                                        // JoinErrors that would lose the tool_call metadata.
-                                        let result =
-                                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-                                                || t.execute(tc_args.clone()),
-                                            ));
-                                        let output = match result {
-                                            Ok(Ok(r)) => r,
-                                            Ok(Err(e)) => format!("Error: {}", e),
-                                            Err(panic) => {
-                                                let msg = panic
-                                                    .downcast_ref::<String>()
-                                                    .map(|s| s.as_str())
-                                                    .or_else(|| {
-                                                        panic.downcast_ref::<&str>().copied()
-                                                    })
-                                                    .unwrap_or("unknown panic");
-                                                format!("Internal error: {}", msg)
-                                            }
-                                        };
-                                        ChatMessage::tool(
-                                            output,
-                                            tc_id,
-                                            Some(tc_name),
-                                            Some(tc_args),
-                                        )
-                                    }));
-                                }
-                                None => {
-                                    tasks.push(tokio::spawn(async move {
-                                        ChatMessage::tool(
-                                            format!(
-                                                "Error: Unknown tool: {}",
-                                                tool_call.function_name
-                                            ),
-                                            tool_call.id,
-                                            Some(tool_call.function_name),
-                                            Some(tool_call.arguments),
-                                        )
-                                    }));
-                                }
-                            };
+                            tasks.push(self.spawn_regular_tool_task(tool_call));
                         }
                     }
                     self.tool_tasks = Some(tasks);
                     return Ok(AgentEvent::ToolCallsRequired);
                 }
                 // 如果没有工具调用，继续执行最后的 TaskCompleted
-            }
+            },
             None => {
                 return Err(AgentError::ChatMessageError(
                     "Chat Message cannot be extracted".to_owned(),
                 ));
-            }
+            },
         }
 
         Ok(AgentEvent::TaskCompleted)
+    }
+
+    /// Format the sub-agent execution output into a ChatMessage for the LLM.
+    fn format_sub_agent_result(
+        tc_id: String,
+        tc_name: String,
+        tc_args: serde_json::Value,
+        output: crate::domain::sub_agent::SubAgentOutput,
+        agent_type: SubAgentType,
+    ) -> ChatMessage {
+        let result_str = if output.success {
+            format!(
+                "[{} 完成 - {} 轮]\n{}\n{}",
+                agent_type,
+                output.rounds_used,
+                output.summary,
+                match agent_type {
+                    SubAgentType::Planner => "计划已创建，Worker 可引用此计划文件。",
+                    SubAgentType::Worker => "代码已产出，Reviewer 可审查。",
+                    SubAgentType::Reviewer => {
+                        "审查完成，请检查 '通过: 是/否' 决定下一步。"
+                    },
+                    SubAgentType::GitHelper => "操作已完成（commit/issue/PR）。",
+                }
+            )
+        } else {
+            let err = output.error.unwrap_or_default();
+            format!(
+                "[{} 失败 - {} 轮]\n错误: {}",
+                agent_type, output.rounds_used, err
+            )
+        };
+
+        ChatMessage::tool(result_str, tc_id, Some(tc_name), Some(tc_args))
+    }
+
+    /// Spawn a tokio task that runs a sub-agent for the create_sub_agent tool call.
+    fn spawn_sub_agent_task(
+        &self,
+        tool_call: oy_ai::ToolCall,
+    ) -> tokio::task::JoinHandle<ChatMessage> {
+        let timeout_secs = tool_call
+            .arguments
+            .get("timeout")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(900);
+
+        if let (Some(provider), Some(registry)) =
+            (self.sub_provider.clone(), self.sub_tool_registry.clone())
+        {
+            spawn_sub_agent_inner(tool_call, provider, registry, timeout_secs)
+        } else {
+            let tc_id = tool_call.id.clone();
+            let tc_name = tool_call.function_name.clone();
+            tokio::spawn(async move {
+                ChatMessage::tool(
+                    "Error: Sub-agent dependencies not configured. Call set_sub_agent_deps first."
+                        .to_string(),
+                    tc_id,
+                    Some(tc_name),
+                    None,
+                )
+            })
+        }
+    }
+
+    /// Inject each tool's `default_timeout()` into tool call arguments if not
+    /// already set by the LLM. This lets the TUI display the correct timeout
+    /// for every tool instead of falling back to a hardcoded value.
+    fn inject_tool_default_timeouts(&self, response: &mut ChatMessage) {
+        let Some(tool_calls) = &mut response.tool_calls else {
+            return;
+        };
+        for tc in tool_calls {
+            if tc
+                .arguments
+                .get("timeout")
+                .and_then(|v| v.as_u64())
+                .is_none()
+                && let Some(tool) = self.tool_registry.get_clone(&tc.function_name)
+                && tc.arguments.is_object()
+            {
+                tc.arguments["timeout"] = serde_json::json!(tool.default_timeout());
+            }
+        }
+    }
+
+    /// Execute a tool synchronously (via catch_unwind) and produce a ChatMessage.
+    fn execute_tool(
+        t: Box<dyn crate::domain::tool::Tool + Send>,
+        tc_args: serde_json::Value,
+        tc_id: String,
+        tc_name: String,
+    ) -> ChatMessage {
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.execute(tc_args.clone())));
+        let output = match result {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => format!("Error: {}", e),
+            Err(panic) => {
+                let msg = panic
+                    .downcast_ref::<String>()
+                    .map(|s| s.as_str())
+                    .or_else(|| panic.downcast_ref::<&str>().copied())
+                    .unwrap_or("unknown panic");
+                format!("Internal error: {}", msg)
+            },
+        };
+        ChatMessage::tool(output, tc_id, Some(tc_name), Some(tc_args))
+    }
+
+    /// Spawn a tokio task that executes a regular tool call.
+    fn spawn_regular_tool_task(
+        &self,
+        tool_call: oy_ai::ToolCall,
+    ) -> tokio::task::JoinHandle<ChatMessage> {
+        match self.tool_registry.get_clone(&tool_call.function_name) {
+            Some(t) => spawn_known_tool_task(t, tool_call),
+            None => spawn_unknown_tool_task(tool_call),
+        }
     }
 
     async fn tool_call(&mut self) -> Result<AgentEvent, AgentError> {
@@ -462,7 +513,7 @@ impl Worker {
                             chat_message,
                         )))
                         .await;
-                    }
+                    },
                     Err(e) => {
                         // JoinError: spawned task panicked despite catch_unwind.
                         // This should be rare, but don't silently swallow it.
@@ -474,7 +525,7 @@ impl Worker {
                             AgentError::ToolExecutionError(err_msg),
                         )))
                         .await;
-                    }
+                    },
                 }
             }
         }
@@ -484,14 +535,16 @@ impl Worker {
 
     /// Inject a user message into history without triggering state transition.
     async fn inject_user_message(&mut self, text: &str) -> Result<(), AgentError> {
-        if self.agent.get_front_message().is_none() {
-            self.agent.push_message_back(
-                self.uuid,
-                ChatMessage::system(
-                    self.agent
-                        .get_system_prompt(&self.tool_registry.get_tools_system_prompt()),
-                ),
-            )?;
+        let needs_system_prompt = match self.agent.get_front_message() {
+            None => true,
+            Some(msg) => msg.role != Role::System,
+        };
+        if needs_system_prompt {
+            let system_msg = ChatMessage::system(
+                self.agent
+                    .get_system_prompt(&self.tool_registry.get_tools_system_prompt()),
+            );
+            self.agent.insert_message_front(self.uuid, system_msg)?;
         }
         self.agent
             .push_message_back(self.uuid, ChatMessage::user(text))?;
@@ -510,27 +563,27 @@ impl Worker {
             match self.cmd_rx.try_recv() {
                 Ok(WorkerCommand::Prompt { text, .. }) => {
                     let _ = self.inject_user_message(&text).await;
-                }
+                },
                 Ok(WorkerCommand::FlushEnterQueue(requests)) => {
                     for pr in &requests {
                         if self.inject_user_message(&pr.text).await.is_err() {
                             break;
                         }
                     }
-                }
+                },
                 Ok(WorkerCommand::SetProvider(provider)) => {
                     self.provider = provider;
-                }
+                },
                 Ok(WorkerCommand::SetSkills(skills)) => {
                     self.agent.set_skills(skills);
-                }
+                },
                 Ok(WorkerCommand::GetMessages { tx }) => {
                     let msgs = self.agent.messages().to_vec();
                     let _ = tx.send(msgs);
-                }
+                },
                 Ok(WorkerCommand::SetMessages(msgs)) => {
                     self.agent.replace_messages(msgs);
-                }
+                },
                 Err(_) => break,
             }
         }
@@ -544,5 +597,418 @@ impl Worker {
             .await;
 
         Ok(AgentEvent::Reset)
+    }
+}
+
+// ── Free helper functions ──────────────────────────────────────────────
+
+/// Spawn a sub-agent execution task with a timeout.
+fn spawn_sub_agent_inner(
+    tool_call: oy_ai::ToolCall,
+    provider: Arc<dyn AiProvider + Send + Sync>,
+    registry: Arc<ToolRegistry>,
+    timeout_secs: u64,
+) -> tokio::task::JoinHandle<ChatMessage> {
+    let id2 = tool_call.id.clone();
+    let name2 = tool_call.function_name.clone();
+
+    tokio::spawn(async move {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            run_sub_agent_async(tool_call, provider, registry),
+        )
+        .await;
+
+        result.unwrap_or_else(|_| {
+            ChatMessage::tool(
+                format!(
+                    "[Timeout] Sub-agent execution exceeded {} seconds",
+                    timeout_secs
+                ),
+                id2,
+                Some(name2),
+                None,
+            )
+        })
+    })
+}
+
+/// Run a sub-agent asynchronously and return the result ChatMessage.
+async fn run_sub_agent_async(
+    tc: oy_ai::ToolCall,
+    provider: Arc<dyn AiProvider + Send + Sync>,
+    registry: Arc<ToolRegistry>,
+) -> ChatMessage {
+    let agent_type_str = tc
+        .arguments
+        .get("agent_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("planner");
+    let task = tc
+        .arguments
+        .get("task")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let context = tc
+        .arguments
+        .get("context")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    let agent_type = SubAgentType::from_str(agent_type_str).unwrap_or(SubAgentType::Planner);
+
+    let output = run_sub_agent(SubAgentConfig {
+        agent_type,
+        task: task.to_string(),
+        context,
+        provider,
+        tool_registry: registry,
+        progress_tx: None,
+    })
+    .await;
+
+    Worker::format_sub_agent_result(tc.id, tc.function_name, tc.arguments, output, agent_type)
+}
+
+/// Spawn a tokio task that runs a known tool with a timeout.
+fn spawn_known_tool_task(
+    t: Box<dyn crate::domain::tool::Tool + Send>,
+    tool_call: oy_ai::ToolCall,
+) -> tokio::task::JoinHandle<ChatMessage> {
+    let default_timeout = t.default_timeout();
+    tokio::spawn(
+        async move { execute_known_tool_with_timeout(t, tool_call, default_timeout).await },
+    )
+}
+
+/// Execute a known tool with timeout, producing a ChatMessage.
+async fn execute_known_tool_with_timeout(
+    t: Box<dyn crate::domain::tool::Tool + Send>,
+    tool_call: oy_ai::ToolCall,
+    default_timeout: u64,
+) -> ChatMessage {
+    let tc_args = tool_call.arguments.clone();
+    let timeout_secs = tc_args
+        .get("timeout")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(default_timeout);
+    let id2 = tool_call.id.clone();
+    let name2 = tool_call.function_name.clone();
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(timeout_secs),
+        tokio::task::spawn_blocking(move || Worker::execute_tool(t, tc_args, id2, name2)),
+    )
+    .await
+    {
+        Ok(Ok(m)) => m,
+        Ok(Err(e)) => ChatMessage::tool(
+            format!("Internal error: tool execution failed: {}", e),
+            tool_call.id,
+            Some(tool_call.function_name),
+            None,
+        ),
+        Err(_) => ChatMessage::tool(
+            format!("[Timeout] Tool execution exceeded {} seconds", timeout_secs),
+            tool_call.id,
+            Some(tool_call.function_name),
+            None,
+        ),
+    }
+}
+
+/// Spawn a tokio task that reports an unknown tool error.
+fn spawn_unknown_tool_task(tool_call: oy_ai::ToolCall) -> tokio::task::JoinHandle<ChatMessage> {
+    let tc_id = tool_call.id.clone();
+    let tc_name = tool_call.function_name.clone();
+    let tc_args = tool_call.arguments.clone();
+    tokio::spawn(async move {
+        ChatMessage::tool(
+            format!("Error: Unknown tool: {}", tc_name),
+            tc_id,
+            Some(tc_name),
+            Some(tc_args),
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Worker;
+    use crate::domain::errors::AgentError;
+    use crate::domain::sub_agent::{SubAgentOutput, SubAgentType};
+    use crate::domain::tool::Tool;
+    use oy_ai::Role;
+    use serde_json::{Value, json};
+
+    struct MockTool {
+        should_fail: bool,
+        should_panic: bool,
+    }
+
+    impl Tool for MockTool {
+        fn name(&self) -> &'static str {
+            "MockTool"
+        }
+
+        fn description(&self) -> &'static str {
+            "A mock tool for unit testing"
+        }
+
+        fn schema(&self) -> Value {
+            json!({})
+        }
+
+        fn execute(&self, _args: Value) -> Result<String, AgentError> {
+            if self.should_panic {
+                panic!("mock panic");
+            }
+            if self.should_fail {
+                Err(AgentError::ToolExecutionError("mock error".into()))
+            } else {
+                Ok("mock success".into())
+            }
+        }
+
+        fn get_system_prompt(&self) -> &str {
+            ""
+        }
+
+        fn clone_box(&self) -> Box<dyn Tool> {
+            Box::new(MockTool {
+                should_fail: self.should_fail,
+                should_panic: self.should_panic,
+            })
+        }
+    }
+
+    #[test]
+    fn test_execute_tool_success() {
+        let tool = MockTool {
+            should_fail: false,
+            should_panic: false,
+        };
+        let tc_args = json!({"key": "value"});
+        let result = Worker::execute_tool(
+            Box::new(tool),
+            tc_args.clone(),
+            "call_001".to_string(),
+            "MockTool".to_string(),
+        );
+        assert_eq!(result.role, Role::Tool);
+        assert_eq!(result.content.as_deref(), Some("mock success"));
+        assert_eq!(result.tool_call_id.as_deref(), Some("call_001"));
+        assert_eq!(result.function_name.as_deref(), Some("MockTool"));
+        assert_eq!(result.tool_call_arguments.as_ref(), Some(&tc_args));
+    }
+
+    #[test]
+    fn test_execute_tool_error() {
+        let tool = MockTool {
+            should_fail: true,
+            should_panic: false,
+        };
+        let tc_args = json!({});
+        let result = Worker::execute_tool(
+            Box::new(tool),
+            tc_args.clone(),
+            "call_002".to_string(),
+            "MockTool".to_string(),
+        );
+        assert_eq!(result.role, Role::Tool);
+        assert_eq!(
+            result.content.as_deref(),
+            Some("Error: Tool execution error: mock error")
+        );
+        assert_eq!(result.tool_call_id.as_deref(), Some("call_002"));
+        assert_eq!(result.function_name.as_deref(), Some("MockTool"));
+        assert_eq!(result.tool_call_arguments.as_ref(), Some(&tc_args));
+    }
+
+    #[test]
+    fn test_execute_tool_panic() {
+        let tool = MockTool {
+            should_fail: false,
+            should_panic: true,
+        };
+        let tc_args = json!({"panic": true});
+        let result = Worker::execute_tool(
+            Box::new(tool),
+            tc_args.clone(),
+            "call_003".to_string(),
+            "MockTool".to_string(),
+        );
+        assert_eq!(result.role, Role::Tool);
+        assert_eq!(
+            result.content.as_deref(),
+            Some("Internal error: mock panic")
+        );
+        assert_eq!(result.tool_call_id.as_deref(), Some("call_003"));
+        assert_eq!(result.function_name.as_deref(), Some("MockTool"));
+        assert_eq!(result.tool_call_arguments.as_ref(), Some(&tc_args));
+    }
+
+    // ── format_sub_agent_result tests ────────────────────────────────────
+
+    #[test]
+    fn test_format_sub_agent_result_planner_success() {
+        let output = SubAgentOutput {
+            agent_type: SubAgentType::Planner,
+            success: true,
+            summary: "计划已完成，包含3个步骤。".to_string(),
+            rounds_used: 5,
+            error: None,
+        };
+        let tc_args = json!({"agent_type": "planner", "task": "制定重构计划"});
+        let msg = Worker::format_sub_agent_result(
+            "call_p001".to_string(),
+            "create_sub_agent".to_string(),
+            tc_args.clone(),
+            output,
+            SubAgentType::Planner,
+        );
+
+        assert_eq!(msg.role, Role::Tool);
+        assert_eq!(msg.tool_call_id.as_deref(), Some("call_p001"));
+        assert_eq!(msg.function_name.as_deref(), Some("create_sub_agent"));
+        assert_eq!(msg.tool_call_arguments.as_ref(), Some(&tc_args));
+        let content = msg.content.as_deref().unwrap();
+        assert!(content.contains("完成"), "成功时内容应包含「完成」");
+        assert!(
+            content.contains("计划已创建"),
+            "Planner 成功时内容应包含「计划已创建」"
+        );
+        assert!(
+            content.contains("[Planner 完成 - 5 轮]"),
+            "内容应包含类型头部"
+        );
+        assert!(content.contains("计划已完成"), "内容应包含 summary");
+    }
+
+    #[test]
+    fn test_format_sub_agent_result_worker_success() {
+        let output = SubAgentOutput {
+            agent_type: SubAgentType::Worker,
+            success: true,
+            summary: "代码已实现并测试通过。".to_string(),
+            rounds_used: 3,
+            error: None,
+        };
+        let tc_args = json!({"agent_type": "worker", "task": "实现用户接口"});
+        let msg = Worker::format_sub_agent_result(
+            "call_w001".to_string(),
+            "create_sub_agent".to_string(),
+            tc_args.clone(),
+            output,
+            SubAgentType::Worker,
+        );
+
+        assert_eq!(msg.role, Role::Tool);
+        assert_eq!(msg.tool_call_id.as_deref(), Some("call_w001"));
+        assert_eq!(msg.function_name.as_deref(), Some("create_sub_agent"));
+        assert_eq!(msg.tool_call_arguments.as_ref(), Some(&tc_args));
+        let content = msg.content.as_deref().unwrap();
+        assert!(content.contains("完成"));
+        assert!(
+            content.contains("代码已产出"),
+            "Worker 成功时内容应包含「代码已产出」"
+        );
+        assert!(content.contains("[Worker 完成 - 3 轮]"));
+        assert!(content.contains("代码已实现"));
+    }
+
+    #[test]
+    fn test_format_sub_agent_result_reviewer_success() {
+        let output = SubAgentOutput {
+            agent_type: SubAgentType::Reviewer,
+            success: true,
+            summary: "审查通过，无严重问题。".to_string(),
+            rounds_used: 2,
+            error: None,
+        };
+        let tc_args = json!({"agent_type": "reviewer", "task": "审查代码质量"});
+        let msg = Worker::format_sub_agent_result(
+            "call_r001".to_string(),
+            "create_sub_agent".to_string(),
+            tc_args.clone(),
+            output,
+            SubAgentType::Reviewer,
+        );
+
+        assert_eq!(msg.role, Role::Tool);
+        assert_eq!(msg.tool_call_id.as_deref(), Some("call_r001"));
+        assert_eq!(msg.function_name.as_deref(), Some("create_sub_agent"));
+        assert_eq!(msg.tool_call_arguments.as_ref(), Some(&tc_args));
+        let content = msg.content.as_deref().unwrap();
+        assert!(content.contains("完成"));
+        assert!(
+            content.contains("审查完成"),
+            "Reviewer 成功时内容应包含「审查完成」"
+        );
+        assert!(content.contains("[Reviewer 完成 - 2 轮]"));
+        assert!(content.contains("审查通过"));
+    }
+
+    #[test]
+    fn test_format_sub_agent_result_git_helper_success() {
+        let output = SubAgentOutput {
+            agent_type: SubAgentType::GitHelper,
+            success: true,
+            summary: "已提交 commit 并创建 PR。".to_string(),
+            rounds_used: 1,
+            error: None,
+        };
+        let tc_args = json!({"agent_type": "git_helper", "task": "提交代码"});
+        let msg = Worker::format_sub_agent_result(
+            "call_g001".to_string(),
+            "create_sub_agent".to_string(),
+            tc_args.clone(),
+            output,
+            SubAgentType::GitHelper,
+        );
+
+        assert_eq!(msg.role, Role::Tool);
+        assert_eq!(msg.tool_call_id.as_deref(), Some("call_g001"));
+        assert_eq!(msg.function_name.as_deref(), Some("create_sub_agent"));
+        assert_eq!(msg.tool_call_arguments.as_ref(), Some(&tc_args));
+        let content = msg.content.as_deref().unwrap();
+        assert!(content.contains("完成"));
+        assert!(
+            content.contains("commit/issue/PR"),
+            "GitHelper 成功时内容应包含「commit/issue/PR」"
+        );
+        assert!(content.contains("[GitHelper 完成 - 1 轮]"));
+        assert!(content.contains("已提交 commit"));
+    }
+
+    #[test]
+    fn test_format_sub_agent_result_failure() {
+        let output = SubAgentOutput {
+            agent_type: SubAgentType::Planner,
+            success: false,
+            summary: "".to_string(),
+            rounds_used: 10,
+            error: Some("执行过程中遇到未预期的错误：文件无法读取。".to_string()),
+        };
+        let tc_args = json!({"agent_type": "planner", "task": "失败的任务"});
+        let msg = Worker::format_sub_agent_result(
+            "call_f001".to_string(),
+            "create_sub_agent".to_string(),
+            tc_args.clone(),
+            output,
+            SubAgentType::Planner,
+        );
+
+        assert_eq!(msg.role, Role::Tool);
+        assert_eq!(msg.tool_call_id.as_deref(), Some("call_f001"));
+        assert_eq!(msg.function_name.as_deref(), Some("create_sub_agent"));
+        assert_eq!(msg.tool_call_arguments.as_ref(), Some(&tc_args));
+        let content = msg.content.as_deref().unwrap();
+        assert!(content.contains("失败"), "失败时内容应包含「失败」");
+        assert!(
+            content.contains("执行过程中遇到未预期的错误"),
+            "失败时内容应包含错误消息"
+        );
+        assert!(content.contains("[Planner 失败 - 10 轮]"));
     }
 }

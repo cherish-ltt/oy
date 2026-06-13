@@ -6,6 +6,7 @@ use crate::Tool;
 
 pub mod bash;
 pub mod edit;
+pub mod grep;
 pub mod read;
 pub mod sub_agent_tool;
 pub mod uuid_tool;
@@ -119,8 +120,8 @@ mod tests {
         let schemas = r.get_schemas();
         for s in &schemas {
             assert_eq!(s["type"], "function");
-            assert!(s["function"]["name"].as_str().unwrap().len() > 0);
-            assert!(s["function"]["description"].as_str().unwrap().len() > 0);
+            assert!(!s["function"]["name"].as_str().unwrap().is_empty());
+            assert!(!s["function"]["description"].as_str().unwrap().is_empty());
             assert!(s["function"]["parameters"].is_object());
         }
     }
