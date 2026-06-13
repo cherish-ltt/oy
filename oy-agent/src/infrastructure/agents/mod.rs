@@ -353,13 +353,10 @@ impl Worker {
     async fn acting(&mut self) -> Result<AgentEvent, AgentError> {
         match self.agent.get_back_message() {
             Some(chat_message) => {
-                if chat_message
-                    .tool_calls
-                    .as_ref()
-                    .is_some_and(|c| !c.is_empty())
+                if let Some(tool_calls) = chat_message.tool_calls.clone().filter(|c| !c.is_empty())
                 {
                     let tasks = FuturesUnordered::new();
-                    for tool_call in chat_message.tool_calls.clone().unwrap() {
+                    for tool_call in tool_calls {
                         // Special handling: create_sub_agent runs as async sub-agent
                         // via tokio::spawn + .await, not via sync Tool::execute.
                         if tool_call.function_name == "create_sub_agent"
@@ -430,12 +427,23 @@ impl Worker {
             .and_then(|v| v.as_u64())
             .unwrap_or(900);
 
-        spawn_sub_agent_inner(
-            tool_call,
-            self.sub_provider.clone().unwrap(),
-            self.sub_tool_registry.clone().unwrap(),
-            timeout_secs,
-        )
+        if let (Some(provider), Some(registry)) =
+            (self.sub_provider.clone(), self.sub_tool_registry.clone())
+        {
+            spawn_sub_agent_inner(tool_call, provider, registry, timeout_secs)
+        } else {
+            let tc_id = tool_call.id.clone();
+            let tc_name = tool_call.function_name.clone();
+            tokio::spawn(async move {
+                ChatMessage::tool(
+                    "Error: Sub-agent dependencies not configured. Call set_sub_agent_deps first."
+                        .to_string(),
+                    tc_id,
+                    Some(tc_name),
+                    None,
+                )
+            })
+        }
     }
 
     /// Inject each tool's `default_timeout()` into tool call arguments if not
@@ -668,37 +676,44 @@ fn spawn_known_tool_task(
     tool_call: oy_ai::ToolCall,
 ) -> tokio::task::JoinHandle<ChatMessage> {
     let default_timeout = t.default_timeout();
-    tokio::spawn(async move {
-        let tc_id = tool_call.id.clone();
-        let tc_name = tool_call.function_name.clone();
-        let tc_args = tool_call.arguments.clone();
-        let timeout_secs = tc_args
-            .get("timeout")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(default_timeout);
-        let id2 = tc_id.clone();
-        let name2 = tc_name.clone();
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout_secs),
-            tokio::task::spawn_blocking(move || Worker::execute_tool(t, tc_args, tc_id, tc_name)),
-        )
-        .await;
-        match result {
-            Ok(Ok(m)) => m,
-            Ok(Err(e)) => ChatMessage::tool(
-                format!("Internal error: tool execution failed: {}", e),
-                id2,
-                Some(name2),
-                None,
-            ),
-            Err(_) => ChatMessage::tool(
-                format!("[Timeout] Tool execution exceeded {} seconds", timeout_secs),
-                id2,
-                Some(name2),
-                None,
-            ),
-        }
-    })
+    tokio::spawn(
+        async move { execute_known_tool_with_timeout(t, tool_call, default_timeout).await },
+    )
+}
+
+/// Execute a known tool with timeout, producing a ChatMessage.
+async fn execute_known_tool_with_timeout(
+    t: Box<dyn crate::domain::tool::Tool + Send>,
+    tool_call: oy_ai::ToolCall,
+    default_timeout: u64,
+) -> ChatMessage {
+    let tc_args = tool_call.arguments.clone();
+    let timeout_secs = tc_args
+        .get("timeout")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(default_timeout);
+    let id2 = tool_call.id.clone();
+    let name2 = tool_call.function_name.clone();
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(timeout_secs),
+        tokio::task::spawn_blocking(move || Worker::execute_tool(t, tc_args, id2, name2)),
+    )
+    .await
+    {
+        Ok(Ok(m)) => m,
+        Ok(Err(e)) => ChatMessage::tool(
+            format!("Internal error: tool execution failed: {}", e),
+            tool_call.id,
+            Some(tool_call.function_name),
+            None,
+        ),
+        Err(_) => ChatMessage::tool(
+            format!("[Timeout] Tool execution exceeded {} seconds", timeout_secs),
+            tool_call.id,
+            Some(tool_call.function_name),
+            None,
+        ),
+    }
 }
 
 /// Spawn a tokio task that reports an unknown tool error.
