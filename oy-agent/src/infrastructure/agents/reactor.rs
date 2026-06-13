@@ -108,28 +108,16 @@ impl Reactor {
                 self.handle_cancel_request(id).await;
             },
             RequestAgent::SetProvider(provider) => {
-                let _ = self
-                    .worker_cmd_tx
-                    .send(WorkerCommand::SetProvider(provider))
-                    .await;
+                self.handle_set_provider(provider).await;
             },
             RequestAgent::SetSkills(skills) => {
-                let _ = self
-                    .worker_cmd_tx
-                    .send(WorkerCommand::SetSkills(skills))
-                    .await;
+                self.handle_set_skills(skills).await;
             },
             RequestAgent::GetMessages { tx } => {
-                let _ = self
-                    .worker_cmd_tx
-                    .send(WorkerCommand::GetMessages { tx })
-                    .await;
+                self.handle_get_messages(tx).await;
             },
             RequestAgent::SetMessages(msgs) => {
-                let _ = self
-                    .worker_cmd_tx
-                    .send(WorkerCommand::SetMessages(msgs))
-                    .await;
+                self.handle_set_messages(msgs).await;
             },
         }
     }
@@ -178,6 +166,34 @@ impl Reactor {
                 .send(ResponseAgent::PromptConsumed { id })
                 .await;
         }
+    }
+
+    async fn handle_set_provider(&mut self, provider: Box<dyn oy_ai::AiProvider + Send + Sync>) {
+        let _ = self
+            .worker_cmd_tx
+            .send(WorkerCommand::SetProvider(provider))
+            .await;
+    }
+
+    async fn handle_set_skills(&mut self, skills: Vec<crate::domain::skill::SkillSummary>) {
+        let _ = self
+            .worker_cmd_tx
+            .send(WorkerCommand::SetSkills(skills))
+            .await;
+    }
+
+    async fn handle_get_messages(&mut self, tx: oneshot::Sender<Vec<ChatMessage>>) {
+        let _ = self
+            .worker_cmd_tx
+            .send(WorkerCommand::GetMessages { tx })
+            .await;
+    }
+
+    async fn handle_set_messages(&mut self, msgs: Vec<ChatMessage>) {
+        let _ = self
+            .worker_cmd_tx
+            .send(WorkerCommand::SetMessages(msgs))
+            .await;
     }
 
     async fn handle_worker_event(&mut self, event: WorkerEvent) {

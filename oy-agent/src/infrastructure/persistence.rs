@@ -28,76 +28,32 @@ pub fn find_latest_session() -> Result<Option<SessionEntry>, AgentError> {
 /// List all session files across all project directories,
 /// sorted by modification time (newest first).
 pub fn list_all_sessions() -> Result<Vec<SessionEntry>, AgentError> {
-    let home = home_dir()?;
-    let sessions_root = home.join(".oy-ai-agent").join("sessions");
-
-    if !sessions_root.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut entries = Vec::new();
-    let read_dir = read_sessions_dir(&sessions_root)?;
-
-    for project_dir in read_dir {
-        let project_dir = project_dir.map_err(|e| {
-            AgentError::SessionPersistenceError(format!("Cannot read entry: {}", e))
-        })?;
-        let project_path = project_dir.path();
-        if !project_path.is_dir() {
-            continue;
-        }
-        let project_name = project_name_from_path(&project_path);
-        collect_entries_from_dir(&project_path, &project_name, &mut entries)?;
-    }
-
-    sort_entries_by_mtime(&mut entries);
-    Ok(entries)
+    collect_sessions_with(|project_path, project_name, entries| {
+        collect_entries_from_dir(project_path, project_name, entries)
+    })
 }
 
 /// List all sub-agent session files across all project directories,
 /// sorted by modification time (newest first).
 pub fn list_sub_agent_sessions() -> Result<Vec<SessionEntry>, AgentError> {
-    let home = home_dir()?;
-    let sessions_root = home.join(".oy-ai-agent").join("sessions");
-
-    if !sessions_root.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut entries = Vec::new();
-    let read_dir = read_sessions_dir(&sessions_root)?;
-
-    for project_dir in read_dir {
-        let project_dir = project_dir.map_err(|e| {
-            AgentError::SessionPersistenceError(format!("Cannot read entry: {}", e))
-        })?;
-        let project_path = project_dir.path();
-        if !project_path.is_dir() {
-            continue;
-        }
-        let project_name = project_name_from_path(&project_path);
-
+    collect_sessions_with(|project_path, project_name, entries| {
         let sub_agents_path = project_path.join("sub_agents");
         if !sub_agents_path.exists() || !sub_agents_path.is_dir() {
-            continue;
+            return Ok(());
         }
-
         let sub_project_name = format!("{}/sub_agents", project_name);
-        match collect_entries_from_dir(&sub_agents_path, &sub_project_name, &mut entries) {
-            Ok(()) => {},
+        match collect_entries_from_dir(&sub_agents_path, &sub_project_name, entries) {
+            Ok(()) => Ok(()),
             Err(e) => {
                 eprintln!(
                     "Warning: Cannot read sub_agents dir `{}`: {}, skipping",
                     sub_agents_path.display(),
                     e
                 );
-                continue;
+                Ok(())
             },
         }
-    }
-
-    sort_entries_by_mtime(&mut entries);
-    Ok(entries)
+    })
 }
 
 /// Get the home directory or return an error.
@@ -164,6 +120,37 @@ fn sort_entries_by_mtime(entries: &mut Vec<SessionEntry>) {
 
     entries_with_mtime.sort_by_key(|b| std::cmp::Reverse(b.1));
     entries.extend(entries_with_mtime.into_iter().map(|(e, _)| e));
+}
+
+/// Collect session entries across all project directories using a custom collector.
+fn collect_sessions_with<F>(mut collect_fn: F) -> Result<Vec<SessionEntry>, AgentError>
+where
+    F: FnMut(&Path, &str, &mut Vec<SessionEntry>) -> Result<(), AgentError>,
+{
+    let home = home_dir()?;
+    let sessions_root = home.join(".oy-ai-agent").join("sessions");
+
+    if !sessions_root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut entries = Vec::new();
+    let read_dir = read_sessions_dir(&sessions_root)?;
+
+    for project_dir in read_dir {
+        let project_dir = project_dir.map_err(|e| {
+            AgentError::SessionPersistenceError(format!("Cannot read entry: {}", e))
+        })?;
+        let project_path = project_dir.path();
+        if !project_path.is_dir() {
+            continue;
+        }
+        let project_name = project_name_from_path(&project_path);
+        collect_fn(&project_path, &project_name, &mut entries)?;
+    }
+
+    sort_entries_by_mtime(&mut entries);
+    Ok(entries)
 }
 
 /// Extract the first user message from a session file for preview purposes.

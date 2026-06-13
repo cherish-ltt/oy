@@ -44,6 +44,31 @@ fn parse_skill_frontmatter(content: &str) -> Option<(String, String)> {
     }
 }
 
+/// Try to load a single skill from a directory entry.
+/// Returns `Some(SkillSummary)` if the entry is a directory containing a valid SKILL.md.
+fn try_load_skill_from_entry(entry: &std::fs::DirEntry) -> Option<SkillSummary> {
+    let path = entry.path();
+    if !path.is_dir() {
+        return None;
+    }
+    let folder_name = path.file_name()?.to_string_lossy().to_string();
+
+    let skill_path = path.join("SKILL.md");
+    if !skill_path.exists() {
+        return None;
+    }
+
+    let content = std::fs::read_to_string(&skill_path).ok()?;
+    let (name, description) = parse_skill_frontmatter(&content)?;
+
+    Some(SkillSummary {
+        folder_name,
+        name,
+        description,
+        path: skill_path,
+    })
+}
+
 /// Load all skill summaries from a single directory.
 /// Looks for `<dir>/<subdir>/SKILL.md` in the given base path.
 pub fn load_skills_from_dir(base_dir: &Path) -> Vec<SkillSummary> {
@@ -55,32 +80,8 @@ pub fn load_skills_from_dir(base_dir: &Path) -> Vec<SkillSummary> {
     };
 
     for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let folder_name = match path.file_name() {
-            Some(name) => name.to_string_lossy().to_string(),
-            None => continue,
-        };
-
-        let skill_path = path.join("SKILL.md");
-        if !skill_path.exists() {
-            continue;
-        }
-
-        let content = match std::fs::read_to_string(&skill_path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        if let Some((name, description)) = parse_skill_frontmatter(&content) {
-            skills.push(SkillSummary {
-                folder_name,
-                name,
-                description,
-                path: skill_path,
-            });
+        if let Some(summary) = try_load_skill_from_entry(&entry) {
+            skills.push(summary);
         }
     }
 
