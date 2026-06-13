@@ -499,8 +499,14 @@ impl App {
                     });
                 }
 
-                let default_timeout = if tc.function_name == "create_sub_agent" { 900 } else { 150 };
-                let timeout_secs = tc.arguments.get("timeout")
+                let default_timeout = if tc.function_name == "create_sub_agent" {
+                    900
+                } else {
+                    150
+                };
+                let timeout_secs = tc
+                    .arguments
+                    .get("timeout")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(default_timeout);
 

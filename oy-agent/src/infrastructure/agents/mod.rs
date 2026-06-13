@@ -464,17 +464,15 @@ impl Worker {
 
             match result {
                 Ok(chat_msg) => chat_msg,
-                Err(_) => {
-                    ChatMessage::tool(
-                        format!(
-                            "[Timeout] Sub-agent execution exceeded {} seconds",
-                            timeout_secs
-                        ),
-                        tc_id2,
-                        Some(tc_name2),
-                        None,
-                    )
-                },
+                Err(_) => ChatMessage::tool(
+                    format!(
+                        "[Timeout] Sub-agent execution exceeded {} seconds",
+                        timeout_secs
+                    ),
+                    tc_id2,
+                    Some(tc_name2),
+                    None,
+                ),
             }
         })
     }
@@ -543,10 +541,7 @@ impl Worker {
                         Ok(Err(join_err)) => {
                             // spawn_blocking panicked (should be rare due to catch_unwind inside)
                             ChatMessage::tool(
-                                format!(
-                                    "Internal error: tool execution failed: {}",
-                                    join_err
-                                ),
+                                format!("Internal error: tool execution failed: {}", join_err),
                                 tc_id2,
                                 Some(tc_name2),
                                 None,

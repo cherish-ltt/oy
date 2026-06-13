@@ -28,7 +28,7 @@ impl Tool for UuidTool {
                 "timeout": {
                     "type": "integer",
                     "description": "Optional timeout in seconds (default: 150)",
-                    "default": 150
+                    "default": 10
                 }
             }
         })
@@ -51,7 +51,7 @@ impl Tool for UuidTool {
          Generate a UUID v4 (random) or v7 (time-ordered, default).\n\n\
          Parameters:\n\
          - version: \"v4\" or \"v7\" (default: \"v7\")\n\
-         - timeout (optional, default: 150s): Timeout in seconds\n\n\
+         - timeout (optional, default: 10s): Timeout in seconds\n\n\
          Returns the generated UUID string."
     }
 
