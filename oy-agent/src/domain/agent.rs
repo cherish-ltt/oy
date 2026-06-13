@@ -39,6 +39,11 @@ pub trait AgentStateTransition {
 
 pub trait Agent: Send + Sync {
     fn push_message_back(&mut self, uuid: Uuid, msg: ChatMessage) -> Result<(), AgentError>;
+    fn insert_message_front(&mut self, uuid: Uuid, msg: ChatMessage) -> Result<(), AgentError> {
+        // 默认空实现（RequestAgent/ResponseAgent 不需要此功能）
+        let _ = (uuid, msg);
+        Ok(())
+    }
     fn save_session(&mut self, uuid: Uuid) -> Result<String, AgentError>;
     fn messages(&mut self) -> &[ChatMessage];
     fn max_iterations(&self) -> u32;
@@ -70,7 +75,9 @@ pub(crate) fn replace_messages_preserve_system_prompt(
         }
     } else {
         for msg in msgs {
-            messages.push_back(msg);
+            if msg.role != Role::System {
+                messages.push_back(msg);
+            }
         }
     }
 }
