@@ -2,7 +2,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use futures::{StreamExt, stream::FuturesUnordered};
-use oy_ai::{AiProvider, ChatMessage};
+use oy_ai::{AiProvider, ChatMessage, Role};
 use tokio::{
     sync::mpsc::{Receiver, Sender},
     task::JoinHandle,
@@ -283,14 +283,16 @@ impl Worker {
     }
 
     async fn assembly_prompts(&mut self, prompt: &String) -> Result<AgentEvent, AgentError> {
-        if self.agent.get_front_message().is_none() {
-            self.agent.push_message_back(
-                self.uuid,
-                ChatMessage::system(
-                    self.agent
-                        .get_system_prompt(&self.tool_registry.get_tools_system_prompt()),
-                ),
-            )?;
+        let needs_system_prompt = match self.agent.get_front_message() {
+            None => true,
+            Some(msg) => msg.role != Role::System,
+        };
+        if needs_system_prompt {
+            let system_msg = ChatMessage::system(
+                self.agent
+                    .get_system_prompt(&self.tool_registry.get_tools_system_prompt()),
+            );
+            self.agent.insert_message_front(self.uuid, system_msg)?;
         }
         self.agent
             .push_message_back(self.uuid, ChatMessage::user(prompt.clone()))?;
@@ -532,14 +534,16 @@ impl Worker {
 
     /// Inject a user message into history without triggering state transition.
     async fn inject_user_message(&mut self, text: &str) -> Result<(), AgentError> {
-        if self.agent.get_front_message().is_none() {
-            self.agent.push_message_back(
-                self.uuid,
-                ChatMessage::system(
-                    self.agent
-                        .get_system_prompt(&self.tool_registry.get_tools_system_prompt()),
-                ),
-            )?;
+        let needs_system_prompt = match self.agent.get_front_message() {
+            None => true,
+            Some(msg) => msg.role != Role::System,
+        };
+        if needs_system_prompt {
+            let system_msg = ChatMessage::system(
+                self.agent
+                    .get_system_prompt(&self.tool_registry.get_tools_system_prompt()),
+            );
+            self.agent.insert_message_front(self.uuid, system_msg)?;
         }
         self.agent
             .push_message_back(self.uuid, ChatMessage::user(text))?;
