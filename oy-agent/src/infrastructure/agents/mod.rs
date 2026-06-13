@@ -132,35 +132,38 @@ impl Worker {
     pub(crate) async fn run(&mut self) {
         let mut result;
         loop {
-            // Drain instant commands and inject user messages for Prompt/FlushEnterQueue
-            // regardless of state — they don't affect the state machine.
-            loop {
-                match self.cmd_rx.try_recv() {
-                    Ok(WorkerCommand::GetMessages { tx }) => {
-                        let msgs = self.agent.messages().to_vec();
-                        let _ = tx.send(msgs);
-                    }
-                    Ok(WorkerCommand::SetMessages(msgs)) => {
-                        self.agent.replace_messages(msgs);
-                    }
-                    Ok(WorkerCommand::SetProvider(provider)) => {
-                        self.provider = provider;
-                    }
-                    Ok(WorkerCommand::SetSkills(skills)) => {
-                        self.agent.set_skills(skills);
-                    }
-                    Ok(WorkerCommand::Prompt { text, .. }) => {
-                        // Inject as user message immediately so nothing is lost.
-                        let _ = self.inject_user_message(&text).await;
-                    }
-                    Ok(WorkerCommand::FlushEnterQueue(requests)) => {
-                        for pr in &requests {
-                            if self.inject_user_message(&pr.text).await.is_err() {
-                                break;
+            // Drain instant commands only in non-Idle states.
+            // In Idle state, commands must go through recv() in the Idle branch
+            // to properly trigger state machine transitions via assembly_prompts.
+            if *self.agent.current_state() != AgentState::Idle {
+                loop {
+                    match self.cmd_rx.try_recv() {
+                        Ok(WorkerCommand::GetMessages { tx }) => {
+                            let msgs = self.agent.messages().to_vec();
+                            let _ = tx.send(msgs);
+                        }
+                        Ok(WorkerCommand::SetMessages(msgs)) => {
+                            self.agent.replace_messages(msgs);
+                        }
+                        Ok(WorkerCommand::SetProvider(provider)) => {
+                            self.provider = provider;
+                        }
+                        Ok(WorkerCommand::SetSkills(skills)) => {
+                            self.agent.set_skills(skills);
+                        }
+                        Ok(WorkerCommand::Prompt { text, .. }) => {
+                            // Inject as user message immediately so nothing is lost.
+                            let _ = self.inject_user_message(&text).await;
+                        }
+                        Ok(WorkerCommand::FlushEnterQueue(requests)) => {
+                            for pr in &requests {
+                                if self.inject_user_message(&pr.text).await.is_err() {
+                                    break;
+                                }
                             }
                         }
+                        Err(_) => break,
                     }
-                    Err(_) => break,
                 }
             }
 
