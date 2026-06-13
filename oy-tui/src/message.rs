@@ -575,6 +575,7 @@ impl Message {
         }
     }
 
+    #[allow(clippy::cognitive_complexity)]
     pub fn visual_line_count(&self, width: usize, _theme: &Theme) -> usize {
         if width == 0 {
             return 1;

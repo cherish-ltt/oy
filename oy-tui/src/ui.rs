@@ -134,6 +134,7 @@ impl Widget for &App {
 
 impl App {
     /// Render the chat history message area with scrolling support.
+    #[allow(clippy::cognitive_complexity)]
     fn render_chat_area(&self, area: Rect, buf: &mut Buffer, t: &Theme) {
         let content_width = area.width.saturating_sub(2) as usize;
         let visible_height = (area.height.saturating_sub(2)) as usize;

@@ -136,6 +136,7 @@ pub struct App {
 }
 
 impl App {
+    #[allow(clippy::cognitive_complexity)]
     pub async fn new(session_path: Option<PathBuf>) -> Self {
         let mut messages = VecDeque::new();
         let global_toml_config = GlobalTomlConfig::load();
@@ -456,6 +457,7 @@ impl App {
         Ok(())
     }
 
+    #[allow(clippy::cognitive_complexity)]
     async fn handle_chat_message(&mut self, chat_message: oy_agent::oy_ai::ChatMessage) {
         use oy_agent::oy_ai::Role;
 
@@ -623,6 +625,7 @@ impl App {
         }
     }
 
+    #[allow(clippy::cognitive_complexity)]
     async fn handle_key_normal(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
         match key_event.code {
             KeyCode::Esc | KeyCode::Char('q') => self.events.send(AppEvent::Quit),
@@ -889,6 +892,7 @@ impl App {
         Ok(())
     }
 
+    #[allow(clippy::cognitive_complexity)]
     async fn handle_key_model_form(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
         // Clone the current mode to extract values, then mutate
         let snapshot = match &self.app_mode {
