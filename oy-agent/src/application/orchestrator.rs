@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::agent::{AgentCore, CHANNEL_SIZE, RequestAgent, ResponseAgent};
-use crate::infrastructure::agents::Worker;
 use crate::infrastructure::agents::reactor::{Reactor, WorkerCommand, WorkerEvent};
+use crate::infrastructure::agents::{SessionConfig, Worker};
 use crate::infrastructure::tools::ToolRegistry;
 use oy_ai::{AiProvider, ChatMessage};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
@@ -181,8 +181,10 @@ impl Orchestrator {
                 tool_registry,
                 worker_cmd_rx,
                 worker_event_tx,
-                *uuid,
-                msgs.clone(),
+                SessionConfig {
+                    uuid: *uuid,
+                    initial_messages: msgs.clone(),
+                },
             ),
             _ => Worker::new(
                 agent,

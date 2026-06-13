@@ -46,6 +46,12 @@ pub(crate) struct Worker {
     sub_tool_registry: Option<Arc<ToolRegistry>>,
 }
 
+/// Parameters for resuming an existing Worker session.
+pub(crate) struct SessionConfig {
+    pub uuid: Uuid,
+    pub initial_messages: Vec<ChatMessage>,
+}
+
 impl Worker {
     pub(crate) fn new(
         agent: impl AgentCore + 'static,
@@ -72,16 +78,16 @@ impl Worker {
 
     /// Create a Worker that resumes an existing session with a specific UUID
     /// and pre-loaded message history.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn with_session(
         agent: impl AgentCore + 'static,
         provider: impl AiProvider + 'static,
         tool_registry: ToolRegistry,
         cmd_rx: Receiver<WorkerCommand>,
         event_tx: Sender<WorkerEvent>,
-        session_uuid: Uuid,
-        initial_messages: Vec<ChatMessage>,
+        session: SessionConfig,
     ) -> Self {
-        let uuid = session_uuid;
+        let uuid = session.uuid;
         let mut worker = Self {
             uuid,
             agent: Box::new(agent),
@@ -97,7 +103,7 @@ impl Worker {
         };
         // Pre-load historical messages — push_message_back handles
         // persisting to the session file with the correct uuid.
-        for msg in initial_messages {
+        for msg in session.initial_messages {
             let _ = worker.agent.push_message_back(worker.uuid, msg);
         }
         worker
@@ -203,6 +209,7 @@ impl Worker {
     /// Returns `Some(result)` if the command should be processed through the state machine,
     /// or `None` if the command was handled and the outer loop should continue without
     /// a state transition (e.g. SetSkills, GetMessages, SetMessages).
+    #[allow(clippy::too_many_lines)]
     async fn handle_idle_cmd(
         &mut self,
         cmd: WorkerCommand,
@@ -365,6 +372,40 @@ impl Worker {
         Ok(AgentEvent::TaskCompleted)
     }
 
+    /// Format the sub-agent execution output into a ChatMessage for the LLM.
+    fn format_sub_agent_result(
+        tc_id: String,
+        tc_name: String,
+        tc_args: serde_json::Value,
+        output: crate::domain::sub_agent::SubAgentOutput,
+        agent_type: SubAgentType,
+    ) -> ChatMessage {
+        let result_str = if output.success {
+            format!(
+                "[{} 完成 - {} 轮]\n{}\n{}",
+                agent_type,
+                output.rounds_used,
+                output.summary,
+                match agent_type {
+                    SubAgentType::Planner => "计划已创建，Worker 可引用此计划文件。",
+                    SubAgentType::Worker => "代码已产出，Reviewer 可审查。",
+                    SubAgentType::Reviewer => {
+                        "审查完成，请检查 '通过: 是/否' 决定下一步。"
+                    },
+                    SubAgentType::GitHelper => "操作已完成（commit/issue/PR）。",
+                }
+            )
+        } else {
+            let err = output.error.unwrap_or_default();
+            format!(
+                "[{} 失败 - {} 轮]\n错误: {}",
+                agent_type, output.rounds_used, err
+            )
+        };
+
+        ChatMessage::tool(result_str, tc_id, Some(tc_name), Some(tc_args))
+    }
+
     /// Spawn a tokio task that runs a sub-agent for the create_sub_agent tool call.
     fn spawn_sub_agent_task(
         &self,
@@ -402,31 +443,32 @@ impl Worker {
             })
             .await;
 
-            let result_str = if output.success {
-                format!(
-                    "[{} 完成 - {} 轮]\n{}\n{}",
-                    agent_type,
-                    output.rounds_used,
-                    output.summary,
-                    match agent_type {
-                        SubAgentType::Planner => "计划已创建，Worker 可引用此计划文件。",
-                        SubAgentType::Worker => "代码已产出，Reviewer 可审查。",
-                        SubAgentType::Reviewer => {
-                            "审查完成，请检查 '通过: 是/否' 决定下一步。"
-                        },
-                        SubAgentType::GitHelper => "操作已完成（commit/issue/PR）。",
-                    }
-                )
-            } else {
-                let err = output.error.unwrap_or_default();
-                format!(
-                    "[{} 失败 - {} 轮]\n错误: {}",
-                    agent_type, output.rounds_used, err
-                )
-            };
-
-            ChatMessage::tool(result_str, tc_id, Some(tc_name), Some(tc_args))
+            Self::format_sub_agent_result(tc_id, tc_name, tc_args, output, agent_type)
         })
+    }
+
+    /// Execute a tool synchronously (via catch_unwind) and produce a ChatMessage.
+    fn execute_tool(
+        t: Box<dyn crate::domain::tool::Tool + Send>,
+        tc_args: serde_json::Value,
+        tc_id: String,
+        tc_name: String,
+    ) -> ChatMessage {
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| t.execute(tc_args.clone())));
+        let output = match result {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => format!("Error: {}", e),
+            Err(panic) => {
+                let msg = panic
+                    .downcast_ref::<String>()
+                    .map(|s| s.as_str())
+                    .or_else(|| panic.downcast_ref::<&str>().copied())
+                    .unwrap_or("unknown panic");
+                format!("Internal error: {}", msg)
+            },
+        };
+        ChatMessage::tool(output, tc_id, Some(tc_name), Some(tc_args))
     }
 
     /// Spawn a tokio task that executes a regular tool call.
@@ -436,31 +478,10 @@ impl Worker {
     ) -> tokio::task::JoinHandle<ChatMessage> {
         match self.tool_registry.get_clone(&tool_call.function_name) {
             Some(t) => {
-                // Clone metadata BEFORE the async move so we can
-                // produce a ChatMessage::tool even if the task panics.
                 let tc_id = tool_call.id.clone();
                 let tc_name = tool_call.function_name.clone();
                 let tc_args = tool_call.arguments.clone();
-                tokio::spawn(async move {
-                    // catch_unwind prevents panics from becoming
-                    // JoinErrors that would lose the tool_call metadata.
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        t.execute(tc_args.clone())
-                    }));
-                    let output = match result {
-                        Ok(Ok(r)) => r,
-                        Ok(Err(e)) => format!("Error: {}", e),
-                        Err(panic) => {
-                            let msg = panic
-                                .downcast_ref::<String>()
-                                .map(|s| s.as_str())
-                                .or_else(|| panic.downcast_ref::<&str>().copied())
-                                .unwrap_or("unknown panic");
-                            format!("Internal error: {}", msg)
-                        },
-                    };
-                    ChatMessage::tool(output, tc_id, Some(tc_name), Some(tc_args))
-                })
+                tokio::spawn(async move { Self::execute_tool(t, tc_args, tc_id, tc_name) })
             },
             None => {
                 let tc_id = tool_call.id.clone();
