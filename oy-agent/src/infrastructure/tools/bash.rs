@@ -43,6 +43,11 @@ impl Tool for BashTool {
                 "command": {
                     "type": "string",
                     "description": "The command to execute"
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Optional timeout in seconds (default: 150). Increase for long-running commands.",
+                    "default": 150
                 }
             },
             "required": ["command"]
@@ -70,7 +75,7 @@ impl Tool for BashTool {
 
     fn get_system_prompt(&self) -> &str {
         r#"
-        - `bash`: Using Bash for file operations
+        - `bash`: Using Bash for file operations (default timeout: 150s, override via timeout param)
         "#
     }
 

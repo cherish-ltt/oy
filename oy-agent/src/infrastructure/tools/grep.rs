@@ -38,6 +38,11 @@ impl Tool for GrepTool {
                     "type": "integer",
                     "description": "Maximum number of results to return (default: 50)",
                     "default": 50
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Optional timeout in seconds (default: 150). Increase for large searches.",
+                    "default": 150
                 }
             },
             "required": ["pattern"]
@@ -67,7 +72,8 @@ impl Tool for GrepTool {
          - pattern (required): The regex pattern to search for\n\
          - path (optional, default: \".\"): The directory path to search in\n\
          - extension (optional): Filter by file extension (e.g. \"rs\" for Rust files)\n\
-         - max_results (optional, default: 50): Maximum number of results to return\n\n\
+         - max_results (optional, default: 50): Maximum number of results to return\n\
+         - timeout (optional, default: 150s): Timeout in seconds\n\n\
          Returns matching lines with file paths and line numbers."
     }
 

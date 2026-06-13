@@ -96,6 +96,10 @@ impl Tool for CreateSubAgentTool {
         "Create and run a sub-agent (planner/worker/reviewer/git_helper) for task execution"
     }
 
+    fn default_timeout(&self) -> u64 {
+        900 // 15 minutes
+    }
+
     fn schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -113,6 +117,11 @@ impl Tool for CreateSubAgentTool {
                     "type": "string",
                     "description": "Optional context (e.g., plan file path for worker)",
                     "default": ""
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Optional timeout in seconds (default: 900). Sub-agents need longer time.",
+                    "default": 900
                 }
             },
             "required": ["agent_type", "task"]
@@ -141,8 +150,9 @@ impl Tool for CreateSubAgentTool {
     }
 
     fn get_system_prompt(&self) -> &str {
-        "## create_sub_agent\n
-         Create a sub-agent to execute a task.\n
+        "## create_sub_agent\n\
+         Create a sub-agent to execute a task.\n\
+         Default timeout: 900s (15 min). Increase via `timeout` parameter for complex tasks.\n\
          The sub-agent runs with its own system prompt and iteration limit, and returns the result."
     }
 

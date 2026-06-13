@@ -22,6 +22,11 @@ impl Tool for ReadTool {
                 "file_path": {
                     "type": "string",
                     "description": "The path to the file to read"
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Optional timeout in seconds (default: 150)",
+                    "default": 150
                 }
             },
             "required": ["file_path"]
@@ -40,7 +45,7 @@ impl Tool for ReadTool {
 
     fn get_system_prompt(&self) -> &str {
         r#"
-        - `read`: Read the file content; use `read` instead of `cat` or `sed`
+        - `read`: Read the file content; use `read` instead of `cat` or `sed` (default timeout: 150s, override via timeout param)
         "#
     }
 

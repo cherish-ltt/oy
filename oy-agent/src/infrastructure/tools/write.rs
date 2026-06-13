@@ -26,6 +26,11 @@ impl Tool for WriteTool {
                 "content": {
                     "type": "string",
                     "description": "The content to write to the file"
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Optional timeout in seconds (default: 150)",
+                    "default": 150
                 }
             },
             "required": ["file_path", "content"]
@@ -47,7 +52,7 @@ impl Tool for WriteTool {
 
     fn get_system_prompt(&self) -> &str {
         r#"
-        - `write`: Create or overwrite a file, used only for new files or for a complete rewrite
+        - `write`: Create or overwrite a file, used only for new files or for a complete rewrite (default timeout: 150s, override via timeout param)
         "#
     }
 

@@ -90,6 +90,11 @@ impl Tool for EditTool {
                 "new_text": {
                     "type": "string",
                     "description": "The new text to insert"
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Optional timeout in seconds (default: 150)",
+                    "default": 150
                 }
             },
             "required": ["file_path", "old_text", "new_text"]
@@ -124,7 +129,7 @@ impl Tool for EditTool {
 
     fn get_system_prompt(&self) -> &str {
         r#"
-        - `edit`: Precise file editing through precise text replacement; Keep the old text block small and unique; Combine multiple edits in the same file into one edit call
+        - `edit`: Precise file editing through precise text replacement; Keep the old text block small and unique; Combine multiple edits in the same file into one edit call (default timeout: 150s, override via timeout param)
         "#
     }
 
