@@ -1,7 +1,9 @@
+use std::collections::VecDeque;
+
 use crate::AgentError;
 use crate::domain::skill::SkillSummary;
 use crate::domain::token_counter::TokenUsage;
-use oy_ai::{AiProvider, ChatMessage};
+use oy_ai::{AiProvider, ChatMessage, Role};
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
@@ -46,6 +48,31 @@ pub trait Agent: Send + Sync {
     fn set_skills(&mut self, _skills: Vec<SkillSummary>) {}
     /// Replace internal message list (used when restoring history via channel).
     fn replace_messages(&mut self, _msgs: Vec<ChatMessage>) {}
+}
+
+/// Preserve own system prompt and skip source's system prompt in replace_messages.
+pub(crate) fn replace_messages_preserve_system_prompt(
+    messages: &mut VecDeque<ChatMessage>,
+    msgs: Vec<ChatMessage>,
+) {
+    let system_prompt = messages.front().cloned();
+    messages.clear();
+    if let Some(sys) = system_prompt {
+        messages.push_back(sys);
+        let mut iter = msgs.into_iter();
+        if let Some(first) = iter.next()
+            && first.role != Role::System
+        {
+            messages.push_back(first);
+        }
+        for msg in iter {
+            messages.push_back(msg);
+        }
+    } else {
+        for msg in msgs {
+            messages.push_back(msg);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

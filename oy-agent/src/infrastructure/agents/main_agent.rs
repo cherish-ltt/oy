@@ -183,7 +183,10 @@ impl Agent for MainAgent {
     fn save_session(&mut self, uuid: Uuid) -> Result<String, AgentError> {
         match env::current_dir() {
             Ok(path) => {
-                let path = path.to_string_lossy().to_string().replace("/", "-");
+                let path = path
+                    .to_string_lossy()
+                    .replace(['/', '\\'], "-")
+                    .replace(':', "");
                 save_session(uuid, self.messages().iter().collect(), &path)
             }
             Err(e) => Err(AgentError::ToolExecutionError(e.to_string())),
@@ -203,10 +206,7 @@ impl Agent for MainAgent {
     }
 
     fn replace_messages(&mut self, msgs: Vec<ChatMessage>) {
-        self.messages.clear();
-        for msg in msgs {
-            self.messages.push_back(msg);
-        }
+        crate::domain::agent::replace_messages_preserve_system_prompt(&mut self.messages, msgs);
     }
 }
 
@@ -269,5 +269,91 @@ mod tests {
         let agent = new_agent();
         let prompt = agent.get_system_prompt("");
         assert!(prompt.contains("You are the Lead Full-Stack Software Engineer and Technical Expert running within the OY environment."));
+    }
+
+    #[test]
+    fn test_replace_messages_preserves_system_prompt() {
+        let mut agent = new_agent();
+        let uuid = Uuid::now_v7();
+        let _ = agent.push_message_back(uuid, ChatMessage::system("You are Commander"));
+        let _ = agent.push_message_back(uuid, ChatMessage::user("hello"));
+
+        // Source messages contain a different system + assistant
+        let source_msgs = vec![
+            ChatMessage::system("You are a helper"),
+            ChatMessage::assistant(Some("I can help".to_string()), None, None),
+        ];
+
+        agent.replace_messages(source_msgs);
+
+        assert_eq!(agent.messages().len(), 2);
+        assert_eq!(
+            agent.messages()[0].role,
+            oy_ai::Role::System,
+            "first message should be System role"
+        );
+        assert_eq!(
+            agent.messages()[0].content.as_deref(),
+            Some("You are Commander"),
+            "should preserve own system prompt"
+        );
+        assert_eq!(
+            agent.messages()[1].role,
+            oy_ai::Role::Assistant,
+            "second message should be Assistant role"
+        );
+        assert_eq!(
+            agent.messages()[1].content.as_deref(),
+            Some("I can help"),
+            "should keep source's non-system messages"
+        );
+    }
+
+    #[test]
+    fn test_replace_messages_empty_self() {
+        let mut agent = new_agent();
+        // No messages in agent initially
+
+        let source_msgs = vec![
+            ChatMessage::user("first"),
+            ChatMessage::assistant(Some("second".to_string()), None, None),
+        ];
+
+        agent.replace_messages(source_msgs);
+
+        assert_eq!(agent.messages().len(), 2);
+        assert_eq!(agent.messages()[0].role, oy_ai::Role::User);
+        assert_eq!(agent.messages()[0].content.as_deref(), Some("first"));
+        assert_eq!(agent.messages()[1].role, oy_ai::Role::Assistant);
+        assert_eq!(agent.messages()[1].content.as_deref(), Some("second"));
+    }
+
+    #[test]
+    fn test_replace_messages_no_system_in_source() {
+        let mut agent = new_agent();
+        let uuid = Uuid::now_v7();
+        let _ = agent.push_message_back(uuid, ChatMessage::system("You are Commander"));
+
+        // Source has no System, starts with User
+        let source_msgs = vec![
+            ChatMessage::user("user query"),
+            ChatMessage::assistant(Some("assistant reply".to_string()), None, None),
+        ];
+
+        agent.replace_messages(source_msgs);
+
+        assert_eq!(agent.messages().len(), 3);
+        assert_eq!(agent.messages()[0].role, oy_ai::Role::System);
+        assert_eq!(
+            agent.messages()[0].content.as_deref(),
+            Some("You are Commander")
+        );
+        assert_eq!(agent.messages()[1].role, oy_ai::Role::User);
+        assert_eq!(agent.messages()[1].content.as_deref(), Some("user query"));
+        assert_eq!(agent.messages()[2].role, oy_ai::Role::Assistant);
+        assert_eq!(
+            agent.messages()[2].content.as_deref(),
+            Some("assistant reply")
+        );
     }
 }

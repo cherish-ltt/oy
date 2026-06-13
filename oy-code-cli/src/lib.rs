@@ -1,6 +1,6 @@
 use clap::Parser;
 use oy_agent::infrastructure::persistence::{
-    find_latest_session, get_session_preview, list_all_sessions,
+    find_latest_session, get_session_preview, list_all_sessions, list_sub_agent_sessions,
 };
 use oy_agent::infrastructure::tools::edit::EditTool;
 use oy_agent::infrastructure::tools::read::ReadTool;
@@ -43,6 +43,9 @@ pub struct CliArgs {
 pub enum Commands {
     /// Update oy CLI tool to the latest version via npm
     Update,
+    /// List and restore sub-agent sessions
+    #[command(name = "sub-sessions")]
+    SubSessions,
 }
 
 /// Configuration loaded from ~/.oy-ai-agent/config.toml
@@ -118,22 +121,27 @@ pub async fn run(args: CliArgs) -> Result<(), anyhow::Error> {
         return run_update().await;
     }
 
-    // 2. Continue latest session
+    // 2. Sub-sessions command
+    if matches!(args.command, Some(Commands::SubSessions)) {
+        return run_sub_sessions().await;
+    }
+
+    // 3. Continue latest session
     if args.r#continue {
         return run_continue_session().await;
     }
 
-    // 3. Restore session from interactive selector
+    // 4. Restore session from interactive selector
     if args.restore {
         return run_restore_session().await;
     }
 
-    // 4. Load a specific session file by path
+    // 5. Load a specific session file by path
     if let Some(path) = &args.session {
         return run_session_path(path).await;
     }
 
-    // 5. Existing logic: launch TUI (fresh) or handle direct prompt
+    // 6. Existing logic: launch TUI (fresh) or handle direct prompt
     if args.prompt.is_some() {
         // TODO: implement direct prompt mode
         return Ok(());
@@ -294,6 +302,61 @@ async fn run_restore_session() -> Result<(), anyhow::Error> {
         }
         let entry = &sessions[num - 1];
         eprintln!("📂 Restoring session: {}", entry.uuid);
+        oy_tui::run_tui(Some(entry.path.clone()))
+            .await
+            .map_err(|e| anyhow::Error::msg(format!("{}", e)))?;
+    } else {
+        eprintln!("❌ Invalid selection.");
+    }
+
+    Ok(())
+}
+
+// ── Sub-sessions command ──────────────────────────────────────
+
+async fn run_sub_sessions() -> Result<(), anyhow::Error> {
+    let sessions = list_sub_agent_sessions()?;
+
+    if sessions.is_empty() {
+        eprintln!("ℹ️  No sub-agent sessions found.");
+        return Ok(());
+    }
+
+    // ── Interactive session selector ──
+    eprintln!("\n📋 Select a sub-agent session to restore:\n");
+    for (i, entry) in sessions.iter().enumerate() {
+        let preview = get_session_preview(&entry.path)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "(no user message)".to_string());
+        let uuid_str = entry.uuid.to_string();
+        let uuid_short: String = uuid_str.chars().take(12).collect();
+        eprintln!(
+            "  [{:2}] {}... | {} | {}",
+            i + 1,
+            uuid_short,
+            entry.project_name,
+            preview
+        );
+    }
+    eprintln!("\n  [0] Cancel");
+    eprint!("\nEnter selection (0-{}): ", sessions.len());
+    std::io::Write::flush(&mut std::io::stderr())?;
+
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+
+    if let Ok(num) = input.parse::<usize>() {
+        if num == 0 || num > sessions.len() {
+            eprintln!("❌ Cancelled.");
+            return Ok(());
+        }
+        let entry = &sessions[num - 1];
+        eprintln!(
+            "📂 Restoring sub-agent session: {} (project: {})",
+            entry.uuid, entry.project_name
+        );
         oy_tui::run_tui(Some(entry.path.clone()))
             .await
             .map_err(|e| anyhow::Error::msg(format!("{}", e)))?;
