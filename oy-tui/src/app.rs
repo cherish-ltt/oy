@@ -738,7 +738,6 @@ impl App {
         let input = std::mem::take(&mut self.input);
         self.cursor_pos = 0;
         self.paste_counter = 0;
-        self.scroll_offset.set(u16::MAX);
 
         // Determine prompt kind: Alt+Enter = AltEnter, Enter = Enter
         let kind = if key_event.modifiers == KeyModifiers::ALT {

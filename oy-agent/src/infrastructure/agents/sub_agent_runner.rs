@@ -112,7 +112,7 @@ async fn call_sub_agent_llm(
         Err(e) => {
             let err_msg = format!("AI error at round {}: {}", round, e);
             report_sub_agent_failure(&config.progress_tx, &err_msg);
-            save_sub_agent_session(uuid, messages, &config.agent_type);
+            save_sub_agent_session(uuid, messages);
             Err(SubAgentOutput {
                 agent_type: config.agent_type,
                 success: false,
@@ -134,7 +134,7 @@ fn complete_sub_agent_success(
 ) -> SubAgentOutput {
     let output = build_sub_agent_success_output(&config.agent_type, response, round);
     report_sub_agent_success(&config.progress_tx, &output, &output.summary);
-    save_sub_agent_session(uuid, messages, &config.agent_type);
+    save_sub_agent_session(uuid, messages);
     output
 }
 
@@ -150,7 +150,7 @@ fn build_sub_agent_max_rounds_output(
         max_rounds
     );
     report_sub_agent_failure(&config.progress_tx, &err_msg);
-    save_sub_agent_session(uuid, messages, &config.agent_type);
+    save_sub_agent_session(uuid, messages);
     SubAgentOutput {
         agent_type: config.agent_type,
         success: false,
@@ -260,7 +260,7 @@ fn execute_sub_agent_tool_calls(
 }
 
 /// Save a sub-agent session to disk for debugging.
-fn save_sub_agent_session(uuid: Uuid, messages: &[ChatMessage], _agent_type: &SubAgentType) {
+fn save_sub_agent_session(uuid: Uuid, messages: &[ChatMessage]) {
     if let Ok(project_dir) = std::env::current_dir() {
         let dir_name = format!(
             "{}/sub_agents",
