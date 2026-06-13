@@ -3,7 +3,8 @@
 #![deny(clippy::too_many_lines)]
 use clap::Parser;
 use oy_agent::infrastructure::persistence::{
-    find_latest_session, get_session_preview, list_all_sessions, list_sub_agent_sessions,
+    SessionEntry, find_latest_session, get_session_preview, list_all_sessions,
+    list_sub_agent_sessions,
 };
 use oy_agent::infrastructure::tools::edit::EditTool;
 use oy_agent::infrastructure::tools::grep::GrepTool;
@@ -163,40 +164,34 @@ pub async fn run(args: CliArgs) -> Result<(), anyhow::Error> {
 async fn run_update() -> Result<(), anyhow::Error> {
     let timeout = Duration::from_secs(300);
 
-    // First attempt: default registry
     println!(
         "⏳ Running: npm install -g @ghyper9023/oy (timeout: {}s)...",
         timeout.as_secs()
     );
-    match run_npm(&["install", "-g", "@ghyper9023/oy"], timeout).await {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if !stderr.is_empty() {
-                println!("{}", stderr);
-            }
-            println!("✅ Update successful:\n{}", stdout);
-            return Ok(());
-        },
-        Err(e) => {
-            println!("⚠️  First attempt failed: {}", e);
-            println!("⏳ Retrying with npm official registry...");
-        },
+
+    if try_npm_install(None, timeout).await.is_ok() {
+        return Ok(());
     }
 
-    // Second attempt: official npm registry
-    match run_npm(
-        &[
-            "install",
-            "-g",
-            "@ghyper9023/oy",
-            "--registry",
-            "https://registry.npmjs.org/",
-        ],
-        timeout,
-    )
-    .await
-    {
+    println!("⏳ Retrying with npm official registry...");
+    match try_npm_install(Some("https://registry.npmjs.org/"), timeout).await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            eprintln!("❌ Update failed: {}", e);
+            std::process::exit(1);
+        },
+    }
+}
+
+/// Run a single npm install attempt, optionally with a custom registry.
+async fn try_npm_install(registry: Option<&str>, timeout: Duration) -> Result<(), anyhow::Error> {
+    let mut args = vec!["install", "-g", "@ghyper9023/oy"];
+    if let Some(reg) = registry {
+        args.push("--registry");
+        args.push(reg);
+    }
+
+    match run_npm(&args, timeout).await {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -207,8 +202,8 @@ async fn run_update() -> Result<(), anyhow::Error> {
             Ok(())
         },
         Err(e) => {
-            eprintln!("❌ Update failed: {}", e);
-            std::process::exit(1);
+            println!("⚠️  npm install failed: {}", e);
+            Err(e)
         },
     }
 }
@@ -274,47 +269,12 @@ async fn run_restore_session() -> Result<(), anyhow::Error> {
         return Ok(());
     }
 
-    // ── Interactive session selector ──
-    eprintln!("\n📋 Select a session to restore:\n");
-    for (i, entry) in sessions.iter().enumerate() {
-        let preview = get_session_preview(&entry.path)
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "(no user message)".to_string());
-        let uuid_str = entry.uuid.to_string();
-        let uuid_short: String = uuid_str.chars().take(12).collect();
-        eprintln!(
-            "  [{:2}] {}... | {} | {}",
-            i + 1,
-            uuid_short,
-            entry.project_name,
-            preview
-        );
-    }
-    eprintln!("\n  [0] Cancel");
-    eprint!("\nEnter selection (0-{}): ", sessions.len());
-    std::io::Write::flush(&mut std::io::stderr())?;
-
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let input = input.trim();
-
-    if let Ok(num) = input.parse::<usize>() {
-        if num == 0 {
-            eprintln!("❌ Cancelled.");
-            return Ok(());
-        }
-        if num > sessions.len() {
-            eprintln!("❌ Invalid selection.");
-            return Ok(());
-        }
-        let entry = &sessions[num - 1];
+    if let Some(idx) = select_session_interactively(&sessions, "Select a session to restore")? {
+        let entry = &sessions[idx];
         eprintln!("📂 Restoring session: {}", entry.uuid);
         oy_tui::run_tui(Some(entry.path.clone()))
             .await
             .map_err(|e| anyhow::Error::msg(format!("{}", e)))?;
-    } else {
-        eprintln!("❌ Invalid selection.");
     }
 
     Ok(())
@@ -329,41 +289,10 @@ async fn run_sub_sessions() -> Result<(), anyhow::Error> {
         return Ok(());
     }
 
-    // ── Interactive session selector ──
-    eprintln!("\n📋 Select a sub-agent session to restore:\n");
-    for (i, entry) in sessions.iter().enumerate() {
-        let preview = get_session_preview(&entry.path)
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "(no user message)".to_string());
-        let uuid_str = entry.uuid.to_string();
-        let uuid_short: String = uuid_str.chars().take(12).collect();
-        eprintln!(
-            "  [{:2}] {}... | {} | {}",
-            i + 1,
-            uuid_short,
-            entry.project_name,
-            preview
-        );
-    }
-    eprintln!("\n  [0] Cancel");
-    eprint!("\nEnter selection (0-{}): ", sessions.len());
-    std::io::Write::flush(&mut std::io::stderr())?;
-
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let input = input.trim();
-
-    if let Ok(num) = input.parse::<usize>() {
-        if num == 0 {
-            eprintln!("❌ Cancelled.");
-            return Ok(());
-        }
-        if num > sessions.len() {
-            eprintln!("❌ Invalid selection.");
-            return Ok(());
-        }
-        let entry = &sessions[num - 1];
+    if let Some(idx) =
+        select_session_interactively(&sessions, "Select a sub-agent session to restore")?
+    {
+        let entry = &sessions[idx];
         eprintln!(
             "📂 Restoring sub-agent session: {} (project: {})",
             entry.uuid, entry.project_name
@@ -371,8 +300,6 @@ async fn run_sub_sessions() -> Result<(), anyhow::Error> {
         oy_tui::run_tui(Some(entry.path.clone()))
             .await
             .map_err(|e| anyhow::Error::msg(format!("{}", e)))?;
-    } else {
-        eprintln!("❌ Invalid selection.");
     }
 
     Ok(())
@@ -402,6 +329,44 @@ async fn run_session_path(path: &Path) -> Result<(), anyhow::Error> {
         Err(e) => {
             eprintln!("❌ Failed to load session file: {}", e);
             std::process::exit(1);
+        },
+    }
+}
+
+/// Show an interactive session selector and return the selected index (0-based).
+/// Returns `None` if the user cancels or the selection is invalid.
+fn select_session_interactively(
+    sessions: &[SessionEntry],
+    title: &str,
+) -> Result<Option<usize>, anyhow::Error> {
+    eprintln!("\n📋 {}:\n", title);
+    for (i, entry) in sessions.iter().enumerate() {
+        let preview = get_session_preview(&entry.path)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "(no user message)".to_string());
+        eprintln!(
+            "  [{:2}] {}... | {} | {}",
+            i + 1,
+            entry.uuid.to_string().chars().take(12).collect::<String>(),
+            entry.project_name,
+            preview
+        );
+    }
+    eprintln!("\n  [0] Cancel");
+    eprint!("Enter selection (0-{}): ", sessions.len());
+    std::io::Write::flush(&mut std::io::stderr())?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    match input.trim().parse::<usize>() {
+        Ok(0) => {
+            eprintln!("❌ Cancelled.");
+            Ok(None)
+        },
+        Ok(num) if num <= sessions.len() => Ok(Some(num - 1)),
+        _ => {
+            eprintln!("❌ Invalid selection.");
+            Ok(None)
         },
     }
 }
