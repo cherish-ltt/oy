@@ -227,7 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn test_replace_messages_empty_self_filters_source_system() {
+    fn test_replace_messages_empty_self_preserves_source_system() {
         let mut agent = new_agent();
         // No messages in agent initially
 
@@ -239,11 +239,17 @@ mod tests {
 
         agent.replace_messages(source_msgs);
 
-        assert_eq!(agent.messages().len(), 2);
-        assert_eq!(agent.messages()[0].role, oy_ai::Role::User);
-        assert_eq!(agent.messages()[0].content.as_deref(), Some("first"));
-        assert_eq!(agent.messages()[1].role, oy_ai::Role::Assistant);
-        assert_eq!(agent.messages()[1].content.as_deref(), Some("second"));
+        // Agent has no own System → source System SHOULD be preserved
+        assert_eq!(agent.messages().len(), 3);
+        assert_eq!(agent.messages()[0].role, oy_ai::Role::System);
+        assert_eq!(
+            agent.messages()[0].content.as_deref(),
+            Some("You are a helper")
+        );
+        assert_eq!(agent.messages()[1].role, oy_ai::Role::User);
+        assert_eq!(agent.messages()[1].content.as_deref(), Some("first"));
+        assert_eq!(agent.messages()[2].role, oy_ai::Role::Assistant);
+        assert_eq!(agent.messages()[2].content.as_deref(), Some("second"));
     }
 
     #[test]

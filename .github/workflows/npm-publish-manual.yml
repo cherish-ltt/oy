@@ -193,6 +193,17 @@ jobs:
           child.on('exit', (code) => process.exit(code));
           WRAPPER_JS
 
+          cat > README.md <<'README_EOF'
+          # oy
+
+          AI-Agent 命令行工具（CLI + TUI），基于 Rust 构建，支持 OpenAI 兼容 API 的函数调用，提供 Read/Write/Edit/Bash 四类工具，以及 Commander/Planner/Worker/Reviewer/GitHelper 子代理系统。
+
+          > AI-Agent CLI tool (CLI + TUI) built with Rust. Supports OpenAI-compatible API function calling, provides Read/Write/Edit/Bash tools, and a sub-agent system with Commander/Planner/Worker/Reviewer/GitHelper roles.
+          >
+          > 详细文档与使用指南请访问 / For full documentation and usage guide, visit:
+          > [GitHub 主页](https://github.com/cherish-ltt/oy)
+          README_EOF
+
       - name: Publish to npm with provenance
         run: |
           cd npm-package

@@ -113,7 +113,14 @@ impl Tool for EditTool {
             .as_str()
             .ok_or_else(|| AgentError::ToolExecutionError("Missing new_text".into()))?;
 
-        // 2. 安全检查
+        // 2a. 校验 old_text 不为空（空字符串会导致意外的全局替换行为）
+        if old_text.is_empty() {
+            return Err(AgentError::ToolExecutionError(
+                "old_text must not be empty".into(),
+            ));
+        }
+
+        // 2b. 安全检查
         if !Self::is_safe_path(file_path) {
             return Ok("Edit rejected: file path is not allowed for security reasons".into());
         }
@@ -223,5 +230,37 @@ mod tests {
     #[test]
     fn test_edit_tool_system_prompt() {
         assert!(!EditTool.get_system_prompt().is_empty());
+    }
+
+    #[test]
+    fn test_edit_tool_empty_old_text() {
+        // empty old_text should be rejected
+        let result = EditTool.execute(json!({
+            "file_path": "/some/path.txt",
+            "old_text": "",
+            "new_text": "anything"
+        }));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("must not be empty"), "Error message: {}", msg);
+    }
+
+    #[test]
+    fn test_edit_tool_empty_new_text() {
+        // empty new_text is allowed (deletion)
+        let tmp = std::env::temp_dir().join("oy_edit_empty_new.txt");
+        std::fs::write(&tmp, "hello world").unwrap();
+        let result = EditTool
+            .execute(json!({
+                "file_path": tmp.to_string_lossy(),
+                "old_text": "hello ",
+                "new_text": ""
+            }))
+            .unwrap();
+        assert!(result.contains("Successfully replaced"));
+        let content = std::fs::read_to_string(&tmp).unwrap();
+        assert_eq!(content, "world");
+        let _ = std::fs::remove_file(&tmp);
     }
 }

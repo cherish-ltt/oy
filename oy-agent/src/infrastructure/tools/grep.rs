@@ -111,6 +111,25 @@ impl GrepTool {
         Ok(format_grep_output(&stdout, max_results))
     }
 
+    /// Validate that the extension string contains only safe characters.
+    /// Only allows alphanumeric, underscore, hyphen, and dot characters.
+    fn validate_extension(ext: &str) -> Result<(), crate::AgentError> {
+        if ext.is_empty() {
+            return Err(crate::AgentError::ToolExecutionError(
+                "Extension filter cannot be empty".into(),
+            ));
+        }
+        if !ext
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
+        {
+            return Err(crate::AgentError::ToolExecutionError(format!(
+                "Invalid extension: \"{ext}\". Only alphanumeric, underscore, hyphen, and dot are allowed."
+            )));
+        }
+        Ok(())
+    }
+
     /// Run the grep command with the given parameters.
     fn run_grep(
         &self,
@@ -122,10 +141,14 @@ impl GrepTool {
         cmd.arg("-rn").arg("--binary-files=without-match");
 
         if let Some(ext) = extension {
+            // Validate extension to prevent option injection
+            Self::validate_extension(ext)?;
             cmd.arg("--include").arg(format!("*.{ext}"));
         }
 
-        cmd.arg(pattern).arg(path);
+        // [Security] Use "--" separator to prevent pattern/path from being
+        // interpreted as command-line options (POSIX convention).
+        cmd.arg("--").arg(pattern).arg(path);
 
         cmd.output().map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -313,5 +336,100 @@ mod tests {
         assert!(result.is_ok());
         let output = result.unwrap();
         assert!(output.contains("No matches found"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Parameter injection protection tests
+    // -----------------------------------------------------------------------
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_grep_tool_rejects_option_injection() {
+        // Attempt to use "--help" as pattern; with "--" separator it should NOT
+        // trigger grep's help output but instead search for the literal text.
+        let tool = GrepTool;
+        let args = serde_json::json!({
+            "pattern": "--help",
+            "path": ".",
+            "max_results": 5
+        });
+        let result = tool.execute(args);
+
+        // Should execute normally (grep treats "--help" as search text, not option)
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        // Must NOT contain grep's own help text
+        assert!(
+            !output.contains("Usage: grep"),
+            "Pattern '--help' should not trigger grep --help output"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_grep_tool_rejects_flag_pattern() {
+        // Using "-r" as pattern; previously this could trigger grep -r (recursive).
+        // Now with "--" separator it should be treated as literal text.
+        let tool = GrepTool;
+        let args = serde_json::json!({
+            "pattern": "-r",
+            "path": ".",
+            "max_results": 5
+        });
+        let result = tool.execute(args);
+        // Should return normally (not error out due to option parsing)
+        assert!(result.is_ok());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_grep_tool_rejects_invalid_extension() {
+        let tool = GrepTool;
+
+        // Extension with shell special characters
+        let args = serde_json::json!({
+            "pattern": "test",
+            "extension": "rs; rm -rf /",
+            "path": "."
+        });
+        let result = tool.execute(args);
+        assert!(result.is_err(), "Invalid extension should be rejected");
+
+        // Extension with path traversal
+        let args2 = serde_json::json!({
+            "pattern": "test",
+            "extension": "../../etc/passwd",
+            "path": "."
+        });
+        let result2 = tool.execute(args2);
+        assert!(
+            result2.is_err(),
+            "Extension with path separators should be rejected"
+        );
+
+        // Empty extension
+        let args3 = serde_json::json!({
+            "pattern": "test",
+            "extension": "",
+            "path": "."
+        });
+        let result3 = tool.execute(args3);
+        assert!(result3.is_err(), "Empty extension should be rejected");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_grep_tool_valid_extension_still_works() {
+        // Ensure normal extensions still work correctly
+        let tool = GrepTool;
+        let args = serde_json::json!({
+            "pattern": "GrepTool",
+            "extension": "rs",
+            "path": "."
+        });
+        let result = tool.execute(args);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.contains("GrepTool"));
     }
 }

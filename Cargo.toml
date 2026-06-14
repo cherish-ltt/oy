@@ -3,16 +3,16 @@ resolver = "2"
 members = ["oy-ai", "oy-agent", "oy-code-cli", "oy-tui"]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.7.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/cherish-ltt/oy"
 
 [workspace.dependencies]
 # ── Internal workspace crates ──
-oy-ai       = { path = "oy-ai", version = "0.7.0" }
-oy-agent    = { path = "oy-agent", version = "0.7.0" }
-oy-tui      = { path = "oy-tui", version = "0.7.0" }
+oy-ai       = { path = "oy-ai", version = "0.7.1" }
+oy-agent    = { path = "oy-agent", version = "0.7.1" }
+oy-tui      = { path = "oy-tui", version = "0.7.1" }
 
 # ── Async runtime & concurrency ──
 tokio       = { version = "1", features = ["rt-multi-thread", "macros", "sync", "process", "time"] }
@@ -39,6 +39,9 @@ color-eyre  = "0.6.3"
 # ── AI / LLM ──
 async-openai = { version = "=0.41.0", features = ["byot", "chat-completion"] }
 tiktoken-rs = "0.12.0"
+
+# ── Logging ──
+log         = "0.4.32"
 
 # ── Utilities ──
 dirs        = "6"

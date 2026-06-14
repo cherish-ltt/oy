@@ -56,30 +56,32 @@ pub trait Agent: Send + Sync {
 }
 
 /// Preserve own system prompt and skip source's system prompt in replace_messages.
+///
+/// - If the agent has its own System prompt (messages.front is Some with Role::System):
+///   keep it, skip the source's first System message (replaced by own).
+/// - If the agent has NO messages (empty): keep all source messages as-is,
+///   do NOT skip the source's first System message.
 pub(crate) fn replace_messages_preserve_system_prompt(
     messages: &mut VecDeque<ChatMessage>,
     msgs: Vec<ChatMessage>,
 ) {
     let system_prompt = messages.front().cloned();
     messages.clear();
+    let mut iter = msgs.into_iter();
+
     if let Some(sys) = system_prompt {
-        messages.push_back(sys);
-        let mut iter = msgs.into_iter();
-        if let Some(first) = iter.next()
-            && first.role != Role::System
+        // We have our own System prompt: skip source's first System (ours replaces it)
+        if let Some(msg) = iter.next()
+            && msg.role != Role::System
         {
-            messages.push_back(first);
-        }
-        for msg in iter {
             messages.push_back(msg);
         }
-    } else {
-        for msg in msgs {
-            if msg.role != Role::System {
-                messages.push_back(msg);
-            }
-        }
+        messages.push_front(sys);
     }
+    // No own System prompt: keep all source messages (including any System),
+    // the first source System is NOT skipped.
+
+    messages.extend(iter);
 }
 
 #[derive(Debug, Clone)]

@@ -80,15 +80,13 @@ impl GlobalTomlConfig {
     }
 }
 
-pub fn build_provider_config(config: &GlobalTomlConfig) -> AiConfig {
-    let api_key = config.api_key.clone().unwrap_or_else(|| {
-        eprintln!(
-            "API key is not set. Set it in ~/.oy-ai-agent/config.toml:\n\n\
-             [api_key]\n\
-             api_key = \"sk-or-...\""
-        );
-        std::process::exit(1);
-    });
+pub fn build_provider_config(config: &GlobalTomlConfig) -> Result<AiConfig, String> {
+    let api_key = config.api_key.clone().ok_or_else(|| {
+        "API key is not set. Set it in ~/.oy-ai-agent/config.toml:\n\n\
+         [api_key]\n\
+         api_key = \"sk-or-...\""
+            .to_string()
+    })?;
 
     let base_url = config
         .base_url
@@ -113,7 +111,7 @@ pub fn build_provider_config(config: &GlobalTomlConfig) -> AiConfig {
     let ctx = config.context_capacity.or(Some(200_000));
     ai_config = ai_config.with_context_capacity(ctx);
 
-    ai_config
+    Ok(ai_config)
 }
 
 /// Register the default set of tools (Read, Write, Bash, Edit, Uuid).

@@ -86,16 +86,17 @@ impl CliConfig {
 ///   2. Config file (`~/.oy-ai-agent/config.toml`)
 ///   3. Hardcoded default
 ///
-/// `api_key` is required: if none of the sources provide it, the process exits.
-pub fn build_provider_config(cli_config: &CliConfig, cli_args: &CliArgs) -> AiConfig {
-    let api_key = cli_config.api_key.clone().unwrap_or_else(|| {
-        eprintln!(
-            "API key is not set. Set it in ~/.oy-ai-agent/config.toml:\n\n\
-             [api_key]\n\
-             api_key = \"sk-or-...\""
-        );
-        std::process::exit(1);
-    });
+/// `api_key` is required: if none of the sources provide it, an error is returned.
+pub fn build_provider_config(
+    cli_config: &CliConfig,
+    cli_args: &CliArgs,
+) -> Result<AiConfig, String> {
+    let api_key = cli_config.api_key.clone().ok_or_else(|| {
+        "API key is not set. Set it in ~/.oy-ai-agent/config.toml:\n\n\
+         [api_key]\n\
+         api_key = \"sk-or-...\""
+            .to_string()
+    })?;
 
     let base_url = cli_config
         .base_url
@@ -108,7 +109,7 @@ pub fn build_provider_config(cli_config: &CliConfig, cli_args: &CliArgs) -> AiCo
         .or_else(|| cli_config.model.clone())
         .unwrap_or_else(|| "anthropic/claude-haiku-4.5".to_string());
 
-    AiConfig::new(base_url, api_key, model)
+    Ok(AiConfig::new(base_url, api_key, model))
 }
 
 /// Register the default set of tools (Read, Write, Bash).
@@ -176,10 +177,7 @@ async fn run_update() -> Result<(), anyhow::Error> {
     println!("⏳ Retrying with npm official registry...");
     match try_npm_install(Some("https://registry.npmjs.org/"), timeout).await {
         Ok(()) => Ok(()),
-        Err(e) => {
-            eprintln!("❌ Update failed: {}", e);
-            std::process::exit(1);
-        },
+        Err(e) => Err(e),
     }
 }
 
@@ -309,12 +307,13 @@ async fn run_sub_sessions() -> Result<(), anyhow::Error> {
 
 async fn run_session_path(path: &Path) -> Result<(), anyhow::Error> {
     if !path.exists() {
-        eprintln!("❌ Session file not found: {}", path.display());
-        std::process::exit(1);
+        return Err(anyhow::anyhow!(
+            "Session file not found: {}",
+            path.display()
+        ));
     }
     if !path.is_file() {
-        eprintln!("❌ Path is not a file: {}", path.display());
-        std::process::exit(1);
+        return Err(anyhow::anyhow!("Path is not a file: {}", path.display()));
     }
 
     // Validate that the file contains valid session data
@@ -326,10 +325,7 @@ async fn run_session_path(path: &Path) -> Result<(), anyhow::Error> {
                 .map_err(|e| anyhow::Error::msg(format!("{}", e)))?;
             Ok(())
         },
-        Err(e) => {
-            eprintln!("❌ Failed to load session file: {}", e);
-            std::process::exit(1);
-        },
+        Err(e) => Err(anyhow::anyhow!("Failed to load session file: {}", e)),
     }
 }
 

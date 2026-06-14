@@ -133,6 +133,10 @@ pub struct App {
     pub sub_agent_panel_y: Cell<u16>,
     /// 共享 session UUID (MainAgent + CommanderAgent 共用)
     pub session_uuid: Option<Uuid>,
+    /// 用户历史 prompt 列表（从新到旧）
+    pub user_history: Vec<String>,
+    /// 当前浏览的历史索引，None 表示不在历史浏览模式
+    pub history_index: Option<usize>,
 }
 
 impl App {
@@ -362,6 +366,8 @@ impl App {
             sub_agent_scroll: Cell::new(0),
             sub_agent_panel_y: Cell::new(u16::MAX),
             session_uuid: Some(shared_session_uuid),
+            user_history: Vec::new(),
+            history_index: None,
         }
     }
 
@@ -663,6 +669,7 @@ impl App {
                 } else {
                     self.input.clear();
                     self.cursor_pos = 0;
+                    self.history_index = None;
                     // If input started with "/", exit command mode
                     self.app_mode = AppMode::Normal;
                 }
@@ -682,6 +689,7 @@ impl App {
                 // If input becomes empty after "/", go back to Normal
                 if self.input.is_empty() {
                     self.app_mode = AppMode::Normal;
+                    self.history_index = None;
                 }
             },
             KeyCode::Left if self.cursor_pos > 0 => {
@@ -702,13 +710,48 @@ impl App {
             },
             KeyCode::Up => {
                 let width = self.input_width.get() as usize;
-                if width > 0 {
+                if self.input.is_empty() {
+                    // ── 进入历史浏览模式 ──
+                    self.user_history = self.extract_user_history();
+                    if !self.user_history.is_empty() {
+                        let next_index = match self.history_index {
+                            None => 0,
+                            Some(idx) => (idx + 1).min(self.user_history.len() - 1),
+                        };
+                        self.history_index = Some(next_index);
+                        self.input = self.user_history[next_index].clone();
+                        self.cursor_pos = self.input.len();
+                    }
+                } else if self.history_index.is_some() {
+                    // 已在历史模式中，按 ↑ 切换到更旧
+                    if let Some(idx) = self.history_index {
+                        let next_idx = (idx + 1).min(self.user_history.len() - 1);
+                        if next_idx != idx {
+                            self.history_index = Some(next_idx);
+                            self.input = self.user_history[next_idx].clone();
+                            self.cursor_pos = self.input.len();
+                        }
+                    }
+                } else if width > 0 {
                     self.move_cursor_up(width);
                 }
             },
             KeyCode::Down => {
                 let width = self.input_width.get() as usize;
-                if width > 0 {
+                if let Some(idx) = self.history_index {
+                    if idx == 0 {
+                        // ── 归位：退出历史模式，清空 input ──
+                        self.history_index = None;
+                        self.input.clear();
+                        self.cursor_pos = 0;
+                    } else {
+                        // ── 切换到更新的历史 prompt ──
+                        let prev_idx = idx - 1;
+                        self.history_index = Some(prev_idx);
+                        self.input = self.user_history[prev_idx].clone();
+                        self.cursor_pos = self.input.len();
+                    }
+                } else if width > 0 {
                     self.move_cursor_down(width);
                 }
             },
@@ -735,6 +778,8 @@ impl App {
             },
             // Ctrl+O is handled at top-level handle_key_events; do not re-handle here.
             KeyCode::Char(c) => {
+                // 退出历史浏览模式
+                self.history_index = None;
                 self.input.insert(self.cursor_pos, c);
                 self.cursor_pos += c.len_utf8();
                 // Enter command mode when input starts with "/" and matches known commands
@@ -759,6 +804,7 @@ impl App {
         self.expand_paste_snippets();
         let input = std::mem::take(&mut self.input);
         self.cursor_pos = 0;
+        self.history_index = None;
         self.paste_counter = 0;
 
         // Determine prompt kind: Alt+Enter = AltEnter, Enter = Enter
@@ -1016,6 +1062,24 @@ impl App {
             _ => {},
         }
         Ok(())
+    }
+
+    /// 从 self.messages 中提取所有 user 角色的 ChatMessage content，
+    /// 按从新到旧排序返回，连续重复 content 只保留最先遇到的一个。
+    fn extract_user_history(&self) -> Vec<String> {
+        let mut result = Vec::new();
+        let mut last: Option<String> = None;
+        for msg in self.messages.iter().rev() {
+            if let Message::AgentMessages(chat_msg, _) = msg
+                && chat_msg.role == Role::User
+                && let Some(content) = &chat_msg.content
+                && last.as_deref() != Some(content.as_str())
+            {
+                result.push(content.clone());
+                last = Some(content.clone());
+            }
+        }
+        result
     }
 
     fn move_cursor_up(&mut self, width: usize) {
@@ -1578,7 +1642,8 @@ impl App {
         if let Some(ref global_config) = self.global_toml_config
             && config_is_complete(global_config)
         {
-            let ai_config = build_provider_config(global_config);
+            let ai_config = build_provider_config(global_config)
+                .expect("config_is_complete guarantees api_key is set");
             let provider = OpenCodeGoProvider::new(ai_config);
             if let Some(agent_manager) = &self.main_agent {
                 let _ = agent_manager
@@ -1626,7 +1691,8 @@ impl App {
         if let Some(ref global_config) = self.global_toml_config
             && config_is_complete(global_config)
         {
-            let ai_config = build_provider_config(global_config);
+            let ai_config = build_provider_config(global_config)
+                .expect("config_is_complete guarantees api_key is set");
             let provider = OpenCodeGoProvider::new(ai_config);
             if let Some(agent_manager) = &self.main_agent {
                 let _ = agent_manager
@@ -1688,7 +1754,8 @@ impl App {
         let cfg = self.global_toml_config.as_ref().unwrap();
         if config_is_complete(cfg) {
             // All required fields present: restart agent with new provider
-            let ai_config = build_provider_config(cfg);
+            let ai_config =
+                build_provider_config(cfg).expect("config_is_complete guarantees api_key is set");
             let provider = OpenCodeGoProvider::new(ai_config);
             if let Some(agent_manager) = &self.main_agent {
                 let _ = agent_manager
@@ -1753,7 +1820,8 @@ impl App {
         let Some(ref global_config) = self.global_toml_config else {
             return;
         };
-        let ai_config = build_provider_config(global_config);
+        let ai_config = build_provider_config(global_config)
+            .expect("config_is_complete guarantees api_key is set");
         let provider = OpenCodeGoProvider::new(ai_config);
         if let Some(agent_manager) = &self.main_agent {
             let _ = agent_manager
@@ -2027,7 +2095,8 @@ pub async fn start_agent_with_session(
     session_uuid: Uuid,
     session_messages: Vec<ChatMessage>,
 ) -> AgentManager {
-    let ai_config = build_provider_config(global_toml_config);
+    let ai_config = build_provider_config(global_toml_config)
+        .expect("config_is_complete guarantees api_key is set");
     let provider = OpenCodeGoProvider::new(ai_config);
     let mut tool_registry = ToolRegistry::new();
     register_default_tools(&mut tool_registry);
@@ -2053,7 +2122,8 @@ pub async fn start_main_agent_background(
     global_toml_config: &GlobalTomlConfig,
     session_uuid: Uuid,
 ) -> AgentManager {
-    let ai_config = build_provider_config(global_toml_config);
+    let ai_config = build_provider_config(global_toml_config)
+        .expect("config_is_complete guarantees api_key is set");
 
     let provider = OpenCodeGoProvider::new(ai_config);
     let mut tool_registry = ToolRegistry::new();
@@ -2080,7 +2150,8 @@ pub async fn start_commander_agent_background(
     global_toml_config: &GlobalTomlConfig,
     session_uuid: Uuid,
 ) -> AgentManager {
-    let ai_config = build_provider_config(global_toml_config);
+    let ai_config = build_provider_config(global_toml_config)
+        .expect("config_is_complete guarantees api_key is set");
 
     // Create two provider instances: one for CommanderAgent's own LLM calls,
     // one for sub-agents' LLM calls (shared via Arc).
@@ -2130,7 +2201,8 @@ pub async fn start_commander_agent_with_session(
     session_uuid: Uuid,
     session_messages: Vec<ChatMessage>,
 ) -> AgentManager {
-    let ai_config = build_provider_config(global_toml_config);
+    let ai_config = build_provider_config(global_toml_config)
+        .expect("config_is_complete guarantees api_key is set");
 
     let provider = OpenCodeGoProvider::new(ai_config.clone());
     let provider_for_sub_agents = Arc::new(OpenCodeGoProvider::new(ai_config));
@@ -2214,4 +2286,128 @@ pub(crate) fn visual_cursor_pos(input: &str, cursor_pos: usize, width: usize) ->
         col = 0;
     }
     (row, col)
+}
+
+#[cfg(test)]
+mod app_tests {
+    use super::*;
+    use oy_agent::oy_ai::ChatMessage;
+    use std::cell::Cell;
+    use std::collections::HashMap;
+
+    /// 创建一个最小化的 App 实例用于测试 extract_user_history
+    fn make_app_with_messages(msgs: Vec<Message>) -> App {
+        let (_, rx) = tokio::sync::mpsc::channel::<oy_agent::agent::ResponseAgent>(1);
+        App {
+            running: true,
+            messages: VecDeque::from(msgs),
+            input: String::new(),
+            cursor_pos: 0,
+            cursor_x: Cell::new(0),
+            cursor_y: Cell::new(0),
+            input_width: Cell::new(0),
+            scroll_offset: Cell::new(0),
+            auto_scroll: Cell::new(true),
+            last_chat_width: Cell::new(0),
+            paste_snippets: HashMap::new(),
+            paste_counter: 0,
+            events: EventHandler::new_with_receiver(rx),
+            global_toml_config: None,
+            main_agent: None,
+            commander_agent: None,
+            active_agent: AgentType::MainAgent,
+            command_registry: CommandRegistry::new(),
+            app_mode: AppMode::Normal,
+            input_title: String::new(),
+            theme: &LIGHT_THEME,
+            agent_status: Cell::new(Status::Pause),
+            tick_counter: Cell::new(0),
+            token_usage: TokenUsage::new(),
+            skills: Vec::new(),
+            pending_prompts: Vec::new(),
+            sub_agent_states: Vec::new(),
+            sub_agent_scroll: Cell::new(0),
+            sub_agent_panel_y: Cell::new(u16::MAX),
+            session_uuid: None,
+            user_history: Vec::new(),
+            history_index: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_extract_user_history_dedup_consecutive() {
+        // 相邻去重：仅跳过与上一个已保留条目完全相同的 content
+        // ["test", "fix bug", "hello", "fix bug", "hello"] 逆序中无相邻重复 → 全部保留
+        let msgs = vec![
+            Message::AgentMessages(ChatMessage::user("hello"), false),
+            Message::AgentMessages(ChatMessage::user("fix bug"), false),
+            Message::AgentMessages(ChatMessage::user("hello"), false),
+            Message::AgentMessages(ChatMessage::user("fix bug"), false),
+            Message::AgentMessages(ChatMessage::user("test"), false),
+        ];
+        let app = make_app_with_messages(msgs);
+        let history = app.extract_user_history();
+        assert_eq!(
+            history,
+            vec!["test", "fix bug", "hello", "fix bug", "hello"]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_extract_user_history_no_duplicates() {
+        let msgs = vec![
+            Message::AgentMessages(ChatMessage::user("a"), false),
+            Message::AgentMessages(ChatMessage::user("b"), false),
+            Message::AgentMessages(ChatMessage::user("c"), false),
+        ];
+        let app = make_app_with_messages(msgs);
+        let history = app.extract_user_history();
+        assert_eq!(history, vec!["c", "b", "a"]);
+    }
+
+    #[tokio::test]
+    async fn test_extract_user_history_empty() {
+        let app = make_app_with_messages(vec![]);
+        assert!(app.extract_user_history().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_extract_user_history_no_user_messages() {
+        let msgs = vec![
+            Message::AgentMessages(ChatMessage::assistant(Some("hi".into()), None, None), false),
+            Message::AgentMessages(ChatMessage::tool("result", "id".into(), None, None), false),
+        ];
+        let app = make_app_with_messages(msgs);
+        assert!(app.extract_user_history().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_extract_user_history_all_same() {
+        let msgs = vec![
+            Message::AgentMessages(ChatMessage::user("same"), false),
+            Message::AgentMessages(ChatMessage::user("same"), false),
+            Message::AgentMessages(ChatMessage::user("same"), false),
+        ];
+        let app = make_app_with_messages(msgs);
+        let history = app.extract_user_history();
+        assert_eq!(history, vec!["same"]);
+    }
+
+    #[tokio::test]
+    async fn test_extract_user_history_mixed_roles() {
+        let msgs = vec![
+            Message::AgentMessages(ChatMessage::user("user1"), false),
+            Message::AgentMessages(
+                ChatMessage::assistant(Some("resp".into()), None, None),
+                false,
+            ),
+            Message::AgentMessages(ChatMessage::user("user2"), false),
+            Message::AgentMessages(ChatMessage::tool("result", "id".into(), None, None), false),
+            Message::AgentMessages(ChatMessage::user("user2"), false),
+        ];
+        let app = make_app_with_messages(msgs);
+        let history = app.extract_user_history();
+        // 逆序相邻去重: ["user2", "user2", "user1"] → 相邻去重 → ["user2", "user1"]
+        assert_eq!(history, vec!["user2", "user1"]);
+    }
 }
