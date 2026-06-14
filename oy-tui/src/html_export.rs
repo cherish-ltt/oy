@@ -15,7 +15,13 @@ pub fn export_session_to_html(messages: &[&Message]) -> String {
     for (i, msg) in messages.iter().enumerate() {
         match msg {
             Message::UiMessages(text) => {
-                let snippet: String = text.chars().take(50).collect();
+                let snippet: String = text
+                    .split('\n')
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(50)
+                    .collect();
                 sidebar_items.push(format!(
                     r#"<div class="sidebar-item" data-index="{}" data-role="system" onclick="scrollToMsg({})"><span class="role-badge role-system">System</span> {}</div>"#,
                     i, i, html_escape(&snippet)
@@ -142,6 +148,9 @@ pub fn export_session_to_html(messages: &[&Message]) -> String {
 
 /// Convert Unix timestamp seconds to a human-readable "YYYY-MM-DD HH:MM:SS" UTC string.
 fn unix_to_readable(secs: u64) -> String {
+    // Clamp to reasonable max (9999-12-31 23:59:59 UTC) to prevent
+    // pathological loop when called with extreme values like u64::MAX.
+    let secs = secs.min(253_402_300_799);
     let days = secs / 86400;
     let remaining = secs % 86400;
     let hours = remaining / 3600;
@@ -533,5 +542,20 @@ mod tests {
         assert!(result.len() == 19); // "YYYY-MM-DD HH:MM:SS"
         assert!(result.contains('-'));
         assert!(result.contains(':'));
+    }
+
+    #[test]
+    fn test_unix_to_readable_max_boundary() {
+        // u64::MAX should not cause infinite loop
+        let result = unix_to_readable(u64::MAX);
+        assert_eq!(result.len(), 19);
+        // Should return clamped value (year 9999)
+        assert!(result.starts_with("9999"));
+    }
+
+    #[test]
+    fn test_unix_to_readable_zero() {
+        let result = unix_to_readable(0);
+        assert_eq!(result, "1970-01-01 00:00:00");
     }
 }

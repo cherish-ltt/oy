@@ -711,7 +711,9 @@ impl App {
             },
             // Alt+↑ → history up (must come BEFORE plain KeyCode::Up)
             KeyCode::Up if key_event.modifiers == KeyModifiers::ALT => {
-                self.user_history = self.extract_user_history();
+                if self.history_index.is_none() {
+                    self.user_history = self.extract_user_history();
+                }
                 if !self.user_history.is_empty() {
                     let next_index = match self.history_index {
                         None => 0,
@@ -1618,7 +1620,8 @@ impl App {
         }
         match tokio::fs::write(&path, html).await {
             Ok(_) => {
-                let canonical = std::fs::canonicalize(&path)
+                let canonical = tokio::fs::canonicalize(&path)
+                    .await
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_else(|_| path.to_string_lossy().to_string());
                 self.insert_before_queued(UiMessages(format!(
