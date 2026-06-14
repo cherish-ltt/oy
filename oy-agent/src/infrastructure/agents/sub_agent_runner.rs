@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use oy_ai::{AiProvider, ChatMessage};
+use oy_ai::{AiProvider, ChatMessage, ToolCall};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -234,6 +234,34 @@ fn build_sub_agent_success_output(
     }
 }
 
+/// Execute a single tool call with panic protection.
+/// Returns the result string or a formatted error/panic message.
+fn execute_single_tool_call(tool_registry: &Arc<ToolRegistry>, tool_call: &ToolCall) -> String {
+    match tool_registry.get_clone(&tool_call.function_name) {
+        Some(tool) => {
+            let fn_name = tool_call.function_name.clone();
+            let args = tool_call.arguments.clone();
+            let execute_result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tool.execute(args)));
+            match execute_result {
+                Ok(Ok(r)) => r,
+                Ok(Err(e)) => format!("Error: {}", e),
+                Err(panic_info) => {
+                    let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "Unknown panic reason".to_string()
+                    };
+                    format!("Panic in tool '{}': {}", fn_name, panic_msg)
+                },
+            }
+        },
+        None => format!("Error: Unknown tool: {}", tool_call.function_name),
+    }
+}
+
 fn execute_sub_agent_tool_calls(
     response: &ChatMessage,
     tool_registry: &Arc<ToolRegistry>,
@@ -241,13 +269,7 @@ fn execute_sub_agent_tool_calls(
 ) {
     if let Some(tool_calls) = response.tool_calls.as_ref() {
         for tool_call in tool_calls {
-            let result = match tool_registry.get_clone(&tool_call.function_name) {
-                Some(tool) => match tool.execute(tool_call.arguments.clone()) {
-                    Ok(r) => r,
-                    Err(e) => format!("Error: {}", e),
-                },
-                None => format!("Error: Unknown tool: {}", tool_call.function_name),
-            };
+            let result = execute_single_tool_call(tool_registry, tool_call);
             let tool_msg = ChatMessage::tool(
                 result,
                 tool_call.id.clone(),
@@ -269,7 +291,9 @@ fn save_sub_agent_session(uuid: Uuid, messages: &[ChatMessage]) {
                 .replace(['/', '\\'], "-")
                 .replace(':', "")
         );
-        let _ = save_session(uuid, messages.iter().collect(), &dir_name);
+        if let Err(e) = save_session(uuid, messages.iter().collect(), &dir_name) {
+            eprintln!("Warning: Failed to save sub-agent session: {}", e);
+        }
     }
 }
 
@@ -316,4 +340,193 @@ fn build_sub_agent_messages(
     messages.push(ChatMessage::user(user_content));
 
     messages
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::errors::AgentError;
+    use crate::domain::tool::Tool;
+    use serde_json::Value;
+
+    /// A tool that panics when executed.
+    struct PanicTool;
+    impl Tool for PanicTool {
+        fn name(&self) -> &'static str {
+            "PanicTool"
+        }
+        fn description(&self) -> &'static str {
+            "A tool that panics"
+        }
+        fn schema(&self) -> Value {
+            serde_json::json!({})
+        }
+        fn execute(&self, _args: Value) -> Result<String, AgentError> {
+            panic!("intentional panic for testing");
+        }
+        fn get_system_prompt(&self) -> &str {
+            ""
+        }
+        fn clone_box(&self) -> Box<dyn Tool> {
+            Box::new(Self)
+        }
+    }
+
+    /// A tool that returns a normal result.
+    struct NormalTool;
+    impl Tool for NormalTool {
+        fn name(&self) -> &'static str {
+            "NormalTool"
+        }
+        fn description(&self) -> &'static str {
+            "A normal tool"
+        }
+        fn schema(&self) -> Value {
+            serde_json::json!({})
+        }
+        fn execute(&self, _args: Value) -> Result<String, AgentError> {
+            Ok("normal result".to_string())
+        }
+        fn get_system_prompt(&self) -> &str {
+            ""
+        }
+        fn clone_box(&self) -> Box<dyn Tool> {
+            Box::new(Self)
+        }
+    }
+
+    /// A tool that returns an error.
+    struct ErrorTool;
+    impl Tool for ErrorTool {
+        fn name(&self) -> &'static str {
+            "ErrorTool"
+        }
+        fn description(&self) -> &'static str {
+            "A tool that errors"
+        }
+        fn schema(&self) -> Value {
+            serde_json::json!({})
+        }
+        fn execute(&self, _args: Value) -> Result<String, AgentError> {
+            Err(AgentError::ToolExecutionError(
+                "something went wrong".to_string(),
+            ))
+        }
+        fn get_system_prompt(&self) -> &str {
+            ""
+        }
+        fn clone_box(&self) -> Box<dyn Tool> {
+            Box::new(Self)
+        }
+    }
+
+    #[test]
+    fn test_panic_in_tool_is_caught() {
+        let mut registry = ToolRegistry::new();
+        registry.register(PanicTool);
+        let registry = Arc::new(registry);
+
+        let tool_call = oy_ai::ToolCall {
+            id: "call_1".into(),
+            function_name: "PanicTool".into(),
+            arguments: serde_json::json!({}),
+        };
+        let response = ChatMessage::assistant(None, None, Some(vec![tool_call]));
+        let mut messages = vec![];
+
+        // Should NOT panic
+        execute_sub_agent_tool_calls(&response, &registry, &mut messages);
+
+        assert_eq!(messages.len(), 1);
+        let content = messages[0].content.as_deref().unwrap_or("");
+        assert!(
+            content.contains("Panic in tool 'PanicTool'"),
+            "Expected panic message, got: {}",
+            content
+        );
+        assert!(
+            content.contains("intentional panic for testing"),
+            "Expected original panic message, got: {}",
+            content
+        );
+    }
+
+    #[test]
+    fn test_normal_tool_execution() {
+        let mut registry = ToolRegistry::new();
+        registry.register(NormalTool);
+        let registry = Arc::new(registry);
+
+        let tool_call = oy_ai::ToolCall {
+            id: "call_2".into(),
+            function_name: "NormalTool".into(),
+            arguments: serde_json::json!({}),
+        };
+        let response = ChatMessage::assistant(None, None, Some(vec![tool_call]));
+        let mut messages = vec![];
+
+        execute_sub_agent_tool_calls(&response, &registry, &mut messages);
+
+        assert_eq!(messages.len(), 1);
+        let content = messages[0].content.as_deref().unwrap_or("");
+        assert_eq!(content, "normal result");
+    }
+
+    #[test]
+    fn test_tool_returns_error() {
+        let mut registry = ToolRegistry::new();
+        registry.register(ErrorTool);
+        let registry = Arc::new(registry);
+
+        let tool_call = oy_ai::ToolCall {
+            id: "call_3".into(),
+            function_name: "ErrorTool".into(),
+            arguments: serde_json::json!({}),
+        };
+        let response = ChatMessage::assistant(None, None, Some(vec![tool_call]));
+        let mut messages = vec![];
+
+        execute_sub_agent_tool_calls(&response, &registry, &mut messages);
+
+        assert_eq!(messages.len(), 1);
+        let content = messages[0].content.as_deref().unwrap_or("");
+        assert!(
+            content.contains("Error:"),
+            "Expected Error prefix, got: {}",
+            content
+        );
+        assert!(
+            content.contains("something went wrong"),
+            "Expected error message, got: {}",
+            content
+        );
+    }
+
+    #[test]
+    fn test_unknown_tool() {
+        let registry = Arc::new(ToolRegistry::new());
+
+        let tool_call = oy_ai::ToolCall {
+            id: "call_4".into(),
+            function_name: "UnknownTool".into(),
+            arguments: serde_json::json!({}),
+        };
+        let response = ChatMessage::assistant(None, None, Some(vec![tool_call]));
+        let mut messages = vec![];
+
+        execute_sub_agent_tool_calls(&response, &registry, &mut messages);
+
+        assert_eq!(messages.len(), 1);
+        let content = messages[0].content.as_deref().unwrap_or("");
+        assert!(
+            content.contains("Unknown tool"),
+            "Expected 'Unknown tool' message, got: {}",
+            content
+        );
+        assert!(
+            content.contains("UnknownTool"),
+            "Expected tool name in message, got: {}",
+            content
+        );
+    }
 }
