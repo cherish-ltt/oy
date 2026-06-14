@@ -1602,12 +1602,25 @@ impl App {
             .unwrap_or_default()
             .as_secs();
         let filename = format!("oy_session_{}.html", timestamp);
-        let path = std::path::PathBuf::from(&filename);
+        // Save to .oy-agent-output/sessions-output/html/ under current directory
+        let output_dir = std::path::PathBuf::from(".oy-agent-output/sessions-output/html");
+        let path = output_dir.join(&filename);
+        // Create directory if it doesn't exist
+        if let Err(e) = tokio::fs::create_dir_all(&output_dir).await {
+            self.insert_before_queued(UiMessages(format!(
+                "Failed to create output directory: {}",
+                e
+            )));
+            if self.auto_scroll.get() {
+                self.scroll_offset.set(u16::MAX);
+            }
+            return;
+        }
         match tokio::fs::write(&path, html).await {
             Ok(_) => {
                 let canonical = std::fs::canonicalize(&path)
                     .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or(filename);
+                    .unwrap_or_else(|_| path.to_string_lossy().to_string());
                 self.insert_before_queued(UiMessages(format!(
                     "Session exported to: {}",
                     canonical
