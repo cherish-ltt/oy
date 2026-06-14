@@ -709,50 +709,47 @@ impl App {
                     .unwrap_or(0);
                 self.cursor_pos += len;
             },
+            // Alt+↑ → history up (must come BEFORE plain KeyCode::Up)
+            KeyCode::Up if key_event.modifiers == KeyModifiers::ALT => {
+                self.user_history = self.extract_user_history();
+                if !self.user_history.is_empty() {
+                    let next_index = match self.history_index {
+                        None => 0,
+                        Some(idx) => (idx + 1).min(self.user_history.len() - 1),
+                    };
+                    self.history_index = Some(next_index);
+                    self.input = self.user_history[next_index].clone();
+                    self.cursor_pos = self.input.len();
+                }
+            },
+            // ↑ → only cursor movement
             KeyCode::Up => {
                 let width = self.input_width.get() as usize;
-                if self.input.is_empty() {
-                    // ── 进入历史浏览模式 ──
-                    self.user_history = self.extract_user_history();
-                    if !self.user_history.is_empty() {
-                        let next_index = match self.history_index {
-                            None => 0,
-                            Some(idx) => (idx + 1).min(self.user_history.len() - 1),
-                        };
-                        self.history_index = Some(next_index);
-                        self.input = self.user_history[next_index].clone();
-                        self.cursor_pos = self.input.len();
-                    }
-                } else if self.history_index.is_some() {
-                    // 已在历史模式中，按 ↑ 切换到更旧
-                    if let Some(idx) = self.history_index {
-                        let next_idx = (idx + 1).min(self.user_history.len() - 1);
-                        if next_idx != idx {
-                            self.history_index = Some(next_idx);
-                            self.input = self.user_history[next_idx].clone();
-                            self.cursor_pos = self.input.len();
-                        }
-                    }
-                } else if width > 0 {
+                if width > 0 {
                     self.move_cursor_up(width);
                 }
             },
-            KeyCode::Down => {
-                let width = self.input_width.get() as usize;
+            // Alt+↓ → history down (must come BEFORE plain KeyCode::Down)
+            KeyCode::Down if key_event.modifiers == KeyModifiers::ALT => {
                 if let Some(idx) = self.history_index {
                     if idx == 0 {
-                        // ── 归位：退出历史模式，清空 input ──
+                        // 归位：退出历史模式，清空 input
                         self.history_index = None;
                         self.input.clear();
                         self.cursor_pos = 0;
                     } else {
-                        // ── 切换到更新的历史 prompt ──
+                        // 切换到更新的历史 prompt
                         let prev_idx = idx - 1;
                         self.history_index = Some(prev_idx);
                         self.input = self.user_history[prev_idx].clone();
                         self.cursor_pos = self.input.len();
                     }
-                } else if width > 0 {
+                }
+            },
+            // ↓ → only cursor movement
+            KeyCode::Down => {
+                let width = self.input_width.get() as usize;
+                if width > 0 {
                     self.move_cursor_down(width);
                 }
             },

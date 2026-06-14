@@ -362,14 +362,19 @@ impl App {
             crate::app::AgentType::CommanderAgent => "<CommanderAgent>",
         };
 
+        #[cfg(target_os = "macos")]
+        const HISTORY_HINT: &str = "⌥↑/⌥↓ history";
+        #[cfg(not(target_os = "macos"))]
+        const HISTORY_HINT: &str = "Alt+↑/Alt+↓ history";
+
         let revoke_hint = if !self.pending_prompts.is_empty() {
             " | Ctrl+R revoke"
         } else {
             ""
         };
         let status_text = format!(
-            " {}{}{} {} (Cycle with shift+tab)\n ↑/↓/←/→ move cursor | Enter send/Alt+Enter send to queue  | Ctrl+O expand | Ctrl+C/Esc/q quit{}",
-            agent_label, token_stats, context_display, spinner_char, revoke_hint,
+            " {}{}{} {} (Cycle with shift+tab)\n ↑/↓/←/→ move cursor | {} | Enter send/Alt+Enter send to queue  | Ctrl+O expand | Ctrl+C/Esc/q quit{}",
+            agent_label, token_stats, context_display, spinner_char, HISTORY_HINT, revoke_hint,
         );
 
         let status_paragraph = Paragraph::new(status_text)
