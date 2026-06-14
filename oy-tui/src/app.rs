@@ -133,6 +133,10 @@ pub struct App {
     pub sub_agent_panel_y: Cell<u16>,
     /// 共享 session UUID (MainAgent + CommanderAgent 共用)
     pub session_uuid: Option<Uuid>,
+    /// 用户历史 prompt 列表（从新到旧）
+    pub user_history: Vec<String>,
+    /// 当前浏览的历史索引，None 表示不在历史浏览模式
+    pub history_index: Option<usize>,
 }
 
 impl App {
@@ -362,6 +366,8 @@ impl App {
             sub_agent_scroll: Cell::new(0),
             sub_agent_panel_y: Cell::new(u16::MAX),
             session_uuid: Some(shared_session_uuid),
+            user_history: Vec::new(),
+            history_index: None,
         }
     }
 
@@ -663,6 +669,7 @@ impl App {
                 } else {
                     self.input.clear();
                     self.cursor_pos = 0;
+                    self.history_index = None;
                     // If input started with "/", exit command mode
                     self.app_mode = AppMode::Normal;
                 }
@@ -682,6 +689,7 @@ impl App {
                 // If input becomes empty after "/", go back to Normal
                 if self.input.is_empty() {
                     self.app_mode = AppMode::Normal;
+                    self.history_index = None;
                 }
             },
             KeyCode::Left if self.cursor_pos > 0 => {
@@ -702,13 +710,48 @@ impl App {
             },
             KeyCode::Up => {
                 let width = self.input_width.get() as usize;
-                if width > 0 {
+                if self.input.is_empty() {
+                    // ── 进入历史浏览模式 ──
+                    self.user_history = self.extract_user_history();
+                    if !self.user_history.is_empty() {
+                        let next_index = match self.history_index {
+                            None => 0,
+                            Some(idx) => (idx + 1).min(self.user_history.len() - 1),
+                        };
+                        self.history_index = Some(next_index);
+                        self.input = self.user_history[next_index].clone();
+                        self.cursor_pos = self.input.len();
+                    }
+                } else if self.history_index.is_some() {
+                    // 已在历史模式中，按 ↑ 切换到更旧
+                    if let Some(idx) = self.history_index {
+                        let next_idx = (idx + 1).min(self.user_history.len() - 1);
+                        if next_idx != idx {
+                            self.history_index = Some(next_idx);
+                            self.input = self.user_history[next_idx].clone();
+                            self.cursor_pos = self.input.len();
+                        }
+                    }
+                } else if width > 0 {
                     self.move_cursor_up(width);
                 }
             },
             KeyCode::Down => {
                 let width = self.input_width.get() as usize;
-                if width > 0 {
+                if let Some(idx) = self.history_index {
+                    if idx == 0 {
+                        // ── 归位：退出历史模式，清空 input ──
+                        self.history_index = None;
+                        self.input.clear();
+                        self.cursor_pos = 0;
+                    } else {
+                        // ── 切换到更新的历史 prompt ──
+                        let prev_idx = idx - 1;
+                        self.history_index = Some(prev_idx);
+                        self.input = self.user_history[prev_idx].clone();
+                        self.cursor_pos = self.input.len();
+                    }
+                } else if width > 0 {
                     self.move_cursor_down(width);
                 }
             },
@@ -735,6 +778,8 @@ impl App {
             },
             // Ctrl+O is handled at top-level handle_key_events; do not re-handle here.
             KeyCode::Char(c) => {
+                // 退出历史浏览模式
+                self.history_index = None;
                 self.input.insert(self.cursor_pos, c);
                 self.cursor_pos += c.len_utf8();
                 // Enter command mode when input starts with "/" and matches known commands
@@ -759,6 +804,7 @@ impl App {
         self.expand_paste_snippets();
         let input = std::mem::take(&mut self.input);
         self.cursor_pos = 0;
+        self.history_index = None;
         self.paste_counter = 0;
 
         // Determine prompt kind: Alt+Enter = AltEnter, Enter = Enter
@@ -1016,6 +1062,21 @@ impl App {
             _ => {},
         }
         Ok(())
+    }
+
+    /// 从 self.messages 中提取所有 user 角色的 ChatMessage content，
+    /// 按从新到旧排序返回。
+    fn extract_user_history(&self) -> Vec<String> {
+        self.messages
+            .iter()
+            .rev()
+            .filter_map(|msg| match msg {
+                Message::AgentMessages(chat_msg, _) if chat_msg.role == Role::User => {
+                    chat_msg.content.clone()
+                },
+                _ => None,
+            })
+            .collect()
     }
 
     fn move_cursor_up(&mut self, width: usize) {
