@@ -1578,7 +1578,8 @@ impl App {
         if let Some(ref global_config) = self.global_toml_config
             && config_is_complete(global_config)
         {
-            let ai_config = build_provider_config(global_config);
+            let ai_config = build_provider_config(global_config)
+                .expect("config_is_complete guarantees api_key is set");
             let provider = OpenCodeGoProvider::new(ai_config);
             if let Some(agent_manager) = &self.main_agent {
                 let _ = agent_manager
@@ -1626,7 +1627,8 @@ impl App {
         if let Some(ref global_config) = self.global_toml_config
             && config_is_complete(global_config)
         {
-            let ai_config = build_provider_config(global_config);
+            let ai_config = build_provider_config(global_config)
+                .expect("config_is_complete guarantees api_key is set");
             let provider = OpenCodeGoProvider::new(ai_config);
             if let Some(agent_manager) = &self.main_agent {
                 let _ = agent_manager
@@ -1688,7 +1690,8 @@ impl App {
         let cfg = self.global_toml_config.as_ref().unwrap();
         if config_is_complete(cfg) {
             // All required fields present: restart agent with new provider
-            let ai_config = build_provider_config(cfg);
+            let ai_config =
+                build_provider_config(cfg).expect("config_is_complete guarantees api_key is set");
             let provider = OpenCodeGoProvider::new(ai_config);
             if let Some(agent_manager) = &self.main_agent {
                 let _ = agent_manager
@@ -1753,7 +1756,8 @@ impl App {
         let Some(ref global_config) = self.global_toml_config else {
             return;
         };
-        let ai_config = build_provider_config(global_config);
+        let ai_config = build_provider_config(global_config)
+            .expect("config_is_complete guarantees api_key is set");
         let provider = OpenCodeGoProvider::new(ai_config);
         if let Some(agent_manager) = &self.main_agent {
             let _ = agent_manager
@@ -2027,7 +2031,8 @@ pub async fn start_agent_with_session(
     session_uuid: Uuid,
     session_messages: Vec<ChatMessage>,
 ) -> AgentManager {
-    let ai_config = build_provider_config(global_toml_config);
+    let ai_config = build_provider_config(global_toml_config)
+        .expect("config_is_complete guarantees api_key is set");
     let provider = OpenCodeGoProvider::new(ai_config);
     let mut tool_registry = ToolRegistry::new();
     register_default_tools(&mut tool_registry);
@@ -2053,7 +2058,8 @@ pub async fn start_main_agent_background(
     global_toml_config: &GlobalTomlConfig,
     session_uuid: Uuid,
 ) -> AgentManager {
-    let ai_config = build_provider_config(global_toml_config);
+    let ai_config = build_provider_config(global_toml_config)
+        .expect("config_is_complete guarantees api_key is set");
 
     let provider = OpenCodeGoProvider::new(ai_config);
     let mut tool_registry = ToolRegistry::new();
@@ -2080,7 +2086,8 @@ pub async fn start_commander_agent_background(
     global_toml_config: &GlobalTomlConfig,
     session_uuid: Uuid,
 ) -> AgentManager {
-    let ai_config = build_provider_config(global_toml_config);
+    let ai_config = build_provider_config(global_toml_config)
+        .expect("config_is_complete guarantees api_key is set");
 
     // Create two provider instances: one for CommanderAgent's own LLM calls,
     // one for sub-agents' LLM calls (shared via Arc).
@@ -2130,7 +2137,8 @@ pub async fn start_commander_agent_with_session(
     session_uuid: Uuid,
     session_messages: Vec<ChatMessage>,
 ) -> AgentManager {
-    let ai_config = build_provider_config(global_toml_config);
+    let ai_config = build_provider_config(global_toml_config)
+        .expect("config_is_complete guarantees api_key is set");
 
     let provider = OpenCodeGoProvider::new(ai_config.clone());
     let provider_for_sub_agents = Arc::new(OpenCodeGoProvider::new(ai_config));
