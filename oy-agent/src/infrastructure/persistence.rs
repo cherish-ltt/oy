@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::domain::agent::Agent;
 use crate::domain::errors::AgentError;
 use crate::infrastructure::agents::main_agent::MainAgent;
+use log::warn;
 
 /// A summary entry for a saved session.
 #[derive(Debug, Clone)]
@@ -45,8 +46,8 @@ pub fn list_sub_agent_sessions() -> Result<Vec<SessionEntry>, AgentError> {
         match collect_entries_from_dir(&sub_agents_path, &sub_project_name, entries) {
             Ok(()) => Ok(()),
             Err(e) => {
-                eprintln!(
-                    "Warning: Cannot read sub_agents dir `{}`: {}, skipping",
+                warn!(
+                    "Cannot read sub_agents dir `{}`: {}, skipping",
                     sub_agents_path.display(),
                     e
                 );

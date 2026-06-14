@@ -1741,6 +1741,7 @@ dependencies = [
  "chrono",
  "dirs",
  "futures",
+ "log",
  "oy-ai",
  "serde",
  "serde_json",

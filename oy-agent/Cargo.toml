@@ -17,6 +17,7 @@ chrono.workspace = true
 tokio.workspace = true
 futures.workspace = true
 tiktoken-rs.workspace = true
+log.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true

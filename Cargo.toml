@@ -40,6 +40,9 @@ color-eyre  = "0.6.3"
 async-openai = { version = "=0.41.0", features = ["byot", "chat-completion"] }
 tiktoken-rs = "0.12.0"
 
+# ── Logging ──
+log         = "0.4"
+
 # ── Utilities ──
 dirs        = "6"
 chrono      = { version = "0.4.45", default-features = false, features = ["clock"] }

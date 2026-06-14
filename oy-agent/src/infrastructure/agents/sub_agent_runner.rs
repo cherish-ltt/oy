@@ -8,6 +8,7 @@ use crate::{
     domain::sub_agent::{SubAgentOutput, SubAgentStatus, SubAgentType},
     infrastructure::{persistence::save_session, tools::ToolRegistry},
 };
+use log::warn;
 
 /// Events emitted during sub-agent execution for UI progress reporting.
 #[derive(Debug, Clone)]
@@ -292,7 +293,7 @@ fn save_sub_agent_session(uuid: Uuid, messages: &[ChatMessage]) {
                 .replace(':', "")
         );
         if let Err(e) = save_session(uuid, messages.iter().collect(), &dir_name) {
-            eprintln!("Warning: Failed to save sub-agent session: {}", e);
+            warn!("Failed to save sub-agent session: {}", e);
         }
     }
 }
