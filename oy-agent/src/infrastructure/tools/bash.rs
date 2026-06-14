@@ -1,5 +1,8 @@
 use serde_json::Value;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use crate::domain::errors::AgentError;
 use crate::domain::tool::Tool;
@@ -24,6 +27,53 @@ impl BashTool {
             }
         }
         false
+    }
+
+    fn execute_with_timeout(command: &str, timeout_secs: u64) -> Result<String, AgentError> {
+        let child = Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| AgentError::ToolExecutionError(format!("Failed to spawn: {}", e)))?;
+
+        let pid = child.id();
+        let (tx, rx) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            let output = child.wait_with_output();
+            let _ = tx.send(output);
+        });
+
+        let timeout = Duration::from_secs(timeout_secs);
+        match rx.recv_timeout(timeout) {
+            Ok(Ok(output)) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Ok(format!("{}{}", stdout, stderr))
+            },
+            Ok(Err(e)) => Ok(format!("Error executing command: {}", e)),
+            Err(_) => {
+                Self::kill_process(pid);
+                let _ = handle.join();
+                Ok(format!("Command timed out after {} seconds", timeout_secs))
+            },
+        }
+    }
+
+    fn kill_process(pid: u32) {
+        #[cfg(unix)]
+        {
+            let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
+        }
+        #[cfg(windows)]
+        {
+            let _ = Command::new("taskkill")
+                .arg("/F")
+                .arg("/PID")
+                .arg(pid.to_string())
+                .status();
+        }
     }
 }
 
@@ -63,14 +113,9 @@ impl Tool for BashTool {
             return Ok("Command rejected: this command is not allowed for security reasons".into());
         }
 
-        match Command::new("sh").arg("-c").arg(command).output() {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                Ok(format!("{}{}", stdout, stderr))
-            },
-            Err(e) => Ok(format!("Error executing command: {}", e)),
-        }
+        let timeout = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(150);
+
+        Self::execute_with_timeout(command, timeout)
     }
 
     fn get_system_prompt(&self) -> &str {
@@ -165,5 +210,31 @@ mod tests {
     #[test]
     fn test_bash_tool_system_prompt() {
         assert!(!BashTool.get_system_prompt().is_empty());
+    }
+
+    #[test]
+    fn test_bash_tool_timeout_normal() {
+        let result = BashTool
+            .execute(json!({"command": "echo 'hello world'", "timeout": 30}))
+            .unwrap();
+        assert!(result.contains("hello world"));
+    }
+
+    #[test]
+    fn test_bash_tool_timeout_triggers() {
+        let result = BashTool
+            .execute(json!({"command": "sleep 10", "timeout": 1}))
+            .unwrap();
+        assert!(
+            result.contains("timed out"),
+            "Expected timeout message, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_bash_tool_timeout_default() {
+        let result = BashTool.execute(json!({"command": "echo ok"})).unwrap();
+        assert!(result.contains("ok"));
     }
 }
