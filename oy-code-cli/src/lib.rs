@@ -12,10 +12,12 @@ use oy_agent::infrastructure::tools::read::ReadTool;
 use oy_agent::infrastructure::tools::write::WriteTool;
 use oy_agent::infrastructure::tools::{ToolRegistry, bash::BashTool};
 use oy_ai::AiConfig;
+use oy_ai::ChatMessage;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::process::Command;
+use uuid::Uuid;
 
 /// CLI arguments for oy-agent
 #[derive(Parser, Debug)]
@@ -51,6 +53,11 @@ pub enum Commands {
     /// List and restore sub-agent sessions
     #[command(name = "sub-sessions")]
     SubSessions,
+    /// Load a specific session file by path
+    Session {
+        /// Path to the session JSON file
+        path: PathBuf,
+    },
 }
 
 /// Configuration loaded from ~/.oy-ai-agent/config.toml
@@ -131,6 +138,11 @@ pub async fn run(args: CliArgs) -> Result<(), anyhow::Error> {
     // 2. Sub-sessions command
     if matches!(args.command, Some(Commands::SubSessions)) {
         return run_sub_sessions().await;
+    }
+
+    // 2a. Session subcommand
+    if let Some(Commands::Session { path }) = &args.command {
+        return run_session_command(path).await;
     }
 
     // 3. Continue latest session
@@ -305,19 +317,20 @@ async fn run_sub_sessions() -> Result<(), anyhow::Error> {
 
 // ── Load session by path ───────────────────────────────────────
 
-async fn run_session_path(path: &Path) -> Result<(), anyhow::Error> {
+/// Validate that a path points to a valid session file and load its messages.
+fn validate_session_file(path: &Path) -> Result<(Uuid, Vec<ChatMessage>), String> {
     if !path.exists() {
-        return Err(anyhow::anyhow!(
-            "Session file not found: {}",
-            path.display()
-        ));
+        return Err(format!("Session file not found: {}", path.display()));
     }
     if !path.is_file() {
-        return Err(anyhow::anyhow!("Path is not a file: {}", path.display()));
+        return Err(format!("Path is not a file: {}", path.display()));
     }
+    oy_agent::infrastructure::persistence::load_session_messages(path)
+        .map_err(|e| format!("Failed to load session file: {}", e))
+}
 
-    // Validate that the file contains valid session data
-    match oy_agent::infrastructure::persistence::load_session_messages(path) {
+async fn run_session_path(path: &Path) -> Result<(), anyhow::Error> {
+    match validate_session_file(path) {
         Ok((uuid, _msgs)) => {
             eprintln!("📂 Loading session: {} ({})", uuid, path.display());
             oy_tui::run_tui(Some(path.to_path_buf()))
@@ -325,7 +338,27 @@ async fn run_session_path(path: &Path) -> Result<(), anyhow::Error> {
                 .map_err(|e| anyhow::Error::msg(format!("{}", e)))?;
             Ok(())
         },
-        Err(e) => Err(anyhow::anyhow!("Failed to load session file: {}", e)),
+        Err(e) => Err(anyhow::anyhow!("{}", e)),
+    }
+}
+
+/// Load a session by path (subcommand version).
+/// Prints friendly messages instead of returning errors for invalid files.
+async fn run_session_command(path: &Path) -> Result<(), anyhow::Error> {
+    match validate_session_file(path) {
+        Ok((uuid, _msgs)) => {
+            eprintln!("📂 Loading session: {} ({})", uuid, path.display());
+            oy_tui::run_tui(Some(path.to_path_buf()))
+                .await
+                .map_err(|e| anyhow::Error::msg(format!("{}", e)))?;
+            Ok(())
+        },
+        Err(e) => {
+            eprintln!("❌ '{}' is not a valid OY session file.", path.display());
+            eprintln!("   Reason: {}", e);
+            eprintln!("ℹ️  No new conversation will be created.");
+            Ok(())
+        },
     }
 }
 
