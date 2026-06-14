@@ -21,6 +21,7 @@ pub enum CommandId {
     SetApiKey,
     SetModel,
     ReadClaudeSkills,
+    OutputSessionToHtml,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +49,11 @@ impl CommandRegistry {
             CommandInfo {
                 name: "/model",
                 description: "Set full API configuration (base-url, api-key, model, context)",
+                children: vec![],
+            },
+            CommandInfo {
+                name: "/output-session-to-html",
+                description: "Export the current session to an HTML file",
                 children: vec![],
             },
             CommandInfo {
@@ -201,9 +207,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_registry_new_has_two_commands() {
+    fn test_registry_new_has_three_commands() {
         let reg = CommandRegistry::new();
-        assert_eq!(reg.commands.len(), 2);
+        assert_eq!(reg.commands.len(), 3);
     }
 
     #[test]
@@ -217,7 +223,7 @@ mod tests {
     fn test_search_slash_returns_all() {
         let reg = CommandRegistry::new();
         let result = reg.search("/");
-        assert_eq!(result.len(), 2);
+        assert_eq!(result.len(), 3);
     }
 
     #[test]
@@ -247,7 +253,8 @@ mod tests {
     fn test_commands_sorted_alphabetically() {
         let reg = CommandRegistry::new();
         assert_eq!(reg.commands[0].name, "/model");
-        assert_eq!(reg.commands[1].name, "/settings");
+        assert_eq!(reg.commands[1].name, "/output-session-to-html");
+        assert_eq!(reg.commands[2].name, "/settings");
     }
 
     #[test]
@@ -260,7 +267,7 @@ mod tests {
     #[test]
     fn test_settings_has_children() {
         let reg = CommandRegistry::new();
-        let settings = &reg.commands[1];
+        let settings = &reg.commands[2];
         assert_eq!(settings.children.len(), 7);
         assert_eq!(settings.children[0].name, "/theme");
         assert_eq!(settings.children[1].name, "/thinking");

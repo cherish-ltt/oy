@@ -4,6 +4,7 @@ use crate::{
     command::{CommandId, CommandRegistry, context_items, theme_items, thinking_items},
     config::{VERSION, WELCOME_TIPS_VEC},
     event::{AppEvent, Event, EventHandler},
+    html_export::export_session_to_html,
     load_config::{GlobalTomlConfig, build_provider_config, register_default_tools},
     message::{
         Message::{self, AgentMessages, ToolCallMsg, UiMessages},
@@ -21,11 +22,11 @@ use oy_agent::{
 };
 use ratatui::DefaultTerminal;
 use std::path::PathBuf;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use std::{
     cell::Cell,
     collections::{HashMap, VecDeque},
     sync::Arc,
-    time::Instant,
 };
 use uuid::Uuid;
 
@@ -1554,13 +1555,19 @@ impl App {
 
         let trimmed = input.trim();
 
-        // Check if any top-level command matches and has children → open submenu
+        // Check if any top-level command matches
         if let Some(cmd) = self
             .command_registry
             .commands
             .iter()
             .find(|c| c.name == trimmed)
         {
+            // Direct export for /output-session-to-html
+            if cmd.name == "/output-session-to-html" {
+                self.execute_export_html().await;
+                return true;
+            }
+
             if !cmd.children.is_empty() {
                 let items: Vec<(String, String)> = cmd
                     .children
@@ -1587,6 +1594,35 @@ impl App {
 
         // Not a recognized command
         false
+    }
+
+    /// Export the current session messages to a self-contained HTML file.
+    async fn execute_export_html(&mut self) {
+        let msgs: Vec<&Message> = self.messages.iter().collect();
+        let html = export_session_to_html(&msgs);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let filename = format!("oy_session_{}.html", timestamp);
+        let path = std::path::PathBuf::from(&filename);
+        match tokio::fs::write(&path, html).await {
+            Ok(_) => {
+                let canonical = std::fs::canonicalize(&path)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or(filename);
+                self.insert_before_queued(UiMessages(format!(
+                    "Session exported to: {}",
+                    canonical
+                )));
+            },
+            Err(e) => {
+                self.insert_before_queued(UiMessages(format!("Failed to export session: {}", e)));
+            },
+        }
+        if self.auto_scroll.get() {
+            self.scroll_offset.set(u16::MAX);
+        }
     }
 
     fn switch_theme(&mut self, name: &str) {
