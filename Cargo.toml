@@ -3,16 +3,16 @@ resolver = "2"
 members = ["oy-ai", "oy-agent", "oy-code-cli", "oy-tui"]
 
 [workspace.package]
-version = "0.7.1"
+version = "0.8.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/cherish-ltt/oy"
 
 [workspace.dependencies]
 # ── Internal workspace crates ──
-oy-ai       = { path = "oy-ai", version = "0.7.1" }
-oy-agent    = { path = "oy-agent", version = "0.7.1" }
-oy-tui      = { path = "oy-tui", version = "0.7.1" }
+oy-ai       = { path = "oy-ai", version = "0.8.0" }
+oy-agent    = { path = "oy-agent", version = "0.8.0" }
+oy-tui      = { path = "oy-tui", version = "0.8.0" }
 
 # ── Async runtime & concurrency ──
 tokio       = { version = "1", features = ["rt-multi-thread", "macros", "sync", "process", "time"] }

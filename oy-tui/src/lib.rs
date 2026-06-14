@@ -9,6 +9,7 @@ pub mod ui;
 mod agent;
 mod command;
 mod config;
+mod html_export;
 mod load_config;
 mod message;
 mod theme;

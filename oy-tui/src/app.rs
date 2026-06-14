@@ -4,6 +4,7 @@ use crate::{
     command::{CommandId, CommandRegistry, context_items, theme_items, thinking_items},
     config::{VERSION, WELCOME_TIPS_VEC},
     event::{AppEvent, Event, EventHandler},
+    html_export::export_session_to_html,
     load_config::{GlobalTomlConfig, build_provider_config, register_default_tools},
     message::{
         Message::{self, AgentMessages, ToolCallMsg, UiMessages},
@@ -21,11 +22,11 @@ use oy_agent::{
 };
 use ratatui::DefaultTerminal;
 use std::path::PathBuf;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use std::{
     cell::Cell,
     collections::{HashMap, VecDeque},
     sync::Arc,
-    time::Instant,
 };
 use uuid::Uuid;
 
@@ -708,50 +709,49 @@ impl App {
                     .unwrap_or(0);
                 self.cursor_pos += len;
             },
+            // Alt+↑ → history up (must come BEFORE plain KeyCode::Up)
+            KeyCode::Up if key_event.modifiers == KeyModifiers::ALT => {
+                if self.history_index.is_none() {
+                    self.user_history = self.extract_user_history();
+                }
+                if !self.user_history.is_empty() {
+                    let next_index = match self.history_index {
+                        None => 0,
+                        Some(idx) => (idx + 1).min(self.user_history.len() - 1),
+                    };
+                    self.history_index = Some(next_index);
+                    self.input = self.user_history[next_index].clone();
+                    self.cursor_pos = self.input.len();
+                }
+            },
+            // ↑ → only cursor movement
             KeyCode::Up => {
                 let width = self.input_width.get() as usize;
-                if self.input.is_empty() {
-                    // ── 进入历史浏览模式 ──
-                    self.user_history = self.extract_user_history();
-                    if !self.user_history.is_empty() {
-                        let next_index = match self.history_index {
-                            None => 0,
-                            Some(idx) => (idx + 1).min(self.user_history.len() - 1),
-                        };
-                        self.history_index = Some(next_index);
-                        self.input = self.user_history[next_index].clone();
-                        self.cursor_pos = self.input.len();
-                    }
-                } else if self.history_index.is_some() {
-                    // 已在历史模式中，按 ↑ 切换到更旧
-                    if let Some(idx) = self.history_index {
-                        let next_idx = (idx + 1).min(self.user_history.len() - 1);
-                        if next_idx != idx {
-                            self.history_index = Some(next_idx);
-                            self.input = self.user_history[next_idx].clone();
-                            self.cursor_pos = self.input.len();
-                        }
-                    }
-                } else if width > 0 {
+                if width > 0 {
                     self.move_cursor_up(width);
                 }
             },
-            KeyCode::Down => {
-                let width = self.input_width.get() as usize;
+            // Alt+↓ → history down (must come BEFORE plain KeyCode::Down)
+            KeyCode::Down if key_event.modifiers == KeyModifiers::ALT => {
                 if let Some(idx) = self.history_index {
                     if idx == 0 {
-                        // ── 归位：退出历史模式，清空 input ──
+                        // 归位：退出历史模式，清空 input
                         self.history_index = None;
                         self.input.clear();
                         self.cursor_pos = 0;
                     } else {
-                        // ── 切换到更新的历史 prompt ──
+                        // 切换到更新的历史 prompt
                         let prev_idx = idx - 1;
                         self.history_index = Some(prev_idx);
                         self.input = self.user_history[prev_idx].clone();
                         self.cursor_pos = self.input.len();
                     }
-                } else if width > 0 {
+                }
+            },
+            // ↓ → only cursor movement
+            KeyCode::Down => {
+                let width = self.input_width.get() as usize;
+                if width > 0 {
                     self.move_cursor_down(width);
                 }
             },
@@ -1554,13 +1554,19 @@ impl App {
 
         let trimmed = input.trim();
 
-        // Check if any top-level command matches and has children → open submenu
+        // Check if any top-level command matches
         if let Some(cmd) = self
             .command_registry
             .commands
             .iter()
             .find(|c| c.name == trimmed)
         {
+            // Direct export for /output-session-to-html
+            if cmd.name == "/output-session-to-html" {
+                self.execute_export_html().await;
+                return true;
+            }
+
             if !cmd.children.is_empty() {
                 let items: Vec<(String, String)> = cmd
                     .children
@@ -1587,6 +1593,49 @@ impl App {
 
         // Not a recognized command
         false
+    }
+
+    /// Export the current session messages to a self-contained HTML file.
+    async fn execute_export_html(&mut self) {
+        let msgs: Vec<&Message> = self.messages.iter().collect();
+        let html = export_session_to_html(&msgs);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let filename = format!("oy_session_{}.html", timestamp);
+        // Save to .oy-agent-output/sessions-output/html/ under current directory
+        let output_dir = std::path::PathBuf::from(".oy-agent-output/sessions-output/html");
+        let path = output_dir.join(&filename);
+        // Create directory if it doesn't exist
+        if let Err(e) = tokio::fs::create_dir_all(&output_dir).await {
+            self.insert_before_queued(UiMessages(format!(
+                "Failed to create output directory: {}",
+                e
+            )));
+            if self.auto_scroll.get() {
+                self.scroll_offset.set(u16::MAX);
+            }
+            return;
+        }
+        match tokio::fs::write(&path, html).await {
+            Ok(_) => {
+                let canonical = tokio::fs::canonicalize(&path)
+                    .await
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| path.to_string_lossy().to_string());
+                self.insert_before_queued(UiMessages(format!(
+                    "Session exported to: {}",
+                    canonical
+                )));
+            },
+            Err(e) => {
+                self.insert_before_queued(UiMessages(format!("Failed to export session: {}", e)));
+            },
+        }
+        if self.auto_scroll.get() {
+            self.scroll_offset.set(u16::MAX);
+        }
     }
 
     fn switch_theme(&mut self, name: &str) {
