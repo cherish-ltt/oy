@@ -62,24 +62,17 @@ pub(crate) fn replace_messages_preserve_system_prompt(
 ) {
     let system_prompt = messages.front().cloned();
     messages.clear();
-    if let Some(sys) = system_prompt {
-        messages.push_back(sys);
-        let mut iter = msgs.into_iter();
-        if let Some(first) = iter.next()
-            && first.role != Role::System
-        {
-            messages.push_back(first);
-        }
-        for msg in iter {
-            messages.push_back(msg);
-        }
-    } else {
-        for msg in msgs {
-            if msg.role != Role::System {
-                messages.push_back(msg);
-            }
-        }
+    let mut iter = msgs.into_iter();
+    // 跳过源的第一个 System 消息（已保留自己的 System prompt）
+    if let Some(msg) = iter.next()
+        && msg.role != Role::System
+    {
+        messages.push_back(msg);
     }
+    if let Some(sys) = system_prompt {
+        messages.push_front(sys);
+    }
+    messages.extend(iter);
 }
 
 #[derive(Debug, Clone)]
