@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use oy_agent::infrastructure::file_permissions::set_file_permissions_600;
 use oy_agent::{
     infrastructure::tools::{
         ToolRegistry, bash::BashTool, edit::EditTool, grep::GrepTool, read::ReadTool,
@@ -76,6 +77,7 @@ impl GlobalTomlConfig {
         let toml_string =
             toml::to_string(&existing).map_err(|e| format!("Failed to serialize config: {}", e))?;
         fs::write(&path, toml_string).map_err(|e| format!("Failed to write config: {}", e))?;
+        set_file_permissions_600(&path).map_err(|e| format!("Failed to set permissions: {}", e))?;
         Ok(())
     }
 }
