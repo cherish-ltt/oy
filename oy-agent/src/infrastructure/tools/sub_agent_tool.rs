@@ -146,7 +146,7 @@ impl Tool for CreateSubAgentTool {
             progress_tx: self.progress_tx.clone(),
         }));
 
-        Ok(format_sub_agent_result(&result, &agent_type))
+        Ok(crate::domain::sub_agent::format_sub_agent_output(&result))
     }
 
     fn get_system_prompt(&self) -> &str {
@@ -162,29 +162,5 @@ impl Tool for CreateSubAgentTool {
             tool_registry: self.tool_registry.clone(),
             progress_tx: self.progress_tx.clone(),
         })
-    }
-}
-
-/// Format the sub-agent output for CommanderAgent consumption.
-fn format_sub_agent_result(result: &SubAgentOutput, agent_type: &SubAgentType) -> String {
-    if result.success {
-        format!(
-            "[{} 完成 - {} 轮]\n{}\n{}",
-            agent_type,
-            result.rounds_used,
-            result.summary,
-            match agent_type {
-                SubAgentType::Planner => "计划已创建，Worker 可引用此计划文件。",
-                SubAgentType::Worker => "代码已产出，Reviewer 可审查。",
-                SubAgentType::Reviewer => "审查完成，请检查 '通过: 是/否' 决定下一步。",
-                SubAgentType::GitHelper => "操作已完成（commit/issue/PR）。",
-            }
-        )
-    } else {
-        let err = result.error.as_deref().unwrap_or("Unknown error");
-        format!(
-            "[{} 失败 - {} 轮]\n错误: {}",
-            agent_type, result.rounds_used, err
-        )
     }
 }

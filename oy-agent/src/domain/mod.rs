@@ -9,7 +9,9 @@ pub(crate) use agent::Agent;
 pub use agent::{PromptKind, PromptRequest};
 pub use errors::AgentError;
 pub use skill::SkillSummary;
-pub use sub_agent::{COMMANDER_SYSTEM_PROMPT, SubAgentOutput, SubAgentStatus, SubAgentType};
+pub use sub_agent::{
+    COMMANDER_SYSTEM_PROMPT, SubAgentOutput, SubAgentStatus, SubAgentType, format_sub_agent_output,
+};
 pub use token_counter::{
     TokenUsage, count_input_side_tokens, count_input_tokens, count_message_tokens,
     count_output_side_tokens, count_output_tokens, count_tokens, format_token_count,

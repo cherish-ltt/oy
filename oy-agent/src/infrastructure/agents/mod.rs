@@ -388,31 +388,8 @@ impl Worker {
         tc_name: String,
         tc_args: serde_json::Value,
         output: crate::domain::sub_agent::SubAgentOutput,
-        agent_type: SubAgentType,
     ) -> ChatMessage {
-        let result_str = if output.success {
-            format!(
-                "[{} 完成 - {} 轮]\n{}\n{}",
-                agent_type,
-                output.rounds_used,
-                output.summary,
-                match agent_type {
-                    SubAgentType::Planner => "计划已创建，Worker 可引用此计划文件。",
-                    SubAgentType::Worker => "代码已产出，Reviewer 可审查。",
-                    SubAgentType::Reviewer => {
-                        "审查完成，请检查 '通过: 是/否' 决定下一步。"
-                    },
-                    SubAgentType::GitHelper => "操作已完成（commit/issue/PR）。",
-                }
-            )
-        } else {
-            let err = output.error.unwrap_or_default();
-            format!(
-                "[{} 失败 - {} 轮]\n错误: {}",
-                agent_type, output.rounds_used, err
-            )
-        };
-
+        let result_str = crate::domain::sub_agent::format_sub_agent_output(&output);
         ChatMessage::tool(result_str, tc_id, Some(tc_name), Some(tc_args))
     }
 
@@ -668,7 +645,7 @@ async fn run_sub_agent_async(
     })
     .await;
 
-    Worker::format_sub_agent_result(tc.id, tc.function_name, tc.arguments, output, agent_type)
+    Worker::format_sub_agent_result(tc.id, tc.function_name, tc.arguments, output)
 }
 
 /// Spawn a tokio task that runs a known tool with a timeout.
@@ -849,166 +826,52 @@ mod tests {
     }
 
     // ── format_sub_agent_result tests ────────────────────────────────────
+    // These tests verify ChatMessage wrapping only.
+    // Formatting content correctness is tested in domain::sub_agent tests.
 
     #[test]
-    fn test_format_sub_agent_result_planner_success() {
+    fn test_format_sub_agent_result_wraps_as_tool_message() {
         let output = SubAgentOutput {
             agent_type: SubAgentType::Planner,
             success: true,
-            summary: "计划已完成，包含3个步骤。".to_string(),
-            rounds_used: 5,
-            error: None,
-        };
-        let tc_args = json!({"agent_type": "planner", "task": "制定重构计划"});
-        let msg = Worker::format_sub_agent_result(
-            "call_p001".to_string(),
-            "create_sub_agent".to_string(),
-            tc_args.clone(),
-            output,
-            SubAgentType::Planner,
-        );
-
-        assert_eq!(msg.role, Role::Tool);
-        assert_eq!(msg.tool_call_id.as_deref(), Some("call_p001"));
-        assert_eq!(msg.function_name.as_deref(), Some("create_sub_agent"));
-        assert_eq!(msg.tool_call_arguments.as_ref(), Some(&tc_args));
-        let content = msg.content.as_deref().unwrap();
-        assert!(content.contains("完成"), "成功时内容应包含「完成」");
-        assert!(
-            content.contains("计划已创建"),
-            "Planner 成功时内容应包含「计划已创建」"
-        );
-        assert!(
-            content.contains("[Planner 完成 - 5 轮]"),
-            "内容应包含类型头部"
-        );
-        assert!(content.contains("计划已完成"), "内容应包含 summary");
-    }
-
-    #[test]
-    fn test_format_sub_agent_result_worker_success() {
-        let output = SubAgentOutput {
-            agent_type: SubAgentType::Worker,
-            success: true,
-            summary: "代码已实现并测试通过。".to_string(),
+            summary: "test summary".to_string(),
             rounds_used: 3,
             error: None,
         };
-        let tc_args = json!({"agent_type": "worker", "task": "实现用户接口"});
+        let tc_args = json!({"agent_type": "planner", "task": "test"});
         let msg = Worker::format_sub_agent_result(
-            "call_w001".to_string(),
+            "call_001".to_string(),
             "create_sub_agent".to_string(),
             tc_args.clone(),
             output,
-            SubAgentType::Worker,
         );
 
         assert_eq!(msg.role, Role::Tool);
-        assert_eq!(msg.tool_call_id.as_deref(), Some("call_w001"));
+        assert_eq!(msg.tool_call_id.as_deref(), Some("call_001"));
         assert_eq!(msg.function_name.as_deref(), Some("create_sub_agent"));
         assert_eq!(msg.tool_call_arguments.as_ref(), Some(&tc_args));
-        let content = msg.content.as_deref().unwrap();
-        assert!(content.contains("完成"));
-        assert!(
-            content.contains("代码已产出"),
-            "Worker 成功时内容应包含「代码已产出」"
-        );
-        assert!(content.contains("[Worker 完成 - 3 轮]"));
-        assert!(content.contains("代码已实现"));
+        // Formatting content is validated by domain::sub_agent::format_sub_agent_output tests
+        assert!(msg.content.as_deref().unwrap().contains("Planner"));
     }
 
     #[test]
-    fn test_format_sub_agent_result_reviewer_success() {
+    fn test_format_sub_agent_result_failure_wraps_as_tool_message() {
         let output = SubAgentOutput {
-            agent_type: SubAgentType::Reviewer,
-            success: true,
-            summary: "审查通过，无严重问题。".to_string(),
-            rounds_used: 2,
-            error: None,
-        };
-        let tc_args = json!({"agent_type": "reviewer", "task": "审查代码质量"});
-        let msg = Worker::format_sub_agent_result(
-            "call_r001".to_string(),
-            "create_sub_agent".to_string(),
-            tc_args.clone(),
-            output,
-            SubAgentType::Reviewer,
-        );
-
-        assert_eq!(msg.role, Role::Tool);
-        assert_eq!(msg.tool_call_id.as_deref(), Some("call_r001"));
-        assert_eq!(msg.function_name.as_deref(), Some("create_sub_agent"));
-        assert_eq!(msg.tool_call_arguments.as_ref(), Some(&tc_args));
-        let content = msg.content.as_deref().unwrap();
-        assert!(content.contains("完成"));
-        assert!(
-            content.contains("审查完成"),
-            "Reviewer 成功时内容应包含「审查完成」"
-        );
-        assert!(content.contains("[Reviewer 完成 - 2 轮]"));
-        assert!(content.contains("审查通过"));
-    }
-
-    #[test]
-    fn test_format_sub_agent_result_git_helper_success() {
-        let output = SubAgentOutput {
-            agent_type: SubAgentType::GitHelper,
-            success: true,
-            summary: "已提交 commit 并创建 PR。".to_string(),
-            rounds_used: 1,
-            error: None,
-        };
-        let tc_args = json!({"agent_type": "git_helper", "task": "提交代码"});
-        let msg = Worker::format_sub_agent_result(
-            "call_g001".to_string(),
-            "create_sub_agent".to_string(),
-            tc_args.clone(),
-            output,
-            SubAgentType::GitHelper,
-        );
-
-        assert_eq!(msg.role, Role::Tool);
-        assert_eq!(msg.tool_call_id.as_deref(), Some("call_g001"));
-        assert_eq!(msg.function_name.as_deref(), Some("create_sub_agent"));
-        assert_eq!(msg.tool_call_arguments.as_ref(), Some(&tc_args));
-        let content = msg.content.as_deref().unwrap();
-        assert!(content.contains("完成"));
-        assert!(
-            content.contains("commit/issue/PR"),
-            "GitHelper 成功时内容应包含「commit/issue/PR」"
-        );
-        assert!(content.contains("[GitHelper 完成 - 1 轮]"));
-        assert!(content.contains("已提交 commit"));
-    }
-
-    #[test]
-    fn test_format_sub_agent_result_failure() {
-        let output = SubAgentOutput {
-            agent_type: SubAgentType::Planner,
+            agent_type: SubAgentType::Worker,
             success: false,
             summary: "".to_string(),
             rounds_used: 10,
-            error: Some("执行过程中遇到未预期的错误：文件无法读取。".to_string()),
+            error: Some("Something went wrong".to_string()),
         };
-        let tc_args = json!({"agent_type": "planner", "task": "失败的任务"});
+        let tc_args = json!({"agent_type": "worker", "task": "fail"});
         let msg = Worker::format_sub_agent_result(
-            "call_f001".to_string(),
+            "call_002".to_string(),
             "create_sub_agent".to_string(),
             tc_args.clone(),
             output,
-            SubAgentType::Planner,
         );
 
         assert_eq!(msg.role, Role::Tool);
-        assert_eq!(msg.tool_call_id.as_deref(), Some("call_f001"));
-        assert_eq!(msg.function_name.as_deref(), Some("create_sub_agent"));
-        assert_eq!(msg.tool_call_arguments.as_ref(), Some(&tc_args));
-        let content = msg.content.as_deref().unwrap();
-        assert!(content.contains("失败"), "失败时内容应包含「失败」");
-        assert!(
-            content.contains("执行过程中遇到未预期的错误"),
-            "失败时内容应包含错误消息"
-        );
-        assert!(content.contains("[Planner 失败 - 10 轮]"));
+        assert!(msg.content.as_deref().unwrap().contains("失败"));
     }
 }
