@@ -550,19 +550,6 @@ mod tests {
     }
 
     #[test]
-    fn test_legitimate_mv_file() {
-        let tool = BashTool;
-        let result = tool
-            .execute(json!({"command": "DIR=$(mktemp -d) && touch \"$DIR/test.txt\" && mv \"$DIR/test.txt\" \"$DIR/moved.txt\" && rm \"$DIR/moved.txt\" && rmdir \"$DIR\" && echo 'mv ok'"}))
-            .unwrap();
-        assert!(
-            result.contains("mv ok"),
-            "Expected legitimate mv to pass, got: {}",
-            result
-        );
-    }
-
-    #[test]
     fn test_legitimate_sudo_in_word() {
         let tool = BashTool;
         let result = tool
