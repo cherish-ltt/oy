@@ -47,15 +47,15 @@ impl Tool for WriteTool {
 
         // ── 自动创建父目录（防止因父目录不存在而写入失败）──
         let path = std::path::Path::new(file_path);
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    AgentError::ToolExecutionError(format!(
-                        "Failed to create parent directories: {}",
-                        e
-                    ))
-                })?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                AgentError::ToolExecutionError(format!(
+                    "Failed to create parent directories: {}",
+                    e
+                ))
+            })?;
         }
 
         match std::fs::write(file_path, content) {
