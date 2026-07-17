@@ -74,6 +74,35 @@ pub enum SubAgentStatus {
     Failed(String),
 }
 
+/// Format the sub-agent output into a human-readable result string.
+///
+/// Used by both `CreateSubAgentTool::execute` (returns `String`)
+/// and `Worker::format_sub_agent_result` (wraps into `ChatMessage`).
+pub fn format_sub_agent_output(result: &SubAgentOutput) -> String {
+    if result.success {
+        format!(
+            "[{} 完成 - {} 轮]\n{}\n{}",
+            result.agent_type,
+            result.rounds_used,
+            result.summary,
+            match result.agent_type {
+                SubAgentType::Planner => "计划已创建，Worker 可引用此计划文件。",
+                SubAgentType::Worker => "代码已产出，Reviewer 可审查。",
+                SubAgentType::Reviewer => {
+                    "审查完成，请检查 '通过: 是/否' 决定下一步。"
+                },
+                SubAgentType::GitHelper => "操作已完成（commit/issue/PR）。",
+            }
+        )
+    } else {
+        let err = result.error.as_deref().unwrap_or("Unknown error");
+        format!(
+            "[{} 失败 - {} 轮]\n错误: {}",
+            result.agent_type, result.rounds_used, err
+        )
+    }
+}
+
 // ── System Prompts ─────────────────────────────────────────────
 
 const PLANNER_SYSTEM_PROMPT: &str = r#"
@@ -400,5 +429,96 @@ mod tests {
         };
         assert!(output.success);
         assert_eq!(output.summary, "Plan created");
+    }
+
+    // ── format_sub_agent_output tests ────────────────────────────────
+
+    #[test]
+    fn test_format_output_planner_success() {
+        let output = SubAgentOutput {
+            agent_type: SubAgentType::Planner,
+            success: true,
+            summary: "计划已完成，包含3个步骤。".to_string(),
+            rounds_used: 5,
+            error: None,
+        };
+        let s = format_sub_agent_output(&output);
+        assert!(s.contains("[Planner 完成 - 5 轮]"));
+        assert!(s.contains("计划已创建"));
+        assert!(s.contains("计划已完成"));
+    }
+
+    #[test]
+    fn test_format_output_worker_success() {
+        let output = SubAgentOutput {
+            agent_type: SubAgentType::Worker,
+            success: true,
+            summary: "代码已实现并测试通过。".to_string(),
+            rounds_used: 3,
+            error: None,
+        };
+        let s = format_sub_agent_output(&output);
+        assert!(s.contains("[Worker 完成 - 3 轮]"));
+        assert!(s.contains("代码已产出"));
+        assert!(s.contains("代码已实现"));
+    }
+
+    #[test]
+    fn test_format_output_reviewer_success() {
+        let output = SubAgentOutput {
+            agent_type: SubAgentType::Reviewer,
+            success: true,
+            summary: "审查通过，无严重问题。".to_string(),
+            rounds_used: 2,
+            error: None,
+        };
+        let s = format_sub_agent_output(&output);
+        assert!(s.contains("[Reviewer 完成 - 2 轮]"));
+        assert!(s.contains("审查完成"));
+        assert!(s.contains("审查通过"));
+    }
+
+    #[test]
+    fn test_format_output_git_helper_success() {
+        let output = SubAgentOutput {
+            agent_type: SubAgentType::GitHelper,
+            success: true,
+            summary: "已提交 commit 并创建 PR。".to_string(),
+            rounds_used: 1,
+            error: None,
+        };
+        let s = format_sub_agent_output(&output);
+        assert!(s.contains("[GitHelper 完成 - 1 轮]"));
+        assert!(s.contains("commit/issue/PR"));
+        assert!(s.contains("已提交 commit"));
+    }
+
+    #[test]
+    fn test_format_output_failure_with_error() {
+        let output = SubAgentOutput {
+            agent_type: SubAgentType::Planner,
+            success: false,
+            summary: "".to_string(),
+            rounds_used: 10,
+            error: Some("文件无法读取。".to_string()),
+        };
+        let s = format_sub_agent_output(&output);
+        assert!(s.contains("[Planner 失败 - 10 轮]"));
+        assert!(s.contains("文件无法读取。"));
+        assert!(!s.contains("Unknown error"));
+    }
+
+    #[test]
+    fn test_format_output_failure_no_error() {
+        let output = SubAgentOutput {
+            agent_type: SubAgentType::Worker,
+            success: false,
+            summary: "".to_string(),
+            rounds_used: 5,
+            error: None,
+        };
+        let s = format_sub_agent_output(&output);
+        assert!(s.contains("[Worker 失败 - 5 轮]"));
+        assert!(s.contains("Unknown error"));
     }
 }

@@ -44,9 +44,26 @@ impl Tool for WriteTool {
         let content = args["content"]
             .as_str()
             .ok_or_else(|| AgentError::ToolExecutionError("Missing content".into()))?;
+
+        // ── 自动创建父目录（防止因父目录不存在而写入失败）──
+        let path = std::path::Path::new(file_path);
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                AgentError::ToolExecutionError(format!(
+                    "Failed to create parent directories: {}",
+                    e
+                ))
+            })?;
+        }
+
         match std::fs::write(file_path, content) {
             Ok(_) => Ok(format!("Successfully wrote to {}", file_path)),
-            Err(e) => Ok(format!("Error writing file: {}", e)),
+            Err(e) => Err(AgentError::ToolExecutionError(format!(
+                "Error writing file: {}",
+                e
+            ))),
         }
     }
 
@@ -132,5 +149,32 @@ mod tests {
         assert!(result.contains("Successfully wrote"));
         assert!(tmp.exists());
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_write_tool_creates_parent_dirs() {
+        let tmp_dir = std::env::temp_dir().join("oy_test_write_parent_dirs");
+        // 确保目录不存在
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        let file_path = tmp_dir.join("sub1").join("sub2").join("test.txt");
+        let path_str = file_path.to_string_lossy().to_string();
+
+        let result = WriteTool
+            .execute(json!({
+                "file_path": path_str,
+                "content": "nested content"
+            }))
+            .unwrap();
+        assert!(
+            result.contains("Successfully wrote"),
+            "Expected success message, got: {}",
+            result
+        );
+        assert!(file_path.exists(), "File should exist at nested path");
+        // 验证内容
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(content, "nested content");
+        // 清理
+        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 }

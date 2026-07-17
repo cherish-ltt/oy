@@ -11,6 +11,7 @@ pub use domain::*;
 pub use infrastructure::agents::commander_agent::CommanderAgent;
 // Re-export SubAgentRunner and related types
 pub use infrastructure::agents::sub_agent_runner::{SubAgentConfig, SubAgentEvent, run_sub_agent};
-// Re-export the meta-tool
+// Re-export the meta-tool (registered only for its JSON Schema — execute() is
+// handled by Worker's special-cased async path, not via Tool::execute).
 pub use infrastructure::tools::sub_agent_tool::CreateSubAgentTool;
 pub extern crate oy_ai;

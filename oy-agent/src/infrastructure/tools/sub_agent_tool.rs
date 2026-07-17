@@ -11,9 +11,83 @@ use crate::{
 };
 use oy_ai::AiProvider;
 
+/// Returns the JSON Schema for the `create_sub_agent` meta-tool.
+///
+/// This schema is registered in CommanderAgent's tool registry so that the LLM
+/// can see `create_sub_agent` as an available tool and learn its parameters.
+/// The schema is extracted to a standalone function so that it can be reused
+/// or referenced without instantiating a `CreateSubAgentTool`.
+pub fn create_sub_agent_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "agent_type": {
+                "type": "string",
+                "description": "Type of sub-agent to create: planner, worker, reviewer, or git_helper (commit/issue/PR)",
+                "enum": ["planner", "worker", "reviewer", "git_helper"]
+            },
+            "task": {
+                "type": "string",
+                "description": "The task description for the sub-agent"
+            },
+            "context": {
+                "type": "string",
+                "description": "Optional context (e.g., plan file path for worker)",
+                "default": ""
+            },
+            "timeout": {
+                "type": "integer",
+                "description": "Optional timeout in seconds (default: 900). Sub-agents need longer time.",
+                "default": 900
+            }
+        },
+        "required": ["agent_type", "task"]
+    })
+}
+
 /// The unified meta-tool for creating and running sub-agents.
 ///
-/// CommanderAgent uses only this tool to delegate work to sub-agents.
+/// # Design Intent
+///
+/// `CreateSubAgentTool` is registered in **CommanderAgent's tool registry** so that
+/// the LLM can see the `create_sub_agent` function's **JSON Schema** and learn its
+/// parameters (`agent_type`, `task`, `context`, `timeout`).  The schema is what
+/// drives the model to emit the correct tool-call.
+///
+/// # Why `execute()` Is Never Called in Production
+///
+/// In `Worker::acting()` (`oy-agent/src/infrastructure/agents/mod.rs`), there is a
+/// **hard-coded special case** before the normal `Tool::execute` path:
+///
+/// ```ignore
+/// if tool_call.function_name == "create_sub_agent" && self.sub_provider.is_some() {
+///     tasks.push(self.spawn_sub_agent_task(tool_call));
+/// } else {
+///     tasks.push(self.spawn_regular_tool_task(tool_call));
+/// }
+/// ```
+///
+/// This means:
+/// - **`CreateSubAgentTool::execute()` is NOT called** during normal CommanderAgent
+///   operation — the `create_sub_agent` tool-call is intercepted and processed
+///   asynchronously via `spawn_sub_agent_task` → `run_sub_agent_async`.
+/// - The `execute()` method exists **only to satisfy the `Tool` trait contract**
+///   (every registered tool must implement `execute`).  It is a synchronous fallback
+///   that creates a one-shot `current_thread` runtime and blocks on it.
+///
+/// # Code Path Summary
+///
+/// | Scenario | Path | Notes |
+/// |---|---|---|
+/// | **Normal CommanderAgent** | `acting()` → `spawn_sub_agent_task()` → async `run_sub_agent` | `execute()` NOT called |
+/// | **Direct `Tool::execute` call** (tests, future edge cases) | `execute()` → sync `run_sub_agent` | Creates ad-hoc runtime |
+///
+/// # Fallback Safety
+///
+/// The `execute()` implementation is kept **functionally identical** to the async
+/// path so that it serves as a reliable fallback for any code path that calls
+/// `Tool::execute` directly (e.g., unit tests, future refactoring, or non-Worker
+/// environments).
 pub struct CreateSubAgentTool {
     provider: Arc<dyn AiProvider + Send + Sync>,
     tool_registry: Arc<ToolRegistry>,
@@ -96,38 +170,22 @@ impl Tool for CreateSubAgentTool {
         "Create and run a sub-agent (planner/worker/reviewer/git_helper) for task execution"
     }
 
+    /// Sub-agents need longer time than regular tools. Default: 900s (15 min).
+    /// LLM can override via the optional `timeout` parameter in tool-call arguments.
     fn default_timeout(&self) -> u64 {
         900 // 15 minutes
     }
 
     fn schema(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "agent_type": {
-                    "type": "string",
-                    "description": "Type of sub-agent to create: planner, worker, reviewer, or git_helper (commit/issue/PR)",
-                    "enum": ["planner", "worker", "reviewer", "git_helper"]
-                },
-                "task": {
-                    "type": "string",
-                    "description": "The task description for the sub-agent"
-                },
-                "context": {
-                    "type": "string",
-                    "description": "Optional context (e.g., plan file path for worker)",
-                    "default": ""
-                },
-                "timeout": {
-                    "type": "integer",
-                    "description": "Optional timeout in seconds (default: 900). Sub-agents need longer time.",
-                    "default": 900
-                }
-            },
-            "required": ["agent_type", "task"]
-        })
+        // Delegates to the standalone [`create_sub_agent_schema()`] function.
+        // See that function for the full JSON Schema definition.
+        create_sub_agent_schema()
     }
 
+    /// ⚠ NOTE: This method is NOT called during normal CommanderAgent operation.
+    /// See the struct-level docs for the full design rationale.
+    /// The implementation below is a synchronous fallback that creates a dedicated
+    /// current_thread runtime — kept identical to the async path for consistency.
     fn execute(&self, args: Value) -> Result<String, crate::AgentError> {
         // Parse arguments
         let (agent_type, task, context) = self.parse_args(&args)?;
@@ -146,7 +204,7 @@ impl Tool for CreateSubAgentTool {
             progress_tx: self.progress_tx.clone(),
         }));
 
-        Ok(format_sub_agent_result(&result, &agent_type))
+        Ok(crate::domain::sub_agent::format_sub_agent_output(&result))
     }
 
     fn get_system_prompt(&self) -> &str {
@@ -162,29 +220,5 @@ impl Tool for CreateSubAgentTool {
             tool_registry: self.tool_registry.clone(),
             progress_tx: self.progress_tx.clone(),
         })
-    }
-}
-
-/// Format the sub-agent output for CommanderAgent consumption.
-fn format_sub_agent_result(result: &SubAgentOutput, agent_type: &SubAgentType) -> String {
-    if result.success {
-        format!(
-            "[{} 完成 - {} 轮]\n{}\n{}",
-            agent_type,
-            result.rounds_used,
-            result.summary,
-            match agent_type {
-                SubAgentType::Planner => "计划已创建，Worker 可引用此计划文件。",
-                SubAgentType::Worker => "代码已产出，Reviewer 可审查。",
-                SubAgentType::Reviewer => "审查完成，请检查 '通过: 是/否' 决定下一步。",
-                SubAgentType::GitHelper => "操作已完成（commit/issue/PR）。",
-            }
-        )
-    } else {
-        let err = result.error.as_deref().unwrap_or("Unknown error");
-        format!(
-            "[{} 失败 - {} 轮]\n错误: {}",
-            agent_type, result.rounds_used, err
-        )
     }
 }

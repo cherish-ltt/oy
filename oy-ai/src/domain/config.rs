@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AiConfig {
     pub base_url: String,
     pub api_key: String,
@@ -10,6 +11,23 @@ pub struct AiConfig {
     pub reasoning_effort: Option<String>,
     /// Maximum context capacity in tokens (e.g. 200000). Used for UI display.
     pub context_capacity: Option<u64>,
+}
+
+impl fmt::Debug for AiConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let masked_key = if self.api_key.len() > 4 {
+            format!("{}****", &self.api_key[..4])
+        } else {
+            "****".to_string()
+        };
+        f.debug_struct("AiConfig")
+            .field("base_url", &self.base_url)
+            .field("api_key", &masked_key)
+            .field("model", &self.model)
+            .field("reasoning_effort", &self.reasoning_effort)
+            .field("context_capacity", &self.context_capacity)
+            .finish()
+    }
 }
 
 impl Default for AiConfig {
@@ -102,7 +120,15 @@ mod tests {
         let config = AiConfig::new("http://localhost".into(), "key123".into(), "m".into());
         let debug_str = format!("{:?}", config);
         assert!(debug_str.contains("http://localhost"));
-        assert!(debug_str.contains("key123"));
+        // api_key 应被遮盖：显示前4位+"****"
+        assert!(
+            debug_str.contains("key1****"),
+            "Debug output should contain masked api_key"
+        );
+        assert!(
+            !debug_str.contains("key123"),
+            "Debug output should NOT contain plaintext api_key"
+        );
         assert!(debug_str.contains("m"));
     }
 }
