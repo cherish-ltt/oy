@@ -553,7 +553,7 @@ mod tests {
     fn test_legitimate_mv_file() {
         let tool = BashTool;
         let result = tool
-            .execute(json!({"command": "mkdir -p /tmp/oy_test && touch /tmp/oy_test/test.txt && mv /tmp/oy_test/test.txt /tmp/oy_test/moved.txt && rm /tmp/oy_test/moved.txt && rmdir /tmp/oy_test && echo 'mv ok'"}))
+            .execute(json!({"command": "DIR=$(mktemp -d) && touch \"$DIR/test.txt\" && mv \"$DIR/test.txt\" \"$DIR/moved.txt\" && rm \"$DIR/moved.txt\" && rmdir \"$DIR\" && echo 'mv ok'"}))
             .unwrap();
         assert!(
             result.contains("mv ok"),
