@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::domain::agent::Agent;
 use crate::domain::errors::AgentError;
 use crate::infrastructure::agents::main_agent::MainAgent;
-use crate::infrastructure::file_permissions::set_file_permissions_600;
+use crate::infrastructure::file_permissions::write_file_with_permissions_600;
 use log::warn;
 
 /// A summary entry for a saved session.
@@ -225,11 +225,8 @@ pub fn save_session(
     let json = serde_json::to_string_pretty(&messages)
         .map_err(|e| AgentError::SessionPersistenceError(format!("Serialization error: {}", e)))?;
 
-    std::fs::write(&file_path, &json)
-        .map_err(|e| AgentError::SessionPersistenceError(format!("Write error: {}", e)))?;
-
-    set_file_permissions_600(&file_path).map_err(|e| {
-        AgentError::SessionPersistenceError(format!("Set permissions error: {}", e))
+    write_file_with_permissions_600(&file_path, json.as_bytes()).map_err(|e| {
+        AgentError::SessionPersistenceError(format!("Write error: {}", e))
     })?;
 
     Ok(file_path.to_string_lossy().to_string())

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use oy_agent::infrastructure::file_permissions::set_file_permissions_600;
+use oy_agent::infrastructure::file_permissions::write_file_with_permissions_600;
 use oy_agent::{
     infrastructure::tools::{
         ToolRegistry, bash::BashTool, edit::EditTool, grep::GrepTool, read::ReadTool,
@@ -79,18 +79,17 @@ impl GlobalTomlConfig {
         // ── 原子写入 ──
         let tmp_path = path.with_extension("toml.tmp");
 
-        // 步骤 1：写入临时文件
-        fs::write(&tmp_path, &toml_string).map_err(|e| format!("Failed to write config: {}", e))?;
+        // 步骤 1：以 600 权限写入临时文件
+        write_file_with_permissions_600(&tmp_path, toml_string.as_bytes())
+            .map_err(|e| format!("Failed to write config: {}", e))?;
 
-        // 步骤 2：原子替换原文件
+        // 步骤 2：原子替换原文件（rename 继承临时文件的 600 权限）
         fs::rename(&tmp_path, &path).map_err(|e| {
             // 如果 rename 失败，尝试清理临时文件（忽略清理本身的错误）
             let _ = fs::remove_file(&tmp_path);
             format!("Failed to rename config file: {}", e)
         })?;
-
-        // 步骤 3：设置文件权限（保持在 rename 之后）
-        set_file_permissions_600(&path).map_err(|e| format!("Failed to set permissions: {}", e))?;
+        // 注：临时文件已是 600 权限，rename 后目标文件继承该权限
         Ok(())
     }
 }
