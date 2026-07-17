@@ -225,9 +225,8 @@ pub fn save_session(
     let json = serde_json::to_string_pretty(&messages)
         .map_err(|e| AgentError::SessionPersistenceError(format!("Serialization error: {}", e)))?;
 
-    write_file_with_permissions_600(&file_path, json.as_bytes()).map_err(|e| {
-        AgentError::SessionPersistenceError(format!("Write error: {}", e))
-    })?;
+    write_file_with_permissions_600(&file_path, json.as_bytes())
+        .map_err(|e| AgentError::SessionPersistenceError(format!("Write error: {}", e)))?;
 
     Ok(file_path.to_string_lossy().to_string())
 }

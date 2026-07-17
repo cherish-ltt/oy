@@ -41,8 +41,9 @@ impl Tool for ReadTool {
 
         // ── 文件大小检查（防止 OOM）──
         const MAX_READ_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
-        let metadata = std::fs::metadata(path)
-            .map_err(|e| AgentError::ToolExecutionError(format!("Cannot read file metadata: {}", e)))?;
+        let metadata = std::fs::metadata(path).map_err(|e| {
+            AgentError::ToolExecutionError(format!("Cannot read file metadata: {}", e))
+        })?;
         if metadata.len() > MAX_READ_SIZE {
             return Err(AgentError::ToolExecutionError(format!(
                 "File too large to read: {} bytes (max: {} bytes)",
@@ -132,8 +133,7 @@ mod tests {
             let f = std::fs::File::create(&tmp).unwrap();
             f.set_len(11 * 1024 * 1024).unwrap();
         }
-        let result = ReadTool
-            .execute(json!({"file_path": tmp.to_string_lossy()}));
+        let result = ReadTool.execute(json!({"file_path": tmp.to_string_lossy()}));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
