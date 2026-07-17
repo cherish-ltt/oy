@@ -39,7 +39,10 @@ impl Tool for ReadTool {
             .ok_or_else(|| AgentError::ToolExecutionError("Missing file_path".into()))?;
         match std::fs::read_to_string(file_path) {
             Ok(content) => Ok(content),
-            Err(e) => Ok(format!("Error reading file: {}", e)),
+            Err(e) => Err(AgentError::ToolExecutionError(format!(
+                "Error reading file: {}",
+                e
+            ))),
         }
     }
 
@@ -72,14 +75,8 @@ mod tests {
     #[test]
     fn test_read_tool_nonexistent_file() {
         let tool = ReadTool;
-        let result = tool
-            .execute(json!({"file_path": "/tmp/nonexistent_file_oy_test"}))
-            .unwrap();
-        assert!(
-            result.contains("Error reading file"),
-            "Expected error message, got: {}",
-            result
-        );
+        let result = tool.execute(json!({"file_path": "/tmp/nonexistent_file_oy_test"}));
+        assert!(result.is_err());
     }
 
     #[test]

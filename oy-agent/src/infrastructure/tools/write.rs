@@ -46,7 +46,10 @@ impl Tool for WriteTool {
             .ok_or_else(|| AgentError::ToolExecutionError("Missing content".into()))?;
         match std::fs::write(file_path, content) {
             Ok(_) => Ok(format!("Successfully wrote to {}", file_path)),
-            Err(e) => Ok(format!("Error writing file: {}", e)),
+            Err(e) => Err(AgentError::ToolExecutionError(format!(
+                "Error writing file: {}",
+                e
+            ))),
         }
     }
 

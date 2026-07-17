@@ -42,26 +42,40 @@ impl EditTool {
 
     /// Read file, replace first occurrence of old_text with new_text, write back.
     /// Returns a human-readable status message.
-    fn apply_edit_to_file(path: &Path, old_text: &str, new_text: &str) -> String {
+    fn apply_edit_to_file(
+        path: &Path,
+        old_text: &str,
+        new_text: &str,
+    ) -> Result<String, AgentError> {
         let content = match fs::read_to_string(path) {
             Ok(c) => c,
-            Err(e) => return format!("Failed to read file: {}", e),
+            Err(e) => {
+                return Err(AgentError::ToolExecutionError(format!(
+                    "Failed to read file: {}",
+                    e
+                )));
+            },
         };
 
         if !content.contains(old_text) {
-            return "No changes made: the specified text was not found in the file.".to_string();
+            return Ok(
+                "No changes made: the specified text was not found in the file.".to_string(),
+            );
         }
 
         let new_content = Self::replace_first(&content, old_text, new_text);
 
         match fs::write(path, new_content) {
-            Ok(_) => format!(
+            Ok(_) => Ok(format!(
                 "Successfully replaced '{}' with '{}' in {}",
                 old_text,
                 new_text,
                 path.display()
-            ),
-            Err(e) => format!("Failed to write file: {}", e),
+            )),
+            Err(e) => Err(AgentError::ToolExecutionError(format!(
+                "Failed to write file: {}",
+                e
+            ))),
         }
     }
 }
@@ -131,7 +145,7 @@ impl Tool for EditTool {
         }
 
         // 3-6. Apply edit: read, replace, write back
-        Ok(Self::apply_edit_to_file(path, old_text, new_text))
+        Self::apply_edit_to_file(path, old_text, new_text)
     }
 
     fn get_system_prompt(&self) -> &str {
